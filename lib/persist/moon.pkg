@@ -12,9 +12,4 @@ options(
     "persist_native.mbt": ["native"],
     "persist_stub.mbt": ["not", "native"],
   },
-  "link": {
-    "native": {
-      "cc-link-flags": "-L/usr/lib64 -lc -lpthread",
-    },
-  },
 )

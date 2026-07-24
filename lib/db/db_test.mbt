@@ -210,3 +210,48 @@ test "GeoDB::all returns snapshot" {
   @test.assert_eq(snap.length(), 1)
   @test.assert_eq(db.size(), 2)
 }
+
+// ---- Chinese address: storage + parse + retrieval example ----
+
+test "GeoDB - store, parse, retrieve: 北京市海淀区颐和园路5号" {
+  let db = GeoDB::in_memory()
+  // Step 1: Insert a record using raw API (triggers address parsing).
+  let e = db.insert_raw(
+    "summer-palace",
+    "颐和园",
+    39.9999,
+    116.2755,
+    "北京市海淀区颐和园路5号",
+  )
+  // Step 2: Verify parsed address fields.
+  @test.assert_eq(e.address.country, "中国")
+  @test.assert_eq(e.address.province, "北京市")
+  @test.assert_eq(e.address.city, "北京市")
+  @test.assert_eq(e.address.district, "海淀区")
+  @test.assert_eq(e.address.street, "颐和园路")
+  @test.assert_eq(e.address.detail, "5号")
+  // Step 3: Verify it's retrievable by id.
+  match db.get("summer-palace") {
+    Some(found) => {
+      @test.assert_eq(found.name, "颐和园")
+      @test.assert_eq(found.address.district, "海淀区")
+    }
+    None => @test.assert_eq(true, false)
+  }
+  // Step 4: Verify name lookup works.
+  let by_name = db.find_by_name("颐和园")
+  @test.assert_eq(by_name.length(), 1)
+  // Step 5: Verify bbox query works (Beijing area).
+  let bbox : @types.BBox = {
+    min_lat: 39.0,
+    max_lat: 40.5,
+    min_lng: 115.5,
+    max_lng: 117.0
+  }
+  let in_bbox = db.find_in_bbox(bbox)
+  @test.assert_eq(in_bbox.length(), 1)
+  // Step 6: Verify nearby query works (within 5 km of Summer Palace).
+  let palace = @types.GeoPoint::make(39.9999, 116.2755)
+  let near = db.find_nearby(palace, radius_km=5.0, limit=10)
+  @test.assert_eq(near.length(), 1)
+}

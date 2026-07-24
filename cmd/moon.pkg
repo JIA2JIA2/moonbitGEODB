@@ -1,0 +1,20 @@
+import {
+  "moonbitlang/core/builtin",
+  "moonbitlang/core/string",
+  "moonbitlang/core/char",
+  "moonbitlang/core/env",
+  "moonbitlang/core/strconv",
+  "moonbitgeodb/moonbitgeodb/lib/db" @db,
+  "moonbitgeodb/moonbitgeodb/lib/types" @types,
+  "moonbitgeodb/moonbitgeodb/lib/parser" @parser,
+  "moonbitgeodb/moonbitgeodb/lib/geo" @geo,
+}
+
+options(
+  "is-main": true,
+  "link": {
+    "native": {
+      "cc-link-flags": "-L/usr/lib64",
+    },
+  },
+)

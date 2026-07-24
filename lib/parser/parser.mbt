@@ -118,6 +118,224 @@ fn assign_fields(segments : Array[String]) -> FieldAssign {
   fa
 }
 
+///| Check if a character is in the CJK Unified Ideographs range.
+fn is_cjk(c : Char) -> Bool {
+  let code = c.to_int()
+  code >= 0x4E00 && code <= 0x9FFF
+}
+
+///| Check whether the string contains at least one CJK character.
+fn has_chinese(text : String) -> Bool {
+  text.any(fn(c) { is_cjk(c) })
+}
+
+///| Find the end index (exclusive) of the province-level segment.
+/// Matches suffixes: 省, 市 (直辖市), 自治区, 特别行政区, 特区.
+/// Returns None if no province-level suffix is found.
+fn find_province_end(text : String) -> Int? {
+  let n = text.length()
+  // Known province-level suffixes (checked in order of length, longest first).
+  let suffixes = ["特别行政区", "自治区", "省", "市", "特区"]
+  for s in suffixes {
+    let slen = s.length()
+    // Search from left to right for the first occurrence of this suffix.
+    let mut i = 0
+    while i <= n - slen {
+      let sub = text.get_view(start=i, end=i + slen).unwrap()
+      if sub.to_string() == s {
+        // Must have at least one CJK char before the suffix (not just "市").
+        if i > 0 {
+          return Some(i + slen)
+        }
+      }
+      i = i + 1
+    }
+  }
+  None
+}
+
+///| Find the end index (exclusive) of the city-level segment.
+/// Matches suffixes: 市, 州, 盟, 地区.
+fn find_city_end(text : String, start : Int) -> Int? {
+  let n = text.length()
+  let suffixes = ["地区", "市", "州", "盟"]
+  for s in suffixes {
+    let slen = s.length()
+    let mut i = start
+    while i <= n - slen {
+      let sub = text.get_view(start=i, end=i + slen).unwrap()
+      if sub.to_string() == s {
+        return Some(i + slen)
+      }
+      i = i + 1
+    }
+  }
+  None
+}
+
+///| Find the end index (exclusive) of the district-level segment.
+/// Matches suffixes: 区, 县, 市, 旗.
+fn find_district_end(text : String, start : Int) -> Int? {
+  let n = text.length()
+  let suffixes = ["区", "县", "市", "旗"]
+  for s in suffixes {
+    let slen = s.length()
+    let mut i = start
+    while i <= n - slen {
+      let sub = text.get_view(start=i, end=i + slen).unwrap()
+      if sub.to_string() == s {
+        return Some(i + slen)
+      }
+      i = i + 1
+    }
+  }
+  None
+}
+
+///| Find the end index (exclusive) of the street-level segment.
+/// Matches suffixes: 路, 街, 道, 巷, 弄, 街, 线.
+fn find_street_end(text : String, start : Int) -> Int? {
+  let n = text.length()
+  let suffixes = ["路", "街", "道", "巷", "弄", "线"]
+  for s in suffixes {
+    let slen = s.length()
+    let mut i = start
+    while i <= n - slen {
+      let sub = text.get_view(start=i, end=i + slen).unwrap()
+      if sub.to_string() == s {
+        return Some(i + slen)
+      }
+      i = i + 1
+    }
+  }
+  None
+}
+
+///| Parse a Chinese address without explicit separators.
+/// Handles addresses like "北京市海淀区颐和园路5号" by recognizing
+/// administrative division and street suffixes.
+///
+/// Hierarchy: province → city → district → street → detail
+/// Special case: municipalities (北京市, 上海市, etc.) where 市
+/// serves as both province and city.
+pub fn parse_chinese_address(input : String) -> @types.Address {
+  let trimmed = input.trim().to_owned()
+  let n = trimmed.length()
+
+  let mut province = ""
+  let mut city = ""
+  let mut district = ""
+  let mut street = ""
+  let mut detail = ""
+  let mut postal = ""
+
+  // ---- 1. Province-level ----
+  let (prov_end, is_municipality) = match find_province_end(trimmed) {
+    Some(idx) => {
+      let prov_text = trimmed.get_view(end=idx).unwrap().to_owned()
+      // Check if this is a municipality (直辖市): the suffix is just 市
+      // and it's a well-known municipality.
+      let municipalities = ["北京市", "上海市", "天津市", "重庆市"]
+      let is_muni = municipalities.contains(prov_text)
+      (Some(idx), is_muni)
+    }
+    None => (None, false)
+  }
+
+  let mut cursor = 0
+  match prov_end {
+    Some(idx) => {
+      province = trimmed.get_view(end=idx).unwrap().to_owned()
+      cursor = idx
+    }
+    None => ()
+  }
+
+  // ---- 2. City-level ----
+  if is_municipality {
+    // For municipalities, the province name already contains the city info.
+    // e.g. "北京市" = province+city
+    city = province
+  } else {
+    match find_city_end(trimmed, cursor) {
+      Some(idx) => {
+        city = trimmed.get_view(start=cursor, end=idx).unwrap().to_owned()
+        cursor = idx
+      }
+      None => ()
+    }
+  }
+
+  // ---- 3. District-level ----
+  match find_district_end(trimmed, cursor) {
+    Some(idx) => {
+      district = trimmed.get_view(start=cursor, end=idx).unwrap().to_owned()
+      cursor = idx
+    }
+    None => ()
+  }
+
+  // ---- 4. Street-level ----
+  match find_street_end(trimmed, cursor) {
+    Some(idx) => {
+      street = trimmed.get_view(start=cursor, end=idx).unwrap().to_owned()
+      cursor = idx
+    }
+    None => ()
+  }
+
+  // ---- 5. Remaining goes to detail ----
+  if cursor < n {
+    detail = trimmed.get_view(start=cursor).unwrap().to_owned()
+  }
+
+  // ---- 6. Detect postal code in detail or anywhere ----
+  // Check if detail contains a postal code pattern.
+  if detail.length() > 0 {
+    // Try to find a 6-digit postal code in the detail.
+    let mut i = 0
+    while i <= detail.length() - 6 {
+      let sub = detail.get_view(start=i, end=i + 6).unwrap()
+      if sub.all(fn(c) { c.is_digit(10) }) {
+        postal = sub.to_owned()
+        // Remove postal code from detail.
+        let before = if i == 0 { "" } else { detail.get_view(end=i).unwrap().to_owned() }
+        let after = if i + 6 >= detail.length() {
+          ""
+        } else {
+          detail.get_view(start=i + 6).unwrap().to_owned()
+        }
+        detail = before + after
+        break
+      }
+      i = i + 1
+    }
+  }
+
+  // Detect postal code in the full input as well (just in case).
+  if postal.length() == 0 {
+    let mut i = 0
+    while i <= trimmed.length() - 6 {
+      let sub = trimmed.get_view(start=i, end=i + 6).unwrap()
+      if sub.all(fn(c) { c.is_digit(10) }) {
+        postal = sub.to_owned()
+        break
+      }
+      i = i + 1
+    }
+  }
+
+  @types.Address::{
+    country: "中国",
+    province,
+    city,
+    district,
+    street,
+    postal_code: postal,
+    detail,
+  }
+}
+
 ///| Parse a free-form address string into a structured `Address`.
 ///
 /// Supported formats (auto-detected):
@@ -125,6 +343,7 @@ fn assign_fields(segments : Array[String]) -> FieldAssign {
 ///   "China / USA / California / San Francisco / Mission St / 94103"
 ///   "Beijing; Haidian; Zhongguancun"
 ///   "上海市|浦东新区|张江路|201203"
+///   "北京市海淀区颐和园路5号"  (Chinese address without separators)
 ///
 /// Field mapping order: country, province, city, district, street, detail.
 /// A segment of pure digits (length 3..=10) is treated as the postal code.
@@ -134,27 +353,40 @@ pub fn parse_address(input : String) -> @types.Address raise ParseError {
     raise EmptyInput
   }
   match detect_separator(trimmed) {
-    None => raise NoSeparatorFound(trimmed)
+    None => {
+      // No separator found: try Chinese address parser if input contains CJK.
+      if has_chinese(trimmed) {
+        parse_chinese_address(trimmed)
+      } else {
+        raise NoSeparatorFound(trimmed)
+      }
+    }
     Some(sep) => {
-      let segments = []
-      for s in trimmed.split(sep) {
-        let c = clean(s)
-        if c.length() > 0 {
-          segments.push(c)
+      // If the input contains Chinese characters, prefer the Chinese parser
+      // over a naive space-based split, which would mis-parse CJK addresses.
+      if has_chinese(trimmed) {
+        parse_chinese_address(trimmed)
+      } else {
+        let segments = []
+        for s in trimmed.split(sep) {
+          let c = clean(s)
+          if c.length() > 0 {
+            segments.push(c)
+          }
         }
-      }
-      if segments.length() == 0 {
-        raise EmptyInput
-      }
-      let fa = assign_fields(segments)
-      {
-        country: fa.country,
-        province: fa.province,
-        city: fa.city,
-        district: fa.district,
-        street: fa.street,
-        postal_code: fa.postal_code,
-        detail: fa.detail,
+        if segments.length() == 0 {
+          raise EmptyInput
+        }
+        let fa = assign_fields(segments)
+        {
+          country: fa.country,
+          province: fa.province,
+          city: fa.city,
+          district: fa.district,
+          street: fa.street,
+          postal_code: fa.postal_code,
+          detail: fa.detail,
+        }
       }
     }
   }
