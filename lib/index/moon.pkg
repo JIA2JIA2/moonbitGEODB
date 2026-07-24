@@ -3,7 +3,7 @@ import {
   "moonbitlang/core/hashmap",
   "moonbitlang/core/array",
   "moonbitlang/core/string",
-  "moonbitgeodb/moonbitgeodb/lib/types" @types,
-  "moonbitgeodb/moonbitgeodb/lib/geo" @geo,
+  "JIA2JIA2/moonbitgeodb/lib/types" @types,
+  "JIA2JIA2/moonbitgeodb/lib/geo" @geo,
   "moonbitlang/core/test",
 }

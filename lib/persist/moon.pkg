@@ -3,7 +3,7 @@ import {
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/result",
   "moonbitlang/core/test",
-  "moonbitgeodb/moonbitgeodb/lib/types" @types,
+  "JIA2JIA2/moonbitgeodb/lib/types" @types,
 }
 
 options(

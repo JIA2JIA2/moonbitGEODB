@@ -5,5 +5,5 @@ import {
   "moonbitlang/core/json",
   "moonbitlang/core/debug",
   "moonbitlang/core/test",
-  "moonbitgeodb/moonbitgeodb/lib/types" @types,
+  "JIA2JIA2/moonbitgeodb/lib/types" @types,
 }

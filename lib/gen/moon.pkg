@@ -5,6 +5,6 @@ import {
   "moonbitlang/core/string",
   "moonbitlang/core/hashmap",
   "moonbitlang/core/test",
-  "moonbitgeodb/moonbitgeodb/lib/types" @types,
-  "moonbitgeodb/moonbitgeodb/lib/db" @db,
+  "JIA2JIA2/moonbitgeodb/lib/types" @types,
+  "JIA2JIA2/moonbitgeodb/lib/db" @db,
 }

@@ -5,11 +5,11 @@ import {
   "moonbitlang/core/env",
   "moonbitlang/core/strconv",
   "moonbitlang/core/hashmap",
-  "moonbitgeodb/moonbitgeodb/lib/db" @db,
-  "moonbitgeodb/moonbitgeodb/lib/types" @types,
-  "moonbitgeodb/moonbitgeodb/lib/parser" @parser,
-  "moonbitgeodb/moonbitgeodb/lib/gen" @gen,
-  "moonbitgeodb/moonbitgeodb/lib/geo" @geo,
+  "JIA2JIA2/moonbitgeodb/lib/db" @db,
+  "JIA2JIA2/moonbitgeodb/lib/types" @types,
+  "JIA2JIA2/moonbitgeodb/lib/parser" @parser,
+  "JIA2JIA2/moonbitgeodb/lib/gen" @gen,
+  "JIA2JIA2/moonbitgeodb/lib/geo" @geo,
 }
 
 options(
