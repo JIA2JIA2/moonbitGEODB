@@ -5,7 +5,7 @@
 pub(all) struct GeoPoint {
   lat : Double // [-90, 90]
   lng : Double // [-180, 180]
-} derive(Eq, Show, ToJson, FromJson)
+} derive(Eq, Debug, ToJson, FromJson)
 
 /// Axis-aligned geographic bounding box.
 pub(all) struct BBox {
@@ -13,7 +13,7 @@ pub(all) struct BBox {
   max_lat : Double
   min_lng : Double
   max_lng : Double
-} derive(Eq, Show, ToJson, FromJson)
+} derive(Eq, Debug, ToJson, FromJson)
 
 /// Structured postal address. Empty string means "unspecified".
 pub(all) struct Address {
@@ -24,7 +24,7 @@ pub(all) struct Address {
   street : String // 街道 / 门牌 / Street & house number
   postal_code : String // 邮政编码 / Postal / ZIP code
   detail : String // 补充说明 / Extra detail
-} derive(Eq, Show, ToJson, FromJson)
+} derive(Eq, Debug, ToJson, FromJson)
 
 /// A stored geo record.
 pub(all) struct GeoEntry {
@@ -33,7 +33,7 @@ pub(all) struct GeoEntry {
   address : Address
   location : GeoPoint
   tags : Array[String]
-} derive(Eq, Show, ToJson, FromJson)
+} derive(Eq, Debug, ToJson, FromJson)
 
 ///| Construct a GeoPoint.
 pub fn GeoPoint::make(lat : Double, lng : Double) -> GeoPoint {

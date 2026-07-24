@@ -28,8 +28,7 @@ test "Address::to_line joins non-empty parts with comma" {
     postal_code: "100080",
     detail: "",
   }
-  let line = a.to_line()
-  @test.assert_eq(line, "China,Beijing,Haidian")
+  @test.assert_eq(a.to_line(), "China,Beijing,Haidian")
 }
 
 test "Address::to_line on empty address returns empty string" {
@@ -45,7 +44,6 @@ test "GeoEntry::make has empty tags" {
 }
 
 test "BBox::from_corners normalizes min/max" {
-  // Pass corners in "wrong" order; min should still be smaller.
   let a = GeoPoint::make(40.0, 117.0)
   let b = GeoPoint::make(39.0, 116.0)
   let bbox = BBox::from_corners(a, b)
@@ -57,19 +55,13 @@ test "BBox::from_corners normalizes min/max" {
 
 test "GeoPoint ToJson / FromJson round-trip" {
   let p = GeoPoint::make(1.5, -2.25)
-  let json = p.to_json()
-  let parsed = @json.parse?(json)
-  match parsed {
-    Err(_) => @test.assert_eq(true, false)
-    Ok(v) =>
-      match GeoPoint::from_json(v) {
-        Err(_) => @test.assert_eq(true, false)
-        Ok(q) => {
-          @test.assert_eq(q.lat, 1.5)
-          @test.assert_eq(q.lng, -2.25)
-        }
-      }
+  let ok = try {
+    let q : GeoPoint = @json.from_json(p.to_json())
+    q.lat == 1.5 && q.lng == -2.25
+  } catch {
+    _ => false
   }
+  @test.assert_eq(ok, true)
 }
 
 test "Address ToJson / FromJson round-trip" {
@@ -82,13 +74,11 @@ test "Address ToJson / FromJson round-trip" {
     postal_code: "100080",
     detail: "extra",
   }
-  let json = a.to_json()
-  match @json.parse?(json) {
-    Err(_) => @test.assert_eq(true, false)
-    Ok(v) =>
-      match Address::from_json(v) {
-        Err(_) => @test.assert_eq(true, false)
-        Ok(b) => @test.assert_eq(a == b, true)
-      }
+  let ok = try {
+    let b : Address = @json.from_json(a.to_json())
+    a == b
+  } catch {
+    _ => false
   }
+  @test.assert_eq(ok, true)
 }
