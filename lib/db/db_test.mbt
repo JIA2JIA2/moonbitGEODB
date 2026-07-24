@@ -161,20 +161,20 @@ test "GeoDB::find_nearest returns k sorted" {
   }
 }
 
-test "GeoDB::to_json and from_json round-trip" {
+test "GeoDB::to_bytes and from_bytes round-trip" {
   let db = GeoDB::in_memory()
   db.insert(make_entry("p01", "Beijing", 39.9042, 116.4074))
   db.insert(make_entry("p02", "Shanghai", 31.2304, 121.4737))
-  let text = db.to_json()
+  let bytes = db.to_bytes()
   let db2 = GeoDB::in_memory()
-  match db2.from_json(text) {
+  match db2.from_bytes(bytes) {
     Err(_) => @test.assert_eq(true, false)
     Ok(_) => @test.assert_eq(db2.size(), 2)
   }
 }
 
 test "GeoDB::save_to and open round-trip" {
-  let path = "/tmp/geodb_test_save_load.json"
+  let path = "/tmp/geodb_test_save_load.db"
   let db = GeoDB::in_memory()
   db.insert(make_entry("p01", "Beijing", 39.9042, 116.4074))
   db.insert(make_entry("p02", "Shanghai", 31.2304, 121.4737))
@@ -198,8 +198,54 @@ test "GeoDB::save without path returns Err" {
 }
 
 test "GeoDB::open on missing file yields empty db" {
-  let db = GeoDB::open("/tmp/geodb_does_not_exist_xyz.json")
+  let db = GeoDB::open("/tmp/geodb_does_not_exist_xyz.db")
   @test.assert_eq(db.size(), 0)
+}
+
+test "GeoDB::backup and restore round-trip" {
+  let path = "/tmp/geodb_test_backup.db"
+  let db = GeoDB::in_memory()
+  db.insert(make_entry("p01", "Beijing", 39.9042, 116.4074))
+  db.insert(make_entry("p02", "Shanghai", 31.2304, 121.4737))
+  match db.save_to(path) {
+    Err(_) => @test.assert_eq(true, false)
+    Ok(_) => {
+      match db.backup() {
+        Err(_) => @test.assert_eq(true, false)
+        Ok(_) => {
+          // Remove an entry, then restore.
+          ignore(db.remove("p02"))
+          @test.assert_eq(db.size(), 1)
+          match db.restore() {
+            Err(_) => @test.assert_eq(true, false)
+            Ok(_) => {
+              @test.assert_eq(db.size(), 2)
+              @test.assert_eq(db.get("p01") is Some, true)
+              @test.assert_eq(db.get("p02") is Some, true)
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+test "GeoDB::check integrity" {
+  let path = "/tmp/geodb_test_check.db"
+  let db = GeoDB::in_memory()
+  db.insert(make_entry("p01", "Beijing", 39.9042, 116.4074))
+  match db.save_to(path) {
+    Err(_) => @test.assert_eq(true, false)
+    Ok(_) => {
+      match db.check() {
+        Err(_) => @test.assert_eq(true, false)
+        Ok(meta) => {
+          @test.assert_eq(meta.entry_count, 1)
+          @test.assert_eq(meta.version, @persist.db_version)
+        }
+      }
+    }
+  }
 }
 
 test "GeoDB::all returns snapshot" {

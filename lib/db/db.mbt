@@ -1,16 +1,16 @@
 // Copyright 2026 moonbitGEODB contributors
 // SPDX-License-Identifier: Apache-2.0
 
-/// The main geo database. Wraps an in-memory `Index` with persistence,
+/// The main geo database. Wraps an in-memory `Index` with binary persistence,
 /// parsing helpers, and a friendlier query API.
 ///
 /// Typical usage:
 ///   let db = GeoDB::open("geo.db")
 ///   db.insert(@types.GeoEntry::make("p01", "Tiananmen", ..., ...))
 ///   let nearby = db.find_nearby(point, radius_km=5.0, limit=10)
-///   db.save() // persist to disk
+///   db.save() // persist to disk in binary format
 pub(all) struct GeoDB {
-  path : String? // file path for save/load; None = in-memory only
+  mut path : String? // file path for save/load; None = in-memory only
   index : @index.Index
   next_seq : @ref.Ref[Int]
   mut created_at : Int64
@@ -31,7 +31,7 @@ pub fn GeoDB::in_memory() -> GeoDB {
 }
 
 ///| Open (or create) a database backed by a file at `path`. If the file
-/// exists and contains valid JSON, its entries and metadata are loaded.
+/// exists and contains valid binary data, its entries and metadata are loaded.
 /// If `auto_save` is true, every insert/remove automatically saves to disk.
 pub fn GeoDB::open(path : String, auto_save~ : Bool = false) -> GeoDB {
   let now = @persist.file_mtime(path)
@@ -50,9 +50,9 @@ pub fn GeoDB::open(path : String, auto_save~ : Bool = false) -> GeoDB {
       }
       // Restore metadata timestamps from snapshot.
       match @persist.load_snapshot(path) {
-        Ok(snap) => {
-          db.created_at = snap.meta.created_at
-          db.updated_at = snap.meta.updated_at
+        Ok((_, created_at, updated_at)) => {
+          db.created_at = created_at
+          db.updated_at = updated_at
         }
         Err(_) => ()
       }
@@ -110,7 +110,6 @@ pub fn GeoDB::insert_record_line(
 ) -> @types.GeoEntry? {
   try {
     let parsed = @parser.parse_record_line(line)
-    // Assign a generated id if the parsed entry's id is empty.
     let entry = if parsed.id.length() == 0 {
       let id = self.gen_id("e")
       @types.GeoEntry::make(id, parsed.name, parsed.address, parsed.location)
@@ -191,7 +190,6 @@ pub fn GeoDB::find_nearby(
     }
   }
   pairs.sort_by(fn(a, b) { if a.1 < b.1 { -1 } else if a.1 > b.1 { 1 } else { 0 } })
-  // Take first `limit`.
   let out : Array[(@types.GeoEntry, Double)] = []
   let mut i = 0
   for p in pairs {
@@ -213,30 +211,30 @@ pub fn GeoDB::find_nearest(
   self.index.query_nearest(point, k)
 }
 
-///| Serialize the entire DB to a JSON string.
-pub fn GeoDB::to_json(self : GeoDB) -> String {
-  @persist.entries_to_json(self.all())
+///| Serialize the entire DB to binary Bytes.
+pub fn GeoDB::to_bytes(self : GeoDB) -> Bytes {
+  @persist.binary_encode_snapshot(self.all(), self.created_at, self.updated_at)
 }
 
-///| Replace all entries with those parsed from a JSON string.
-pub fn GeoDB::from_json(self : GeoDB, text : String) -> Result[Unit, String] {
-  match @persist.entries_from_json(text) {
+///| Replace all entries with those decoded from binary Bytes.
+pub fn GeoDB::from_bytes(self : GeoDB, data : Bytes) -> Result[Unit, String] {
+  match @persist.binary_decode_snapshot(data) {
     Err(msg) => Err(msg)
-    Ok(entries) => {
-      // Clear and reload.
+    Ok((entries, created_at, updated_at)) => {
       for e in self.all() {
         ignore(self.index.remove(e.id))
       }
       for e in entries {
         self.index.insert(e)
       }
+      self.created_at = created_at
+      self.updated_at = updated_at
       Ok(())
     }
   }
 }
 
-///| Save the DB to its backing file using atomic write with metadata.
-/// Returns Err if no path is configured or the write fails.
+///| Save the DB to its backing file using atomic binary write with metadata.
 pub fn GeoDB::save(self : GeoDB) -> Result[Unit, String] {
   match self.path {
     None => Err("no backing path; use save_to(path) instead")
@@ -252,6 +250,10 @@ pub fn GeoDB::save(self : GeoDB) -> Result[Unit, String] {
 pub fn GeoDB::save_to(self : GeoDB, path : String) -> Result[Unit, String] {
   let now = @persist.file_mtime(path)
   self.updated_at = if now > 0 { now } else { 0L }
+  match self.path {
+    None => self.path = Some(path)
+    Some(_) => ()
+  }
   @persist.atomic_save_entries(path, self.all(), self.created_at, self.updated_at)
 }
 
@@ -271,27 +273,19 @@ pub fn GeoDB::restore(self : GeoDB) -> Result[Unit, String] {
       match @persist.restore_from_backup(p) {
         Err(e) => Err(e)
         Ok(_) => {
-          // Reload from restored file.
-          match @persist.load_entries_from_snapshot(p) {
-            Ok(entries) => {
-              // Clear current index and reload.
+          match @persist.load_snapshot(p) {
+            Err(e) => Err("reload after restore failed: \{e}")
+            Ok((entries, created_at, updated_at)) => {
               for e in self.all() {
                 ignore(self.index.remove(e.id))
               }
               for e in entries {
                 self.index.insert(e)
               }
-              // Restore metadata.
-              match @persist.load_snapshot(p) {
-                Ok(snap) => {
-                  self.created_at = snap.meta.created_at
-                  self.updated_at = snap.meta.updated_at
-                }
-                Err(_) => ()
-              }
+              self.created_at = created_at
+              self.updated_at = updated_at
               Ok(())
             }
-            Err(e) => Err("reload after restore failed: \{e}")
           }
         }
       }

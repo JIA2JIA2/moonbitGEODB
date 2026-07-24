@@ -3,6 +3,7 @@
 //
 // Native (C backend) file IO via FFI stubs in stub.c.
 // Gated to `native` target by moon.pkg `targets`.
+// Supports both text (String) and binary (Bytes) IO.
 
 ///| FFI: write content bytes to file at path bytes. Returns 0 on success, -1 on error.
 #borrow(path, content)
@@ -70,6 +71,32 @@ pub fn load_text(path : String) -> Result[String, String] {
   }
 }
 
+///| Write raw binary `content` Bytes to the file at `path`.
+pub fn save_bytes(path : String, content : Bytes) -> Result[Unit, String] {
+  let path_bytes = @utf8.encode(path)
+  let rc = ffi_write_file(
+    path_bytes,
+    path_bytes.length(),
+    content,
+    content.length()
+  )
+  if rc == 0 {
+    Ok(())
+  } else {
+    Err("failed to write binary file: \{path}")
+  }
+}
+
+///| Read raw binary Bytes from the file at `path`.
+pub fn load_bytes(path : String) -> Result[Bytes, String] {
+  let path_bytes = @utf8.encode(path)
+  let bytes = ffi_read_file(path_bytes, path_bytes.length())
+  if bytes.length() == 0 {
+    return Err("file not found or empty: \{path}")
+  }
+  Ok(bytes)
+}
+
 ///| Test whether a file exists at `path`.
 pub fn file_exists(path : String) -> Bool {
   let path_bytes = @utf8.encode(path)
@@ -105,7 +132,24 @@ pub fn file_mtime(path : String) -> Int64 {
   ffi_file_mtime(path_bytes, path_bytes.length())
 }
 
-///| Atomically write content to file: writes to .tmp first, then renames.
+///| Atomically write binary content to file: writes to .tmp first, then renames.
+pub fn atomic_save_bytes(path : String, content : Bytes) -> Result[Unit, String] {
+  let tmp_path = path + ".tmp"
+  match save_bytes(tmp_path, content) {
+    Err(e) => Err(e)
+    Ok(_) => {
+      match rename_file(tmp_path, path) {
+        Err(e) => {
+          ignore(remove_file(tmp_path))
+          Err(e)
+        }
+        Ok(_) => Ok(())
+      }
+    }
+  }
+}
+
+///| Atomically write text content to file: writes to .tmp first, then renames.
 pub fn atomic_save(path : String, content : String) -> Result[Unit, String] {
   let tmp_path = path + ".tmp"
   match save_text(tmp_path, content) {

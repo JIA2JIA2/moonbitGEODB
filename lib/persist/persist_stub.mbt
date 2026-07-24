@@ -15,6 +15,16 @@ pub fn load_text(_path : String) -> Result[String, String] {
   Err("file IO not available on this backend")
 }
 
+///| Write raw binary `content` Bytes to the file at `path`.
+pub fn save_bytes(_path : String, _content : Bytes) -> Result[Unit, String] {
+  Err("file IO not available on this backend")
+}
+
+///| Read raw binary Bytes from the file at `path`.
+pub fn load_bytes(_path : String) -> Result[Bytes, String] {
+  Err("file IO not available on this backend")
+}
+
 ///| Test whether a file exists at `path`. Always false on non-native backends.
 pub fn file_exists(_path : String) -> Bool {
   false
@@ -31,8 +41,13 @@ pub fn remove_file(_path : String) -> Result[Unit, String] {
 }
 
 ///| Get file modification time. Returns -1 on non-native backends.
-pub fn file_mtime(_path : String) -> Long {
+pub fn file_mtime(_path : String) -> Int64 {
   -1L
+}
+
+///| Atomically write binary content to file. Not available on non-native backends.
+pub fn atomic_save_bytes(_path : String, _content : Bytes) -> Result[Unit, String] {
+  Err("file IO not available on this backend")
 }
 
 ///| Atomically write content to file. Not available on non-native backends.
