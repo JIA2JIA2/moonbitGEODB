@@ -13,6 +13,9 @@ pub(all) struct GeoDB {
   path : String? // file path for save/load; None = in-memory only
   index : @index.Index
   next_seq : @ref.Ref[Int]
+  mut created_at : Int64
+  mut updated_at : Int64
+  mut auto_save : Bool
 } derive(Debug)
 
 ///| Create an empty in-memory database (no auto-persistence).
@@ -21,19 +24,39 @@ pub fn GeoDB::in_memory() -> GeoDB {
     path: None,
     index: @index.Index::new(),
     next_seq: @ref.Ref(0),
+    created_at: 0L,
+    updated_at: 0L,
+    auto_save: false,
   }
 }
 
 ///| Open (or create) a database backed by a file at `path`. If the file
-/// exists and contains valid JSON, its entries are loaded. Subsequent
-/// calls to `save` write back to the same path.
-pub fn GeoDB::open(path : String) -> GeoDB {
-  let db = { path: Some(path), index: @index.Index::new(), next_seq: @ref.Ref(0) }
-  match @persist.load_entries(path) {
-    Ok(entries) =>
+/// exists and contains valid JSON, its entries and metadata are loaded.
+/// If `auto_save` is true, every insert/remove automatically saves to disk.
+pub fn GeoDB::open(path : String, auto_save~ : Bool = false) -> GeoDB {
+  let now = @persist.file_mtime(path)
+  let db = {
+    path: Some(path),
+    index: @index.Index::new(),
+    next_seq: @ref.Ref(0),
+    created_at: if now > 0 { now } else { 0L },
+    updated_at: now,
+    auto_save,
+  }
+  match @persist.load_entries_from_snapshot(path) {
+    Ok(entries) => {
       for e in entries {
         db.index.insert(e)
       }
+      // Restore metadata timestamps from snapshot.
+      match @persist.load_snapshot(path) {
+        Ok(snap) => {
+          db.created_at = snap.meta.created_at
+          db.updated_at = snap.meta.updated_at
+        }
+        Err(_) => ()
+      }
+    }
     Err(_) => () // treat missing/corrupt file as empty DB
   }
   db
@@ -51,9 +74,12 @@ pub fn GeoDB::gen_id(self : GeoDB, prefix : String) -> String {
   "\{prefix}\{n}"
 }
 
-///| Insert (or replace) an entry.
+///| Insert (or replace) an entry. Triggers auto-save if enabled.
 pub fn GeoDB::insert(self : GeoDB, entry : @types.GeoEntry) -> Unit {
   self.index.insert(entry)
+  if self.auto_save {
+    ignore(self.save())
+  }
 }
 
 ///| Insert an entry built from raw parts: id, name, lat, lng, address string.
@@ -104,8 +130,13 @@ pub fn GeoDB::get(self : GeoDB, id : String) -> @types.GeoEntry? {
 }
 
 ///| Remove an entry by id. Returns the removed entry if it existed.
+/// Triggers auto-save if enabled.
 pub fn GeoDB::remove(self : GeoDB, id : String) -> @types.GeoEntry? {
-  self.index.remove(id)
+  let result = self.index.remove(id)
+  if result != None && self.auto_save {
+    ignore(self.save())
+  }
+  result
 }
 
 ///| All entries (snapshot array).
@@ -204,20 +235,92 @@ pub fn GeoDB::from_json(self : GeoDB, text : String) -> Result[Unit, String] {
   }
 }
 
-///| Save the DB to its backing file (set via `open`). Returns Err if no
-/// path is configured or the write fails.
+///| Save the DB to its backing file using atomic write with metadata.
+/// Returns Err if no path is configured or the write fails.
 pub fn GeoDB::save(self : GeoDB) -> Result[Unit, String] {
   match self.path {
     None => Err("no backing path; use save_to(path) instead")
-    Some(p) => @persist.save_entries(p, self.all())
+    Some(p) => {
+      let now = @persist.file_mtime(p)
+      self.updated_at = if now > 0 { now } else { 0L }
+      @persist.atomic_save_entries(p, self.all(), self.created_at, self.updated_at)
+    }
   }
 }
 
 ///| Save the DB to a specific file path (also updates the backing path).
 pub fn GeoDB::save_to(self : GeoDB, path : String) -> Result[Unit, String] {
-  // We can't mutate `self.path` (immutable struct field), so we just save
-  // to the requested path. Future calls to `save` still use the original path.
-  @persist.save_entries(path, self.all())
+  let now = @persist.file_mtime(path)
+  self.updated_at = if now > 0 { now } else { 0L }
+  @persist.atomic_save_entries(path, self.all(), self.created_at, self.updated_at)
+}
+
+///| Create a backup of the current database file.
+pub fn GeoDB::backup(self : GeoDB) -> Result[String, String] {
+  match self.path {
+    None => Err("no backing path to backup")
+    Some(p) => @persist.create_backup(p)
+  }
+}
+
+///| Restore the database from its .bak backup file.
+pub fn GeoDB::restore(self : GeoDB) -> Result[Unit, String] {
+  match self.path {
+    None => Err("no backing path to restore")
+    Some(p) => {
+      match @persist.restore_from_backup(p) {
+        Err(e) => Err(e)
+        Ok(_) => {
+          // Reload from restored file.
+          match @persist.load_entries_from_snapshot(p) {
+            Ok(entries) => {
+              // Clear current index and reload.
+              for e in self.all() {
+                ignore(self.index.remove(e.id))
+              }
+              for e in entries {
+                self.index.insert(e)
+              }
+              // Restore metadata.
+              match @persist.load_snapshot(p) {
+                Ok(snap) => {
+                  self.created_at = snap.meta.created_at
+                  self.updated_at = snap.meta.updated_at
+                }
+                Err(_) => ()
+              }
+              Ok(())
+            }
+            Err(e) => Err("reload after restore failed: \{e}")
+          }
+        }
+      }
+    }
+  }
+}
+
+///| Check database integrity. Returns the metadata on success.
+pub fn GeoDB::check(self : GeoDB) -> Result[@persist.DBMeta, String] {
+  match self.path {
+    None => Err("no backing path to check")
+    Some(p) => @persist.check_integrity(p)
+  }
+}
+
+///| Return database metadata (version, timestamps, entry count).
+pub fn GeoDB::metadata(self : GeoDB) -> @persist.DBMeta {
+  {
+    version: @persist.db_version,
+    created_at: self.created_at,
+    updated_at: self.updated_at,
+    entry_count: self.index.size(),
+  }
+}
+
+///| Toggle auto-save on/off. Returns the new setting.
+pub fn GeoDB::set_auto_save(self : GeoDB, enabled : Bool) -> Bool {
+  self.auto_save = enabled
+  self.auto_save
 }
 
 ///| Iterate over all entries.

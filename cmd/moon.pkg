@@ -4,10 +4,11 @@ import {
   "moonbitlang/core/char",
   "moonbitlang/core/env",
   "moonbitlang/core/strconv",
+  "moonbitlang/core/hashmap",
   "moonbitgeodb/moonbitgeodb/lib/db" @db,
   "moonbitgeodb/moonbitgeodb/lib/types" @types,
   "moonbitgeodb/moonbitgeodb/lib/parser" @parser,
-  "moonbitgeodb/moonbitgeodb/lib/geo" @geo,
+  "moonbitgeodb/moonbitgeodb/lib/gen" @gen,
 }
 
 options(

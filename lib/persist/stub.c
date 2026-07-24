@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include "moonbit.h"
 
 MOONBIT_FFI_EXPORT int32_t geodb_write_file(
@@ -111,4 +112,68 @@ MOONBIT_FFI_EXPORT int32_t geodb_file_exists(
     }
     fclose(f);
     return 1;
+}
+
+MOONBIT_FFI_EXPORT int32_t geodb_rename(
+    moonbit_bytes_t old_path_bytes, int32_t old_path_len,
+    moonbit_bytes_t new_path_bytes, int32_t new_path_len
+) {
+    if (old_path_len < 0 || new_path_len < 0) {
+        return -1;
+    }
+    char *old_path = (char *)malloc((size_t)old_path_len + 1);
+    if (old_path == NULL) {
+        return -1;
+    }
+    memcpy(old_path, old_path_bytes, (size_t)old_path_len);
+    old_path[old_path_len] = '\0';
+    char *new_path = (char *)malloc((size_t)new_path_len + 1);
+    if (new_path == NULL) {
+        free(old_path);
+        return -1;
+    }
+    memcpy(new_path, new_path_bytes, (size_t)new_path_len);
+    new_path[new_path_len] = '\0';
+    int rc = rename(old_path, new_path);
+    free(old_path);
+    free(new_path);
+    return rc;
+}
+
+MOONBIT_FFI_EXPORT int32_t geodb_remove_file(
+    moonbit_bytes_t path_bytes, int32_t path_len
+) {
+    if (path_len < 0) {
+        return -1;
+    }
+    char *path = (char *)malloc((size_t)path_len + 1);
+    if (path == NULL) {
+        return -1;
+    }
+    memcpy(path, path_bytes, (size_t)path_len);
+    path[path_len] = '\0';
+    int rc = remove(path);
+    free(path);
+    return rc;
+}
+
+MOONBIT_FFI_EXPORT int64_t geodb_file_mtime(
+    moonbit_bytes_t path_bytes, int32_t path_len
+) {
+    if (path_len < 0) {
+        return -1;
+    }
+    char *path = (char *)malloc((size_t)path_len + 1);
+    if (path == NULL) {
+        return -1;
+    }
+    memcpy(path, path_bytes, (size_t)path_len);
+    path[path_len] = '\0';
+    struct stat st;
+    int rc = stat(path, &st);
+    free(path);
+    if (rc != 0) {
+        return -1;
+    }
+    return (int64_t)st.st_mtime;
 }

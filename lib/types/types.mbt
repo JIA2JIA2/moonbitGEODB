@@ -32,7 +32,7 @@ pub(all) struct GeoEntry {
   name : String
   address : Address
   location : GeoPoint
-  tags : Array[String]
+  mut tags : Array[String]
 } derive(Eq, Debug, ToJson, FromJson)
 
 ///| Construct a GeoPoint.

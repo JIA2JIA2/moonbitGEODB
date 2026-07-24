@@ -19,3 +19,23 @@ pub fn load_text(_path : String) -> Result[String, String] {
 pub fn file_exists(_path : String) -> Bool {
   false
 }
+
+///| Atomically rename `old_path` to `new_path`. Not available on non-native backends.
+pub fn rename_file(_old_path : String, _new_path : String) -> Result[Unit, String] {
+  Err("file IO not available on this backend")
+}
+
+///| Remove a file. Not available on non-native backends.
+pub fn remove_file(_path : String) -> Result[Unit, String] {
+  Err("file IO not available on this backend")
+}
+
+///| Get file modification time. Returns -1 on non-native backends.
+pub fn file_mtime(_path : String) -> Long {
+  -1L
+}
+
+///| Atomically write content to file. Not available on non-native backends.
+pub fn atomic_save(_path : String, _content : String) -> Result[Unit, String] {
+  Err("file IO not available on this backend")
+}
