@@ -1,6 +1,10 @@
 // Copyright 2026 moonbitGEODB contributors
 // SPDX-License-Identifier: Apache-2.0
 
+fn dabs(x : Double) -> Double {
+  if x < 0.0 { -x } else { x }
+}
+
 fn make_entry(
   id : String,
   name : String,
@@ -1274,4 +1278,382 @@ test "GeoDB::province_histogram counts entries by province" {
     }
   }
   @test.assert_eq(found_beijing, 2)
+}
+
+// ---- Path distance tests ----
+
+test "GeoDB::path_distance computes multi-point route distance" {
+  let db = GeoDB::in_memory()
+  db.insert(make_entry_with_addr("pt01", "A", 39.9, 116.4, "", "", "", []))
+  db.insert(make_entry_with_addr("pt02", "B", 31.2, 121.5, "", "", "", []))
+  db.insert(make_entry_with_addr("pt03", "C", 22.3, 114.1, "", "", "", []))
+  let d = db.path_distance(["pt01", "pt02", "pt03"])
+  @test.assert_eq(d > 0.0, true)
+  // Should be sum of A->B + B->C
+  let ab = @geo.haversine(@types.GeoPoint::make(39.9, 116.4), @types.GeoPoint::make(31.2, 121.5))
+  let bc = @geo.haversine(@types.GeoPoint::make(31.2, 121.5), @types.GeoPoint::make(22.3, 114.1))
+  @test.assert_eq(dabs(d - (ab + bc)) < 0.01, true)
+}
+
+test "GeoDB::path_distance with single entry returns 0" {
+  let db = GeoDB::in_memory()
+  db.insert(make_entry_with_addr("pt01", "A", 39.9, 116.4, "", "", "", []))
+  @test.assert_eq(db.path_distance(["pt01"]), 0.0)
+}
+
+test "GeoDB::path_detail returns entries and distance" {
+  let db = GeoDB::in_memory()
+  db.insert(make_entry_with_addr("pd01", "A", 39.9, 116.4, "", "", "", []))
+  db.insert(make_entry_with_addr("pd02", "B", 31.2, 121.5, "", "", "", []))
+  let (d, entries) = db.path_detail(["pd01", "pd02"])
+  @test.assert_eq(entries.length(), 2)
+  @test.assert_eq(d > 0.0, true)
+}
+
+// ---- Geohash tests ----
+
+test "GeoDB::entry_geohash computes correctly" {
+  let db = GeoDB::in_memory()
+  db.insert(make_entry_with_addr("g01", "A", 39.9087, 116.3975, "", "", "", []))
+  let gh = db.entry_geohash("g01", precision=6)
+  match gh {
+    None => @test.assert_eq(true, false)
+    Some(h) => {
+      @test.assert_eq(h.length(), 6)
+      // Verify roundtrip: decode the geohash and check coordinates are close.
+      let pt = @geo.geohash_decode(h)
+      @test.assert_eq(dabs(pt.lat - 39.9087) < 0.01, true)
+      @test.assert_eq(dabs(pt.lng - 116.3975) < 0.01, true)
+    }
+  }
+}
+
+test "GeoDB::find_by_geohash matches exact geohash" {
+  let db = GeoDB::in_memory()
+  db.insert(make_entry_with_addr("g01", "A", 39.9087, 116.3975, "", "", "", []))
+  // Get the geohash for this entry, then search by it.
+  let gh = db.entry_geohash("g01", precision=6)
+  match gh {
+    None => @test.assert_eq(true, false)
+    Some(h) => {
+      let results = db.find_by_geohash(h, precision=6)
+      @test.assert_eq(results.length(), 1)
+      @test.assert_eq(results[0].id, "g01")
+    }
+  }
+}
+
+test "GeoDB::find_by_geohash_prefix groups nearby entries" {
+  let db = GeoDB::in_memory()
+  db.insert(make_entry_with_addr("g01", "A", 39.9087, 116.3975, "", "", "", []))
+  db.insert(make_entry_with_addr("g02", "B", 39.9090, 116.3980, "", "", "", []))
+  db.insert(make_entry_with_addr("g03", "C", 22.3000, 114.1000, "", "", "", []))
+  let results = db.find_by_geohash_prefix("wx4g", precision=6)
+  @test.assert_eq(results.length(), 2)
+}
+
+// ---- Convex hull tests ----
+
+test "GeoDB::convex_hull_all returns hull points" {
+  let db = GeoDB::in_memory()
+  db.insert(make_entry_with_addr("ch01", "A", 0.0, 0.0, "", "", "", []))
+  db.insert(make_entry_with_addr("ch02", "B", 10.0, 0.0, "", "", "", []))
+  db.insert(make_entry_with_addr("ch03", "C", 0.0, 10.0, "", "", "", []))
+  db.insert(make_entry_with_addr("ch04", "D", 10.0, 10.0, "", "", "", []))
+  let hull = db.convex_hull_all()
+  // 4 corners should form the hull.
+  @test.assert_eq(hull.length(), 4)
+}
+
+// ---- Pagination tests ----
+
+test "GeoDB::page_all returns correct slice" {
+  let db = GeoDB::in_memory()
+  db.insert(make_entry_with_addr("pg01", "A", 1.0, 1.0, "", "", "", []))
+  db.insert(make_entry_with_addr("pg02", "B", 2.0, 2.0, "", "", "", []))
+  db.insert(make_entry_with_addr("pg03", "C", 3.0, 3.0, "", "", "", []))
+  let page = db.page_all(2, offset=0)
+  @test.assert_eq(page.length(), 2)
+  let page2 = db.page_all(2, offset=2)
+  @test.assert_eq(page2.length(), 1)
+}
+
+test "GeoDB::page_all with offset beyond size returns empty" {
+  let db = GeoDB::in_memory()
+  db.insert(make_entry_with_addr("pg01", "A", 1.0, 1.0, "", "", "", []))
+  let page = db.page_all(10, offset=5)
+  @test.assert_eq(page.length(), 0)
+}
+
+test "GeoDB::page_results paginates any array" {
+  let db = GeoDB::in_memory()
+  db.insert(make_entry_with_addr("pg01", "A", 1.0, 1.0, "", "", "", []))
+  db.insert(make_entry_with_addr("pg02", "B", 2.0, 2.0, "", "", "", []))
+  let results = db.find_name_contains("A")
+  let page = db.page_results(results, 1, offset=0)
+  @test.assert_eq(page.length(), 1)
+}
+
+// ---- Address normalization tests ----
+
+test "GeoDB::normalize_address strips province/city suffixes" {
+  let db = GeoDB::in_memory()
+  let addr : @types.Address = {
+    country: "中国",
+    province: "北京市",
+    city: "北京市",
+    district: "海淀区",
+    street: "",
+    postal_code: "",
+    detail: "",
+  }
+  db.insert(@types.GeoEntry::make("n01", "Test", addr, @types.GeoPoint::make(39.9, 116.4)))
+  let ok = db.normalize_address("n01")
+  @test.assert_eq(ok, true)
+  match db.get("n01") {
+    None => @test.assert_eq(true, false)
+    Some(e) => {
+      @test.assert_eq(e.address.province, "北京")
+      @test.assert_eq(e.address.city, "北京")
+      @test.assert_eq(e.address.district, "海淀")
+    }
+  }
+}
+
+test "GeoDB::normalize_address on missing entry returns false" {
+  let db = GeoDB::in_memory()
+  @test.assert_eq(db.normalize_address("nope"), false)
+}
+
+// ---- Geohash encoding/decoding tests ----
+
+test "geohash_encode produces known value for Beijing" {
+  // Beijing Tiananmen (39.9087, 116.3975) area.
+  let gh = @geo.geohash_encode(39.9087, 116.3975, 6)
+  @test.assert_eq(gh.length(), 6)
+  // Verify roundtrip
+  let pt = @geo.geohash_decode(gh)
+  @test.assert_eq(dabs(pt.lat - 39.9087) < 0.01, true)
+  @test.assert_eq(dabs(pt.lng - 116.3975) < 0.01, true)
+}
+
+test "geohash_decode encodes back to nearby coordinates" {
+  let gh = @geo.geohash_encode(39.9087, 116.3975, 8)
+  let pt = @geo.geohash_decode(gh)
+  @test.assert_eq(dabs(pt.lat - 39.9087) < 0.01, true)
+  @test.assert_eq(dabs(pt.lng - 116.3975) < 0.01, true)
+}
+
+test "geohash_encode rejects invalid precision" {
+  @test.assert_eq(@geo.geohash_encode(39.9, 116.4, 0), "")
+  @test.assert_eq(@geo.geohash_encode(39.9, 116.4, 10), "")
+}
+
+// ---- WGS84 ↔ GCJ-02 tests ----
+
+test "wgs84_to_gcj02 shifts Chinese coordinates" {
+  // Beijing should be shifted. Function returns (lng, lat).
+  let (glng, glat) = @geo.wgs84_to_gcj02(116.4, 39.9)
+  @test.assert_eq(glat != 39.9, true)
+  @test.assert_eq(glng != 116.4, true)
+}
+
+test "wgs84_to_gcj02 leaves non-China coordinates unchanged" {
+  // London should be unchanged. Function returns (lng, lat).
+  let (olng, olat) = @geo.wgs84_to_gcj02(-0.1276, 51.5074)
+  @test.assert_eq(dabs(olat - 51.5074) < 0.001, true)
+  @test.assert_eq(dabs(olng - (-0.1276)) < 0.001, true)
+}
+
+test "gcj02_to_wgs84 reverses the transform approximately" {
+  let (glng, glat) = @geo.wgs84_to_gcj02(116.4, 39.9)
+  let (olng, olat) = @geo.gcj02_to_wgs84(glng, glat)
+  @test.assert_eq(dabs(olat - 39.9) < 0.05, true)
+  @test.assert_eq(dabs(olng - 116.4) < 0.05, true)
+}
+
+// ---- Convex hull tests in geo module ----
+
+test "convex_hull handles triangle correctly" {
+  let points : Array[@types.GeoPoint] = [
+    @types.GeoPoint::make(0.0, 0.0),
+    @types.GeoPoint::make(10.0, 0.0),
+    @types.GeoPoint::make(0.0, 10.0),
+  ]
+  let hull = @geo.convex_hull(points)
+  @test.assert_eq(hull.length(), 3)
+}
+
+test "convex_hull returns points as-is for fewer than 3" {
+  let points : Array[@types.GeoPoint] = [
+    @types.GeoPoint::make(0.0, 0.0),
+    @types.GeoPoint::make(1.0, 1.0),
+  ]
+  let hull = @geo.convex_hull(points)
+  @test.assert_eq(hull.length(), 2)
+}
+
+test "convex_hull handles collinear points" {
+  let points : Array[@types.GeoPoint] = [
+    @types.GeoPoint::make(0.0, 0.0),
+    @types.GeoPoint::make(5.0, 5.0),
+    @types.GeoPoint::make(10.0, 10.0),
+  ]
+  let hull = @geo.convex_hull(points)
+  // Collinear: only endpoints should be on hull (2 points).
+  @test.assert_eq(hull.length(), 2)
+}
+
+// ---- Polygon area and point-in-polygon tests ----
+
+test "polygon_area of a square is non-zero" {
+  let square : Array[@types.GeoPoint] = [
+    @types.GeoPoint::make(0.0, 0.0),
+    @types.GeoPoint::make(0.0, 1.0),
+    @types.GeoPoint::make(1.0, 1.0),
+    @types.GeoPoint::make(1.0, 0.0),
+  ]
+  let area = @geo.polygon_area(square)
+  @test.assert_eq(area > 0.0, true)
+}
+
+test "polygon_area returns 0 for fewer than 3 points" {
+  @test.assert_eq(@geo.polygon_area([]), 0.0)
+  @test.assert_eq(@geo.polygon_area([@types.GeoPoint::make(0.0, 0.0)]), 0.0)
+}
+
+test "point_in_polygon detects point inside square" {
+  let square : Array[@types.GeoPoint] = [
+    @types.GeoPoint::make(0.0, 0.0),
+    @types.GeoPoint::make(0.0, 1.0),
+    @types.GeoPoint::make(1.0, 1.0),
+    @types.GeoPoint::make(1.0, 0.0),
+  ]
+  let inside = @geo.point_in_polygon(@types.GeoPoint::make(0.5, 0.5), square)
+  @test.assert_eq(inside, true)
+}
+
+test "point_in_polygon detects point outside square" {
+  let square : Array[@types.GeoPoint] = [
+    @types.GeoPoint::make(0.0, 0.0),
+    @types.GeoPoint::make(0.0, 1.0),
+    @types.GeoPoint::make(1.0, 1.0),
+    @types.GeoPoint::make(1.0, 0.0),
+  ]
+  let outside = @geo.point_in_polygon(@types.GeoPoint::make(2.0, 2.0), square)
+  @test.assert_eq(outside, false)
+}
+
+// ---- Geohash neighbors and cell size ----
+
+test "geohash_neighbors returns 9 cells" {
+  let gh = @geo.geohash_encode(39.9, 116.4, 6)
+  let neighbors = @geo.geohash_neighbors(gh)
+  @test.assert_eq(neighbors.length(), 9)
+}
+
+test "geohash_cell_size decreases with precision" {
+  let (lat1, _) = @geo.geohash_cell_size(1)
+  let (lat6, _) = @geo.geohash_cell_size(6)
+  @test.assert_eq(lat1 > lat6, true)
+  @test.assert_eq(lat6 > 0.0, true)
+}
+
+test "geohash_to_bbox returns valid bbox" {
+  let gh = @geo.geohash_encode(39.9, 116.4, 6)
+  let bbox = @geo.geohash_to_bbox(gh)
+  @test.assert_eq(bbox.min_lat < bbox.max_lat, true)
+  @test.assert_eq(bbox.min_lng < bbox.max_lng, true)
+}
+
+// ---- Average nearest-neighbor distance ----
+
+test "average_nn_distance is positive for separated points" {
+  let points : Array[@types.GeoPoint] = [
+    @types.GeoPoint::make(0.0, 0.0),
+    @types.GeoPoint::make(1.0, 1.0),
+    @types.GeoPoint::make(2.0, 0.0),
+  ]
+  let avg = @geo.average_nn_distance(points)
+  @test.assert_eq(avg > 0.0, true)
+}
+
+test "average_nn_distance returns 0 for fewer than 2 points" {
+  @test.assert_eq(@geo.average_nn_distance([]), 0.0)
+  @test.assert_eq(@geo.average_nn_distance([@types.GeoPoint::make(0.0, 0.0)]), 0.0)
+}
+
+// ---- Database-level new feature tests ----
+
+test "GeoDB::convex_hull_area returns positive" {
+  let db = GeoDB::in_memory()
+  db.insert(make_entry_with_addr("a", "A", 0.0, 0.0, "", "", "", []))
+  db.insert(make_entry_with_addr("b", "B", 0.0, 1.0, "", "", "", []))
+  db.insert(make_entry_with_addr("c", "C", 1.0, 1.0, "", "", "", []))
+  db.insert(make_entry_with_addr("d", "D", 1.0, 0.0, "", "", "", []))
+  let area = db.convex_hull_area()
+  @test.assert_eq(area > 0.0, true)
+}
+
+test "GeoDB::find_in_polygon returns points inside polygon" {
+  let db = GeoDB::in_memory()
+  db.insert(make_entry_with_addr("inside", "I", 0.5, 0.5, "", "", "", []))
+  db.insert(make_entry_with_addr("outside", "O", 5.0, 5.0, "", "", "", []))
+  let poly : Array[@types.GeoPoint] = [
+    @types.GeoPoint::make(0.0, 0.0),
+    @types.GeoPoint::make(0.0, 1.0),
+    @types.GeoPoint::make(1.0, 1.0),
+    @types.GeoPoint::make(1.0, 0.0),
+  ]
+  let results = db.find_in_polygon(poly)
+  @test.assert_eq(results.length(), 1)
+  @test.assert_eq(results[0].id, "inside")
+}
+
+test "GeoDB::average_nn_distance is positive with entries" {
+  let db = GeoDB::in_memory()
+  db.insert(make_entry_with_addr("a", "A", 39.9, 116.4, "", "", "", []))
+  db.insert(make_entry_with_addr("b", "B", 31.2, 121.5, "", "", "", []))
+  db.insert(make_entry_with_addr("c", "C", 22.3, 114.1, "", "", "", []))
+  let avg = db.average_nn_distance()
+  @test.assert_eq(avg > 0.0, true)
+}
+
+test "GeoDB::cluster_dbscan groups close points together" {
+  let db = GeoDB::in_memory()
+  db.insert(make_entry_with_addr("c1", "C1", 39.9000, 116.4000, "", "", "", []))
+  db.insert(make_entry_with_addr("c2", "C2", 39.9001, 116.4001, "", "", "", []))
+  db.insert(make_entry_with_addr("c3", "C3", 39.9002, 116.4002, "", "", "", []))
+  db.insert(make_entry_with_addr("o1", "O1", 22.3000, 114.1000, "", "", "", []))
+  let clusters = db.cluster_dbscan(1.0, 2)
+  @test.assert_eq(clusters.length() >= 1, true)
+  // Verify that a cluster containing at least the 3 Beijing points exists.
+  let mut found = false
+  for c in clusters {
+    if c.length() >= 3 {
+      found = true
+    }
+  }
+  @test.assert_eq(found, true)
+}
+
+test "GeoDB::radial_density counts entries by ring" {
+  let db = GeoDB::in_memory()
+  let center = @types.GeoPoint::make(0.0, 0.0)
+  db.insert(make_entry_with_addr("near", "N", 0.001, 0.001, "", "", "", []))
+  db.insert(make_entry_with_addr("mid", "M", 1.0, 1.0, "", "", "", []))
+  db.insert(make_entry_with_addr("far", "F", 10.0, 10.0, "", "", "", []))
+  let rings = db.radial_density(center, 1.0, 10)
+  @test.assert_eq(rings.length(), 10)
+  // At least the near entry should be in ring 0.
+  @test.assert_eq(rings[0].1 >= 1, true)
+}
+
+test "GeoDB::to_geojson_with_bbox produces valid feature collection" {
+  let db = GeoDB::in_memory()
+  db.insert(make_entry_with_addr("t1", "Test", 39.9, 116.4, "", "", "", []))
+  let geojson = db.to_geojson_with_bbox()
+  @test.assert_eq(geojson.contains("\"type\":\"FeatureCollection\""), true)
+  @test.assert_eq(geojson.contains("\"bbox\""), true)
+  @test.assert_eq(geojson.contains("\"coordinates\""), true)
 }

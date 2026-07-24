@@ -1924,3 +1924,432 @@ pub fn GeoDB::province_histogram(self : GeoDB) -> Array[(String, Int)] {
   result.sort_by(fn(a, b) { if a.1 > b.1 { -1 } else if a.1 < b.1 { 1 } else { 0 } })
   result
 }
+
+// ---- Path distance ----
+
+///| Compute the total travel distance along an ordered list of entry IDs.
+/// Returns the sum of Haversine distances between consecutive entries (km).
+/// Missing IDs are skipped (distance to next existing entry is included).
+/// Returns 0 if fewer than 2 valid entries exist.
+pub fn GeoDB::path_distance(self : GeoDB, ids : Array[String]) -> Double {
+  if ids.length() < 2 {
+    return 0.0
+  }
+  let mut total = 0.0
+  let mut prev_entry : @types.GeoEntry? = None
+  for id in ids {
+    match self.get(id) {
+      None => ()
+      Some(cur) => {
+        match prev_entry {
+          None => prev_entry = Some(cur)
+          Some(prev) => {
+            total = total + @geo.haversine(prev.location, cur.location)
+            prev_entry = Some(cur)
+          }
+        }
+      }
+    }
+  }
+  total
+}
+
+///| Compute the total path distance and return it along with the valid entries.
+pub fn GeoDB::path_detail(self : GeoDB, ids : Array[String]) -> (Double, Array[@types.GeoEntry]) {
+  let valid : Array[@types.GeoEntry] = []
+  for id in ids {
+    match self.get(id) {
+      None => ()
+      Some(e) => valid.push(e)
+    }
+  }
+  let total = self.path_distance(ids)
+  (total, valid)
+}
+
+// ---- Geohash-based queries ----
+
+///| Find all entries whose geohash at given precision starts with the given prefix.
+/// Useful for efficient spatial indexing by geohash prefix.
+pub fn GeoDB::find_by_geohash_prefix(
+  self : GeoDB,
+  prefix : String,
+  precision~ : Int = 6
+) -> Array[@types.GeoEntry] {
+  let results : Array[@types.GeoEntry] = []
+  for e in self.all() {
+    let gh = @geo.geohash_encode(e.location.lat, e.location.lng, precision)
+    if gh.length() >= prefix.length() {
+      let mut matches = true
+      let mut i = 0
+      while i < prefix.length() {
+        if gh[i] != prefix[i] {
+          matches = false
+          break
+        }
+        i = i + 1
+      }
+      if matches {
+        results.push(e)
+      }
+    }
+  }
+  results
+}
+
+///| Find entries whose geohash at given precision exactly matches the given geohash.
+pub fn GeoDB::find_by_geohash(
+  self : GeoDB,
+  geohash : String,
+  precision~ : Int = 6
+) -> Array[@types.GeoEntry] {
+  let results : Array[@types.GeoEntry] = []
+  for e in self.all() {
+    let gh = @geo.geohash_encode(e.location.lat, e.location.lng, precision)
+    if gh == geohash {
+      results.push(e)
+    }
+  }
+  results
+}
+
+///| Compute the geohash for a given entry.
+pub fn GeoDB::entry_geohash(self : GeoDB, id : String, precision~ : Int = 6) -> String? {
+  match self.get(id) {
+    None => None
+    Some(e) => Some(@geo.geohash_encode(e.location.lat, e.location.lng, precision))
+  }
+}
+
+// ---- Pagination ----
+
+///| Return all entries with pagination (limit/offset).
+pub fn GeoDB::page_all(self : GeoDB, limit : Int, offset~ : Int = 0) -> Array[@types.GeoEntry] {
+  let all_entries = self.all()
+  if offset >= all_entries.length() {
+    return []
+  }
+  let end_idx = @cmp.minimum(offset + limit, all_entries.length())
+  let result : Array[@types.GeoEntry] = []
+  let mut i = offset
+  while i < end_idx {
+    result.push(all_entries[i])
+    i = i + 1
+  }
+  result
+}
+
+///| Return paginated results from a search query.
+pub fn GeoDB::page_results(self : GeoDB, results : Array[@types.GeoEntry], limit : Int, offset~ : Int = 0) -> Array[@types.GeoEntry] {
+  if offset >= results.length() {
+    return []
+  }
+  let end_idx = @cmp.minimum(offset + limit, results.length())
+  let result : Array[@types.GeoEntry] = []
+  let mut i = offset
+  while i < end_idx {
+    result.push(results[i])
+    i = i + 1
+  }
+  result
+}
+
+// ---- Convex hull of entries ----
+
+///| Compute the convex hull of all entries' locations.
+/// Returns an array of (lat, lng) points forming the hull.
+pub fn GeoDB::convex_hull_all(self : GeoDB) -> Array[@types.GeoPoint] {
+  let entries = self.all()
+  let points : Array[@types.GeoPoint] = []
+  for e in entries {
+    points.push(e.location)
+  }
+  @geo.convex_hull(points)
+}
+
+// ---- Address normalization ----
+
+///| Standardize province/city/district names by stripping common suffixes.
+/// E.g., "北京市" -> "北京", "海淀区" -> "海淀".
+pub fn GeoDB::normalize_address(self : GeoDB, id : String) -> Bool {
+  match self.get(id) {
+    None => false
+    Some(entry) => {
+      let new_addr : @types.Address = {
+        country: entry.address.country,
+        province: strip_admin_suffix(entry.address.province),
+        city: strip_admin_suffix(entry.address.city),
+        district: strip_admin_suffix(entry.address.district),
+        street: entry.address.street,
+        postal_code: entry.address.postal_code,
+        detail: entry.address.detail,
+      }
+      self.update_address(id, new_addr)
+    }
+  }
+}
+
+///| Normalize all entries' addresses. Returns the number of entries modified.
+pub fn GeoDB::normalize_all_addresses(self : GeoDB) -> Int {
+  let entries = self.all()
+  let mut n = 0
+  for e in entries {
+    if self.normalize_address(e.id) {
+      n = n + 1
+    }
+  }
+  if self.auto_save && n > 0 {
+    ignore(self.save())
+  }
+  n
+}
+
+// ---- Polygon and spatial operations ----
+
+///| Compute the area of the convex hull of all entries, in square kilometers.
+pub fn GeoDB::convex_hull_area(self : GeoDB) -> Double {
+  let entries = self.all()
+  let points : Array[@types.GeoPoint] = []
+  for e in entries {
+    points.push(e.location)
+  }
+  let hull = @geo.convex_hull(points)
+  @geo.polygon_area(hull)
+}
+
+///| Find all entries whose location lies inside the given polygon.
+/// Uses ray-casting for point-in-polygon test.
+pub fn GeoDB::find_in_polygon(self : GeoDB, polygon : Array[@types.GeoPoint]) -> Array[@types.GeoEntry] {
+  let results : Array[@types.GeoEntry] = []
+  for e in self.all() {
+    if @geo.point_in_polygon(e.location, polygon) {
+      results.push(e)
+    }
+  }
+  results
+}
+
+///| Compute the average nearest-neighbor distance across all entries (km).
+/// Useful for assessing spatial clustering vs. dispersion.
+pub fn GeoDB::average_nn_distance(self : GeoDB) -> Double {
+  let entries = self.all()
+  let points : Array[@types.GeoPoint] = []
+  for e in entries {
+    points.push(e.location)
+  }
+  @geo.average_nn_distance(points)
+}
+
+///| Perform DBSCAN clustering on all entries.
+/// `eps_km` is the neighborhood radius in kilometers.
+/// `min_points` is the minimum number of points to form a cluster.
+/// Returns an array of clusters; each cluster is an array of entry IDs.
+/// Noise points (outliers) are excluded from clusters.
+pub fn GeoDB::cluster_dbscan(self : GeoDB, eps_km : Double, min_points : Int) -> Array[Array[String]] {
+  let entries = self.all()
+  let n = entries.length()
+  let visited : Array[Bool] = []
+  let clustered : Array[Bool] = []
+  let mut i = 0
+  while i < n {
+    visited.push(false)
+    clustered.push(false)
+    i = i + 1
+  }
+  let clusters : Array[Array[String]] = []
+  i = 0
+  while i < n {
+    if !visited[i] {
+      visited[i] = true
+      let neighbors = dbscan_range_query(entries, i, eps_km)
+      if neighbors.length() >= min_points - 1 {
+        // Expand cluster.
+        let cluster : Array[String] = [entries[i].id]
+        let mut seed = 0
+        while seed < neighbors.length() {
+          let j = neighbors[seed]
+          if !visited[j] {
+            visited[j] = true
+            let j_neighbors = dbscan_range_query(entries, j, eps_km)
+            if j_neighbors.length() >= min_points - 1 {
+              // Merge j_neighbors into neighbors list.
+              for k in j_neighbors {
+                let mut found = false
+                for existing in neighbors {
+                  if existing == k {
+                    found = true
+                    break
+                  }
+                }
+                if !found {
+                  neighbors.push(k)
+                }
+              }
+            }
+          }
+          if !clustered[j] {
+            clustered[j] = true
+            cluster.push(entries[j].id)
+          }
+          seed = seed + 1
+        }
+        if !clustered[i] {
+          clustered[i] = true
+          cluster.push(entries[i].id)
+        }
+        clusters.push(cluster)
+      }
+    }
+    i = i + 1
+  }
+  clusters
+}
+
+///| Find all entries within a geohash bounding box, expanded to 3×3 neighborhood.
+/// This is more efficient than scanning all entries for small areas.
+pub fn GeoDB::find_by_geohash_bbox(
+  self : GeoDB,
+  hash : String,
+  precision~ : Int = 6
+) -> Array[@types.GeoEntry] {
+  let neighbors = @geo.geohash_neighbors(hash)
+  let results : Array[@types.GeoEntry] = []
+  let seen_ids : Array[String] = []
+  for nh in neighbors {
+    if nh.length() >= precision {
+      let prefix = geohash_prefix_of(nh, precision)
+      let matches = self.find_by_geohash_prefix(prefix, precision=precision)
+      for m in matches {
+        // Deduplicate by entry ID.
+        let mut dup = false
+        for id in seen_ids {
+          if id == m.id {
+            dup = true
+            break
+          }
+        }
+        if !dup {
+          seen_ids.push(m.id)
+          results.push(m)
+        }
+      }
+    }
+  }
+  results
+}
+
+///| Get the geohash bounding box for an entry.
+pub fn GeoDB::entry_geohash_bbox(self : GeoDB, id : String, precision~ : Int = 6) -> @types.BBox? {
+  match self.entry_geohash(id, precision=precision) {
+    None => None
+    Some(h) => Some(@geo.geohash_to_bbox(h))
+  }
+}
+
+///| Compute the radial density around a center point.
+/// Returns an array of (ring_index, entry_count) for concentric rings.
+pub fn GeoDB::radial_density(
+  self : GeoDB,
+  center : @types.GeoPoint,
+  ring_size_km : Double,
+  num_rings : Int
+) -> Array[(Int, Int)] {
+  let results : Array[(Int, Int)] = []
+  let entries = self.all()
+  let ring_counts : Array[Int] = []
+  let mut r = 0
+  while r < num_rings {
+    ring_counts.push(0)
+    r = r + 1
+  }
+  for e in entries {
+    let d = @geo.haversine(center, e.location)
+    let ring = (d / ring_size_km).to_int()
+    if ring >= 0 && ring < num_rings {
+      ring_counts[ring] = ring_counts[ring] + 1
+    }
+  }
+  r = 0
+  while r < num_rings {
+    results.push((r, ring_counts[r]))
+    r = r + 1
+  }
+  results
+}
+
+///| Export all entries as a GeoJSON FeatureCollection with bbox.
+pub fn GeoDB::to_geojson_with_bbox(self : GeoDB) -> String {
+  let entries = self.all()
+  let features : Array[String] = []
+  for e in entries {
+    let gh = @geo.geohash_encode(e.location.lat, e.location.lng, 8)
+    let bbox = @geo.geohash_to_bbox(gh)
+    let props = [
+      "\"id\":\"" + escape_json_string(e.id) + "\"",
+      "\"name\":\"" + escape_json_string(e.name) + "\"",
+      "\"address\":" + e.address.to_json().stringify(),
+      "\"tags\":" + string_array_to_json(e.tags),
+      "\"bbox\":[" + bbox.min_lng.to_string() + "," +
+        bbox.min_lat.to_string() + "," +
+        bbox.max_lng.to_string() + "," +
+        bbox.max_lat.to_string() + "]",
+    ].join(",")
+    let feature = "{" +
+      "\"type\":\"Feature\"," +
+      "\"geometry\":{" +
+      "\"type\":\"Point\"," +
+      "\"coordinates\":[" + e.location.lng.to_string() + "," + e.location.lat.to_string() + "]" +
+      "}," +
+      "\"properties\":{" + props + "}" +
+      "}"
+    features.push(feature)
+  }
+  let features_str = features.join(",")
+  let result = "{\"type\":\"FeatureCollection\",\"totalFeatures\":" +
+    entries.length().to_string() + ",\"features\":[" + features_str + "]}"
+  result
+}
+
+fn dbscan_range_query(
+  entries : Array[@types.GeoEntry],
+  idx : Int,
+  eps_km : Double
+) -> Array[Int] {
+  let results : Array[Int] = []
+  let center = entries[idx].location
+  let n = entries.length()
+  let mut i = 0
+  while i < n {
+    if i != idx {
+      let d = @geo.haversine(center, entries[i].location)
+      if d <= eps_km {
+        results.push(i)
+      }
+    }
+    i = i + 1
+  }
+  results
+}
+
+fn geohash_prefix_of(s : String, len : Int) -> String {
+  let mut result = ""
+  let mut i = 0
+  while i < len && i < s.length() {
+    result = result + s[i].to_string()
+    i = i + 1
+  }
+  result
+}
+
+fn strip_admin_suffix(name : String) -> String {
+  let suffixes : Array[String] = ["省", "市", "区", "县", "自治州", "特别行政区", "自治区", "盟", "地区"]
+  for s in suffixes {
+    if name.length() > s.length() {
+      let suffix = name.substring(start=name.length() - s.length(), end=name.length()).to_string()
+      if suffix == s {
+        return name.substring(start=0, end=name.length() - s.length()).to_string()
+      }
+    }
+  }
+  name
+}
