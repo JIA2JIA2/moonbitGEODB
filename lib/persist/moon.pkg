@@ -1,0 +1,15 @@
+import {
+  "moonbitlang/core/builtin",
+  "moonbitlang/core/json",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/result",
+  "moonbitgeodb/moonbitgeodb/lib/types" @types,
+}
+
+options(
+  "native-stub": ["stub.c"],
+  targets: {
+    "persist_native.mbt": ["native"],
+    "persist_stub.mbt": ["not", "native"],
+  },
+)

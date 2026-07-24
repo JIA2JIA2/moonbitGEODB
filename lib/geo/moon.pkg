@@ -1,0 +1,7 @@
+import {
+  "moonbitlang/core/builtin",
+  "moonbitlang/core/math",
+  "moonbitlang/core/cmp",
+  "moonbitlang/core/test",
+  "moonbitgeodb/moonbitgeodb/lib/types" @types,
+}

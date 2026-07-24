@@ -1,0 +1,15 @@
+import {
+  "moonbitlang/core/builtin",
+  "moonbitlang/core/json",
+  "moonbitlang/core/hashmap",
+  "moonbitlang/core/array",
+  "moonbitlang/core/string",
+  "moonbitlang/core/random",
+  "moonbitlang/core/ref",
+  "moonbitgeodb/moonbitgeodb/lib/types" @types,
+  "moonbitgeodb/moonbitgeodb/lib/geo" @geo,
+  "moonbitgeodb/moonbitgeodb/lib/parser" @parser,
+  "moonbitgeodb/moonbitgeodb/lib/index" @index,
+  "moonbitgeodb/moonbitgeodb/lib/persist" @persist,
+  "moonbitlang/core/test",
+}
