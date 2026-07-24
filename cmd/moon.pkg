@@ -9,6 +9,7 @@ import {
   "moonbitgeodb/moonbitgeodb/lib/types" @types,
   "moonbitgeodb/moonbitgeodb/lib/parser" @parser,
   "moonbitgeodb/moonbitgeodb/lib/gen" @gen,
+  "moonbitgeodb/moonbitgeodb/lib/geo" @geo,
 }
 
 options(

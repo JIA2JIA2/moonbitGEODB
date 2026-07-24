@@ -6,6 +6,7 @@ import {
   "moonbitlang/core/string",
   "moonbitlang/core/random",
   "moonbitlang/core/ref",
+  "moonbitlang/core/math",
   "moonbitgeodb/moonbitgeodb/lib/types" @types,
   "moonbitgeodb/moonbitgeodb/lib/geo" @geo,
   "moonbitgeodb/moonbitgeodb/lib/parser" @parser,
