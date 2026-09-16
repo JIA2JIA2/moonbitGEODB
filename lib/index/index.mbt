@@ -21,6 +21,7 @@ pub(all) struct Index {
   by_city : @hashmap.HashMap[String, Array[String]]
   by_district : @hashmap.HashMap[String, Array[String]]
   cell_size : Double // degrees
+  rtree : RTree // R-tree for sub-linear KNN / range queries
 } derive(Eq, Debug)
 
 ///|
@@ -39,6 +40,7 @@ pub fn Index::new(cell_size? : Double = default_cell_size) -> Index {
     by_city: @hashmap.HashMap([]),
     by_district: @hashmap.HashMap([]),
     cell_size,
+    rtree: RTree::new(),
   }
 }
 
@@ -121,6 +123,8 @@ pub fn Index::insert(self : Index, entry : @types.GeoEntry) -> Unit {
       Some(arr) => arr.push(entry.id)
     }
   }
+  // R-tree spatial index.
+  self.rtree.insert(entry.id, entry.location)
 }
 
 ///|
@@ -218,6 +222,7 @@ pub fn Index::remove(self : Index, id : String) -> @types.GeoEntry? {
           None => ()
         }
       }
+      ignore(self.rtree.remove(id))
       Some(entry)
     }
   }
@@ -274,40 +279,20 @@ pub fn Index::query_bbox(
 
 ///|
 /// k nearest-neighbour query. Returns up to `k` (entry, distance_km) pairs
-/// sorted by ascending distance. Falls back to a linear scan over all entries;
-/// suitable for tens of thousands of records. For larger scale, an R-tree
-/// would be appropriate.
+/// sorted by ascending distance. Delegates to the built-in R-tree via
+/// best-first search, which is sub-linear for large datasets.
 pub fn Index::query_nearest(
   self : Index,
   point : @types.GeoPoint,
   k : Int,
 ) -> Array[(@types.GeoEntry, Double)] {
-  if k <= 0 {
-    return []
-  }
-  let pairs : Array[(@types.GeoEntry, Double)] = []
-  for entry in self.entries.values() {
-    let d = @geo.haversine(point, entry.location)
-    pairs.push((entry, d))
-  }
-  pairs.sort_by(fn(a, b) {
-    if a.1 < b.1 {
-      -1
-    } else if a.1 > b.1 {
-      1
-    } else {
-      0
-    }
-  })
-  // Take first k.
+  let raw = self.rtree.nearest(point, k)
   let out : Array[(@types.GeoEntry, Double)] = []
-  let mut i = 0
-  for p in pairs {
-    if i >= k {
-      break
+  for (id, d) in raw {
+    match self.entries.get(id) {
+      Some(e) => out.push((e, d))
+      None => ()
     }
-    out.push(p)
-    i = i + 1
   }
   out
 }
