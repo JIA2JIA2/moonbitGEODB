@@ -5,15 +5,19 @@
 // Uses a custom binary format with length-prefixed strings and fixed-size
 // numeric encoding (big-endian) for portability.
 
+///|
 /// Magic bytes identifying an MGDB binary file ("MGDB").
 const MAGIC : Bytes = [0x4D, 0x47, 0x44, 0x42]
 
+///|
 /// Current binary format version.
 pub let binary_version : Int = 1
 
+///|
 /// Size of the file header in bytes.
 const HEADER_SIZE : Int = 32
 
+///|
 /// Encode a single GeoEntry to a binary record (with 4-byte size prefix).
 pub fn encode_entry(entry : @types.GeoEntry) -> Bytes {
   let w = BinWriter::new()
@@ -39,6 +43,7 @@ pub fn encode_entry(entry : @types.GeoEntry) -> Bytes {
   size_prefix + body
 }
 
+///|
 /// Decode a single GeoEntry from a binary record starting at offset.
 /// Returns (entry, new_offset).
 pub fn decode_entry(data : Bytes, offset : Int) -> (@types.GeoEntry, Int) {
@@ -68,15 +73,7 @@ pub fn decode_entry(data : Bytes, offset : Int) -> (@types.GeoEntry, Int) {
   let entry = @types.GeoEntry::make(
     id,
     name,
-    {
-      country,
-      province,
-      city,
-      district,
-      street,
-      postal_code,
-      detail,
-    },
+    { country, province, city, district, street, postal_code, detail, },
     @types.GeoPoint::make(lat, lng),
   )
   entry.tags = tags
@@ -84,11 +81,12 @@ pub fn decode_entry(data : Bytes, offset : Int) -> (@types.GeoEntry, Int) {
   (entry, r.position())
 }
 
+///|
 /// Encode a full database snapshot (header + entries) to Bytes.
 pub fn encode_snapshot(
   entries : Array[@types.GeoEntry],
   created_at : Int64,
-  updated_at : Int64
+  updated_at : Int64,
 ) -> Bytes {
   let entry_writer = BinWriter::new()
   for entry in entries {
@@ -114,11 +112,16 @@ pub fn encode_snapshot(
   header + entry_data
 }
 
+///|
 /// Decode a full database snapshot from Bytes.
 /// Returns (entries, created_at, updated_at) or an error message.
-pub fn decode_snapshot(data : Bytes) -> Result[(Array[@types.GeoEntry], Int64, Int64), String] {
+pub fn decode_snapshot(
+  data : Bytes,
+) -> Result[(Array[@types.GeoEntry], Int64, Int64), String] {
   if data.length() < HEADER_SIZE {
-    return Err("file too small: expected at least \{HEADER_SIZE} bytes, got \{data.length()}")
+    return Err(
+      "file too small: expected at least \{HEADER_SIZE} bytes, got \{data.length()}",
+    )
   }
 
   // Verify magic.
@@ -132,7 +135,9 @@ pub fn decode_snapshot(data : Bytes) -> Result[(Array[@types.GeoEntry], Int64, I
 
   let version = r.read_uint16()
   if version != binary_version {
-    return Err("unsupported binary version: expected \{binary_version}, got \{version}")
+    return Err(
+      "unsupported binary version: expected \{binary_version}, got \{version}",
+    )
   }
 
   let _flags = r.read_uint16()
@@ -161,6 +166,7 @@ pub fn decode_snapshot(data : Bytes) -> Result[(Array[@types.GeoEntry], Int64, I
   Ok((entries, created_at, updated_at))
 }
 
+///|
 /// Extract just the metadata from a binary file without decoding all entries.
 pub fn decode_meta(data : Bytes) -> Result[(Int, Int64, Int64, Int), String] {
   if data.length() < HEADER_SIZE {
@@ -184,13 +190,16 @@ pub fn decode_meta(data : Bytes) -> Result[(Int, Int64, Int64, Int), String] {
   Ok((version, created_at, updated_at, entry_count))
 }
 
+///|
 /// Validate the binary file structure (magic + version + checksum).
 pub fn validate_file(data : Bytes) -> Result[Unit, String] {
   match decode_meta(data) {
     Err(e) => Err(e)
     Ok((version, _, _, _)) => {
       if version != binary_version {
-        return Err("version mismatch: expected \{binary_version}, got \{version}")
+        return Err(
+          "version mismatch: expected \{binary_version}, got \{version}",
+        )
       }
       match decode_snapshot(data) {
         Err(e) => Err("checksum validation failed: \{e}")
@@ -202,6 +211,7 @@ pub fn validate_file(data : Bytes) -> Result[Unit, String] {
 
 // ---- tests ----
 
+///|
 test "encode/decode GeoEntry roundtrip" {
   let entry = @types.GeoEntry::make(
     "test-001",
@@ -238,6 +248,7 @@ test "encode/decode GeoEntry roundtrip" {
   @test.assert_eq(new_pos, encoded.length())
 }
 
+///|
 test "encode/decode snapshot roundtrip" {
   let entries : Array[@types.GeoEntry] = []
   entries.push({
@@ -297,6 +308,7 @@ test "encode/decode snapshot roundtrip" {
   }
 }
 
+///|
 test "decode_meta reads header correctly" {
   let entries : Array[@types.GeoEntry] = []
   let data = encode_snapshot(entries, 123456789L, 987654321L)
@@ -312,6 +324,7 @@ test "decode_meta reads header correctly" {
   }
 }
 
+///|
 test "validate_file passes for valid data" {
   let entries : Array[@types.GeoEntry] = []
   entries.push({
@@ -328,6 +341,7 @@ test "validate_file passes for valid data" {
   }
 }
 
+///|
 test "validate_file rejects corrupted data" {
   let entries : Array[@types.GeoEntry] = []
   entries.push({
@@ -348,7 +362,8 @@ test "validate_file rejects corrupted data" {
   // Build a corrupted version by flipping one byte in the entry area.
   let mut corrupted : Bytes = []
   for i in 0..<encoded.length() {
-    corrupted = corrupted + [if i == 33 { encoded[i] ^ 0xFF } else { encoded[i] }]
+    corrupted = corrupted +
+      [if i == 33 { encoded[i] ^ 0xFF } else { encoded[i] }]
   }
   // Corrupted should fail validation.
   match validate_file(corrupted) {
@@ -365,17 +380,17 @@ test "validate_file rejects corrupted data" {
   @test.assert_eq(ok, true)
 }
 
+///|
 test "empty entries snapshot" {
   let entries : Array[@types.GeoEntry] = []
   let data = encode_snapshot(entries, 0L, 0L)
   match decode_snapshot(data) {
     Err(e) => @test.assert_eq("should not error", e)
-    Ok((decoded, _, _)) => {
-      @test.assert_eq(decoded.length(), 0)
-    }
+    Ok((decoded, _, _)) => @test.assert_eq(decoded.length(), 0)
   }
 }
 
+///|
 test "snapshot with many entries" {
   let entries : Array[@types.GeoEntry] = []
   for i in 0..<100 {
@@ -383,8 +398,8 @@ test "snapshot with many entries" {
     let name_str = "Entry \{i}"
     let street_str = "测试路\{i}号"
     let postal_str = "\{100000 + i}"
-    let lat_val = 20.0 + (i.to_double()) * 0.1
-    let lng_val = 100.0 + (i.to_double()) * 0.1
+    let lat_val = 20.0 + i.to_double() * 0.1
+    let lng_val = 100.0 + i.to_double() * 0.1
     entries.push({
       id: id_str,
       name: name_str,

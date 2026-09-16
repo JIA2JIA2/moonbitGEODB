@@ -5,18 +5,15 @@ import {
   "moonbitlang/core/env",
   "moonbitlang/core/strconv",
   "moonbitlang/core/hashmap",
-  "JIA2JIA2/moonbitgeodb/lib/db" @db,
-  "JIA2JIA2/moonbitgeodb/lib/types" @types,
-  "JIA2JIA2/moonbitgeodb/lib/parser" @parser,
-  "JIA2JIA2/moonbitgeodb/lib/gen" @gen,
-  "JIA2JIA2/moonbitgeodb/lib/geo" @geo,
+  "JIA2JIA2/moonbitgeodb/lib/db",
+  "JIA2JIA2/moonbitgeodb/lib/types",
+  "JIA2JIA2/moonbitgeodb/lib/parser",
+  "JIA2JIA2/moonbitgeodb/lib/gen",
+  "JIA2JIA2/moonbitgeodb/lib/geo",
 }
 
+pkgtype(kind: "executable")
+
 options(
-  "is-main": true,
-  "link": {
-    "native": {
-      "cc-link-flags": "-L/usr/lib64",
-    },
-  },
+  link: { "native": { "cc-link-flags": "-L/usr/lib64" } },
 )

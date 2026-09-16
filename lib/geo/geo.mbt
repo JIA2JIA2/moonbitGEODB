@@ -1,30 +1,36 @@
 // Copyright 2026 moonbitGEODB contributors
 // SPDX-License-Identifier: Apache-2.0
 
+///|
 /// Earth's mean radius in kilometers (WGS84).
 pub let earth_radius_km : Double = 6371.0088
 
-///| Convert degrees to radians.
+///|
+/// Convert degrees to radians.
 pub fn to_rad(deg : Double) -> Double {
   deg * 3.14159265358979323846 / 180.0
 }
 
-///| Convert radians to degrees.
+///|
+/// Convert radians to degrees.
 pub fn to_deg(rad : Double) -> Double {
   rad * 180.0 / 3.14159265358979323846
 }
 
-///| Square helper.
+///|
+/// Square helper.
 fn sq(x : Double) -> Double {
   x * x
 }
 
-///| Square root via math.pow (no direct sqrt in core).
+///|
+/// Square root via math.pow (no direct sqrt in core).
 pub fn sqrt(x : Double) -> Double {
   @math.pow(x, 0.5)
 }
 
-///| Great-circle distance between two points (Haversine), in kilometers.
+///|
+/// Great-circle distance between two points (Haversine), in kilometers.
 pub fn haversine(p1 : @types.GeoPoint, p2 : @types.GeoPoint) -> Double {
   let lat1 = to_rad(p1.lat)
   let lat2 = to_rad(p2.lat)
@@ -36,7 +42,8 @@ pub fn haversine(p1 : @types.GeoPoint, p2 : @types.GeoPoint) -> Double {
   earth_radius_km * c
 }
 
-///| Initial bearing from p1 to p2 in degrees [0, 360).
+///|
+/// Initial bearing from p1 to p2 in degrees [0, 360).
 pub fn bearing(p1 : @types.GeoPoint, p2 : @types.GeoPoint) -> Double {
   let lat1 = to_rad(p1.lat)
   let lat2 = to_rad(p2.lat)
@@ -48,7 +55,8 @@ pub fn bearing(p1 : @types.GeoPoint, p2 : @types.GeoPoint) -> Double {
   (to_deg(theta) + 360.0) % 360.0
 }
 
-///| Test whether a point lies inside an axis-aligned bbox.
+///|
+/// Test whether a point lies inside an axis-aligned bbox.
 pub fn bbox_contains(b : @types.BBox, p : @types.GeoPoint) -> Bool {
   p.lat >= b.min_lat &&
   p.lat <= b.max_lat &&
@@ -56,7 +64,8 @@ pub fn bbox_contains(b : @types.BBox, p : @types.GeoPoint) -> Bool {
   p.lng <= b.max_lng
 }
 
-///| Approximate bbox centered at `center` covering a circle of `radius_km`.
+///|
+/// Approximate bbox centered at `center` covering a circle of `radius_km`.
 /// Uses equirectangular approximation: 1° lat ≈ 111.32 km,
 /// 1° lng ≈ 111.32 * cos(lat) km. Good enough for sub-city scale queries.
 pub fn bbox_around(center : @types.GeoPoint, radius_km : Double) -> @types.BBox {
@@ -78,11 +87,9 @@ pub fn bbox_around(center : @types.GeoPoint, radius_km : Double) -> @types.BBox 
   }
 }
 
-///| Intersect two bboxes; returns None if they don't overlap.
-pub fn bbox_intersect(
-  a : @types.BBox,
-  b : @types.BBox
-) -> @types.BBox? {
+///|
+/// Intersect two bboxes; returns None if they don't overlap.
+pub fn bbox_intersect(a : @types.BBox, b : @types.BBox) -> @types.BBox? {
   let min_lat = @cmp.maximum(a.min_lat, b.min_lat)
   let max_lat = @cmp.minimum(a.max_lat, b.max_lat)
   let min_lng = @cmp.maximum(a.min_lng, b.min_lng)
@@ -90,22 +97,23 @@ pub fn bbox_intersect(
   if min_lat > max_lat || min_lng > max_lng {
     None
   } else {
-    Some({ min_lat, max_lat, min_lng, max_lng })
+    Some({ min_lat, max_lat, min_lng, max_lng, })
   }
 }
 
 // ---- Geohash encoding / decoding ----
 
+///|
 /// Geohash base32 characters.
 let geohash_chars : String = "0123456789bcdefghjkmnpqrstuvwxyz"
 
+///|
 let geohash_char_array : Array[String] = [
-  "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
-  "b", "c", "d", "e", "f", "g", "h", "j", "k", "m",
-  "n", "p", "q", "r", "s", "t", "u", "v", "w", "x",
-  "y", "z",
+  "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "b", "c", "d", "e", "f", "g",
+  "h", "j", "k", "m", "n", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
 ]
 
+///|
 fn byte_to_string(b : Char) -> String {
   // Convert a Char to its 1-character string by looking up in the geohash array.
   let code = b.to_int()
@@ -120,7 +128,8 @@ fn byte_to_string(b : Char) -> String {
   ""
 }
 
-///| Encode a (lat, lng) pair into a Geohash string of given precision.
+///|
+/// Encode a (lat, lng) pair into a Geohash string of given precision.
 /// Precision 1..9 is supported (higher = more accurate).
 /// Returns empty string on invalid precision.
 pub fn geohash_encode(lat : Double, lng : Double, precision : Int) -> String {
@@ -167,12 +176,14 @@ pub fn geohash_encode(lat : Double, lng : Double, precision : Int) -> String {
   hash
 }
 
+///|
 fn geohash_char_at(n : Int) -> String {
   let i = n % 32
   geohash_char_array[i]
 }
 
-///| Decode a Geohash string back to a (lat, lng) pair.
+///|
+/// Decode a Geohash string back to a (lat, lng) pair.
 /// Returns (lat, lng) as a GeoPoint, or (0,0) on invalid input.
 pub fn geohash_decode(hash : String) -> @types.GeoPoint {
   if hash.length() == 0 {
@@ -212,6 +223,7 @@ pub fn geohash_decode(hash : String) -> @types.GeoPoint {
   @types.GeoPoint::make(lat, lng)
 }
 
+///|
 fn geohash_decode_char(ch : String) -> Int {
   let mut i = 0
   while i < geohash_char_array.length() {
@@ -225,7 +237,8 @@ fn geohash_decode_char(ch : String) -> Int {
 
 // ---- WGS84 ↔ GCJ-02 coordinate conversion ----
 
-///| Convert WGS84 coordinates to GCJ-02 (Mars coordinates).
+///|
+/// Convert WGS84 coordinates to GCJ-02 (Mars coordinates).
 /// This is the standard offset algorithm used by Chinese map providers.
 pub fn wgs84_to_gcj02(lng : Double, lat : Double) -> (Double, Double) {
   // Only apply offset within China's rough bounding box.
@@ -237,50 +250,93 @@ pub fn wgs84_to_gcj02(lng : Double, lat : Double) -> (Double, Double) {
   let radlat = lat / 180.0 * 3.14159265358979323846
   let sin_val = @math.sin(radlat)
   let magic = 1.0 + 0.000002 * sin_val
-  let dlat_final = (dlat * 180.0) / (6378245.0 * (1.0 - 0.00669342162296594323))
-  let dlng_final = (dlng * 180.0) / (6378245.0 * magic * @math.cos(radlat))
+  let dlat_final = dlat * 180.0 / (6378245.0 * (1.0 - 0.00669342162296594323))
+  let dlng_final = dlng * 180.0 / (6378245.0 * magic * @math.cos(radlat))
   (lng + dlng_final, lat + dlat_final)
 }
 
-///| Convert GCJ-02 coordinates back to WGS84.
+///|
+/// Convert GCJ-02 coordinates back to WGS84.
 pub fn gcj02_to_wgs84(lng : Double, lat : Double) -> (Double, Double) {
   let (glng, glat) = wgs84_to_gcj02(lng, lat)
   (lng * 2.0 - glng, lat * 2.0 - glat)
 }
 
+///|
 fn in_china(lng : Double, lat : Double) -> Bool {
   lng > 73.66 && lng < 135.05 && lat > 3.86 && lat < 53.55
 }
 
+///|
 fn transform_lat(x : Double, y : Double) -> Double {
   let abs_x = if x < 0.0 { -x } else { x }
-  let mut ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y +
+  let mut ret = -100.0 +
+    2.0 * x +
+    3.0 * y +
+    0.2 * y * y +
+    0.1 * x * y +
     0.2 * sqrt(abs_x)
-  ret = ret + (20.0 * @math.sin(6.0 * x * 3.14159265358979323846) +
-    20.0 * @math.sin(2.0 * x * 3.14159265358979323846)) * 2.0 / 3.0
-  ret = ret + (20.0 * @math.sin(y * 3.14159265358979323846) +
-    40.0 * @math.sin(y / 3.0 * 3.14159265358979323846)) * 2.0 / 3.0
-  ret = ret + (160.0 * @math.sin(y / 12.0 * 3.14159265358979323846) +
-    320 * @math.sin(y * 3.14159265358979323846 / 30.0)) * 2.0 / 3.0
+  ret = ret +
+    (
+      20.0 * @math.sin(6.0 * x * 3.14159265358979323846) +
+      20.0 * @math.sin(2.0 * x * 3.14159265358979323846)
+    ) *
+    2.0 /
+    3.0
+  ret = ret +
+    (
+      20.0 * @math.sin(y * 3.14159265358979323846) +
+      40.0 * @math.sin(y / 3.0 * 3.14159265358979323846)
+    ) *
+    2.0 /
+    3.0
+  ret = ret +
+    (
+      160.0 * @math.sin(y / 12.0 * 3.14159265358979323846) +
+      320 * @math.sin(y * 3.14159265358979323846 / 30.0)
+    ) *
+    2.0 /
+    3.0
   ret
 }
 
+///|
 fn transform_lng(x : Double, y : Double) -> Double {
   let abs_x = if x < 0.0 { -x } else { x }
-  let mut ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y +
+  let mut ret = 300.0 +
+    x +
+    2.0 * y +
+    0.1 * x * x +
+    0.1 * x * y +
     0.1 * sqrt(abs_x)
-  ret = ret + (20.0 * @math.sin(6.0 * x * 3.14159265358979323846) +
-    20.0 * @math.sin(2.0 * x * 3.14159265358979323846)) * 2.0 / 3.0
-  ret = ret + (20.0 * @math.sin(x * 3.14159265358979323846) +
-    40.0 * @math.sin(x / 3.0 * 3.14159265358979323846)) * 2.0 / 3.0
-  ret = ret + (150.0 * @math.sin(x / 12.0 * 3.14159265358979323846) +
-    300.0 * @math.sin(x / 30.0 * 3.14159265358979323846)) * 2.0 / 3.0
+  ret = ret +
+    (
+      20.0 * @math.sin(6.0 * x * 3.14159265358979323846) +
+      20.0 * @math.sin(2.0 * x * 3.14159265358979323846)
+    ) *
+    2.0 /
+    3.0
+  ret = ret +
+    (
+      20.0 * @math.sin(x * 3.14159265358979323846) +
+      40.0 * @math.sin(x / 3.0 * 3.14159265358979323846)
+    ) *
+    2.0 /
+    3.0
+  ret = ret +
+    (
+      150.0 * @math.sin(x / 12.0 * 3.14159265358979323846) +
+      300.0 * @math.sin(x / 30.0 * 3.14159265358979323846)
+    ) *
+    2.0 /
+    3.0
   ret
 }
 
 // ---- Convex Hull (Andrew's monotone chain) ----
 
-///| Compute the convex hull of a set of GeoPoints.
+///|
+/// Compute the convex hull of a set of GeoPoints.
 /// Returns an array of points forming the convex hull in counter-clockwise order.
 /// Returns empty array if fewer than 3 distinct points exist.
 pub fn convex_hull(points : Array[@types.GeoPoint]) -> Array[@types.GeoPoint] {
@@ -356,25 +412,40 @@ pub fn convex_hull(points : Array[@types.GeoPoint]) -> Array[@types.GeoPoint] {
   lower
 }
 
-fn cross_product(o : @types.GeoPoint, a : @types.GeoPoint, b : @types.GeoPoint) -> Double {
+///|
+fn cross_product(
+  o : @types.GeoPoint,
+  a : @types.GeoPoint,
+  b : @types.GeoPoint,
+) -> Double {
   (a.lat - o.lat) * (b.lng - o.lng) - (a.lng - o.lng) * (b.lat - o.lat)
 }
 
-fn sort_points_by_lat(points : Array[@types.GeoPoint]) -> Array[@types.GeoPoint] {
+///|
+fn sort_points_by_lat(
+  points : Array[@types.GeoPoint],
+) -> Array[@types.GeoPoint] {
   let result = points
   result.sort_by(fn(a, b) {
-    if a.lat < b.lat { -1 }
-    else if a.lat > b.lat { 1 }
-    else {
-      if a.lng < b.lng { -1 }
-      else if a.lng > b.lng { 1 }
-      else { 0 }
+    if a.lat < b.lat {
+      -1
+    } else if a.lat > b.lat {
+      1
+    } else if a.lng < b.lng {
+      -1
+    } else if a.lng > b.lng {
+      1
+    } else {
+      0
     }
   })
   result
 }
 
-fn remove_duplicate_points(points : Array[@types.GeoPoint]) -> Array[@types.GeoPoint] {
+///|
+fn remove_duplicate_points(
+  points : Array[@types.GeoPoint],
+) -> Array[@types.GeoPoint] {
   let result : Array[@types.GeoPoint] = []
   for p in points {
     if result.length() == 0 {
@@ -389,7 +460,8 @@ fn remove_duplicate_points(points : Array[@types.GeoPoint]) -> Array[@types.GeoP
   result
 }
 
-///| Compute the area of a polygon defined by an ordered list of GeoPoints.
+///|
+/// Compute the area of a polygon defined by an ordered list of GeoPoints.
 /// Uses the spherical excess approximation (shoelace on projected lat/lng).
 /// Returns area in square kilometers. Returns 0 for fewer than 3 points.
 pub fn polygon_area(points : Array[@types.GeoPoint]) -> Double {
@@ -417,9 +489,13 @@ pub fn polygon_area(points : Array[@types.GeoPoint]) -> Double {
   abs_area / 2.0 / 1_000_000.0
 }
 
-///| Test whether a point lies inside a polygon (ray casting algorithm).
+///|
+/// Test whether a point lies inside a polygon (ray casting algorithm).
 /// Returns `true` if the point is strictly inside the polygon.
-pub fn point_in_polygon(point : @types.GeoPoint, polygon : Array[@types.GeoPoint]) -> Bool {
+pub fn point_in_polygon(
+  point : @types.GeoPoint,
+  polygon : Array[@types.GeoPoint],
+) -> Bool {
   let n = polygon.length()
   if n < 3 {
     return false
@@ -430,8 +506,9 @@ pub fn point_in_polygon(point : @types.GeoPoint, polygon : Array[@types.GeoPoint
   while i < n {
     let pi = polygon[i]
     let pj = polygon[j]
-    let intersect = ((pi.lat > point.lat) != (pj.lat > point.lat)) &&
-      (point.lng < (pj.lng - pi.lng) * (point.lat - pi.lat) / (pj.lat - pi.lat) + pi.lng)
+    let intersect = (pi.lat > point.lat) != (pj.lat > point.lat) &&
+      point.lng <
+      (pj.lng - pi.lng) * (point.lat - pi.lat) / (pj.lat - pi.lat) + pi.lng
     if intersect {
       inside = !inside
     }
@@ -441,7 +518,8 @@ pub fn point_in_polygon(point : @types.GeoPoint, polygon : Array[@types.GeoPoint
   inside
 }
 
-///| Return the 9 geohash neighbors (3×3 grid) around a given geohash.
+///|
+/// Return the 9 geohash neighbors (3×3 grid) around a given geohash.
 /// The center hash is included as the first element.
 pub fn geohash_neighbors(hash : String) -> Array[String] {
   if hash.length() == 0 {
@@ -457,15 +535,28 @@ pub fn geohash_neighbors(hash : String) -> Array[String] {
     for dlng in dlng_vals {
       let lat = center.lat + dlat
       let lng = center.lng + dlng
-      let clamped_lat = if lat > 90.0 { 90.0 } else { if lat < -90.0 { -90.0 } else { lat } }
-      let clamped_lng = if lng > 180.0 { 180.0 } else { if lng < -180.0 { -180.0 } else { lng } }
+      let clamped_lat = if lat > 90.0 {
+        90.0
+      } else if lat < -90.0 {
+        -90.0
+      } else {
+        lat
+      }
+      let clamped_lng = if lng > 180.0 {
+        180.0
+      } else if lng < -180.0 {
+        -180.0
+      } else {
+        lng
+      }
       results.push(geohash_encode(clamped_lat, clamped_lng, precision))
     }
   }
   results
 }
 
-///| Return the approximate cell size (lat_span, lng_span) for a geohash precision.
+///|
+/// Return the approximate cell size (lat_span, lng_span) for a geohash precision.
 pub fn geohash_cell_size(precision : Int) -> (Double, Double) {
   if precision < 1 || precision > 9 {
     return (0.0, 0.0)
@@ -486,12 +577,13 @@ pub fn geohash_cell_size(precision : Int) -> (Double, Double) {
   (lat_span, lng_span)
 }
 
-///| Convert a geohash string to its approximate bounding box.
+///|
+/// Convert a geohash string to its approximate bounding box.
 pub fn geohash_to_bbox(hash : String) -> @types.BBox {
   if hash.length() == 0 {
     return @types.BBox::from_corners(
       @types.GeoPoint::make(-90.0, -180.0),
-      @types.GeoPoint::make(90.0, 180.0)
+      @types.GeoPoint::make(90.0, 180.0),
     )
   }
   let precision = hash.length()
@@ -504,7 +596,8 @@ pub fn geohash_to_bbox(hash : String) -> @types.BBox {
   @types.BBox::from_corners(sw, ne)
 }
 
-///| Compute the average nearest-neighbor distance for a set of points.
+///|
+/// Compute the average nearest-neighbor distance for a set of points.
 pub fn average_nn_distance(points : Array[@types.GeoPoint]) -> Double {
   let n = points.length()
   if n < 2 {
@@ -529,5 +622,9 @@ pub fn average_nn_distance(points : Array[@types.GeoPoint]) -> Double {
     count = count + 1
     i = i + 1
   }
-  if count == 0 { 0.0 } else { total / (count.to_double()) }
+  if count == 0 {
+    0.0
+  } else {
+    total / count.to_double()
+  }
 }

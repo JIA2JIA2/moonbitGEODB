@@ -1,6 +1,7 @@
 // Copyright 2026 moonbitGEODB contributors
 // SPDX-License-Identifier: Apache-2.0
 
+///|
 /// Errors raised by the address / coordinate parser.
 pub(all) suberror ParseError {
   EmptyInput
@@ -8,7 +9,8 @@ pub(all) suberror ParseError {
   BadCoordinate(String)
 } derive(Eq, Debug, ToJson, FromJson)
 
-///| Human-readable representation of a parse error.
+///|
+/// Human-readable representation of a parse error.
 pub impl Show for ParseError with fn output(self, logger) {
   match self {
     EmptyInput => logger.write_string("EmptyInput")
@@ -21,7 +23,8 @@ pub impl Show for ParseError with fn output(self, logger) {
   }
 }
 
-///| A parsed address field layout: which input segment goes to which field.
+///|
+/// A parsed address field layout: which input segment goes to which field.
 priv struct FieldAssign {
   mut country : String
   mut province : String
@@ -32,7 +35,8 @@ priv struct FieldAssign {
   mut detail : String
 }
 
-///| Detect the most likely separator in the input string.
+///|
+/// Detect the most likely separator in the input string.
 /// Tries comma, slash, semicolon, then " > ". Returns the first one that
 /// splits the string into >= 2 non-empty segments.
 fn detect_separator(input : String) -> String? {
@@ -46,7 +50,8 @@ fn detect_separator(input : String) -> String? {
   None
 }
 
-///| Check whether a string looks like a postal/ZIP code:
+///|
+/// Check whether a string looks like a postal/ZIP code:
 /// all ASCII digits, length 3..=10.
 fn looks_like_postal(s : String) -> Bool {
   let n = s.length()
@@ -56,7 +61,8 @@ fn looks_like_postal(s : String) -> Bool {
   s.all(fn(c) { c.is_digit(10) })
 }
 
-///| Strip surrounding whitespace and quotes; returns an owned String.
+///|
+/// Strip surrounding whitespace and quotes; returns an owned String.
 fn clean(s : StringView) -> String {
   let t = s.trim().to_owned()
   let n = t.length()
@@ -70,7 +76,8 @@ fn clean(s : StringView) -> String {
   t
 }
 
-///| Assign raw segments to Address fields.
+///|
+/// Assign raw segments to Address fields.
 /// Strategy: detect postal code if any segment looks like one;
 /// the rest are mapped in order to country, province, city, district, street, detail.
 fn assign_fields(segments : Array[String]) -> FieldAssign {
@@ -118,18 +125,21 @@ fn assign_fields(segments : Array[String]) -> FieldAssign {
   fa
 }
 
-///| Check if a character is in the CJK Unified Ideographs range.
+///|
+/// Check if a character is in the CJK Unified Ideographs range.
 fn is_cjk(c : Char) -> Bool {
   let code = c.to_int()
   code >= 0x4E00 && code <= 0x9FFF
 }
 
-///| Check whether the string contains at least one CJK character.
+///|
+/// Check whether the string contains at least one CJK character.
 fn has_chinese(text : String) -> Bool {
   text.any(fn(c) { is_cjk(c) })
 }
 
-///| Find the end index (exclusive) of the province-level segment.
+///|
+/// Find the end index (exclusive) of the province-level segment.
 /// Matches suffixes: 省, 市 (直辖市), 自治区, 特别行政区, 特区.
 /// Returns None if no province-level suffix is found.
 fn find_province_end(text : String) -> Int? {
@@ -154,7 +164,8 @@ fn find_province_end(text : String) -> Int? {
   None
 }
 
-///| Find the end index (exclusive) of the city-level segment.
+///|
+/// Find the end index (exclusive) of the city-level segment.
 /// Matches suffixes: 市, 州, 盟, 地区.
 fn find_city_end(text : String, start : Int) -> Int? {
   let n = text.length()
@@ -173,7 +184,8 @@ fn find_city_end(text : String, start : Int) -> Int? {
   None
 }
 
-///| Find the end index (exclusive) of the district-level segment.
+///|
+/// Find the end index (exclusive) of the district-level segment.
 /// Matches suffixes: 区, 县, 市, 旗.
 fn find_district_end(text : String, start : Int) -> Int? {
   let n = text.length()
@@ -192,7 +204,8 @@ fn find_district_end(text : String, start : Int) -> Int? {
   None
 }
 
-///| Find the end index (exclusive) of the street-level segment.
+///|
+/// Find the end index (exclusive) of the street-level segment.
 /// Matches suffixes: 路, 街, 道, 巷, 弄, 街, 线.
 fn find_street_end(text : String, start : Int) -> Int? {
   let n = text.length()
@@ -211,7 +224,8 @@ fn find_street_end(text : String, start : Int) -> Int? {
   None
 }
 
-///| Parse a Chinese address without explicit separators.
+///|
+/// Parse a Chinese address without explicit separators.
 /// Handles addresses like "北京市海淀区颐和园路5号" by recognizing
 /// administrative division and street suffixes.
 ///
@@ -299,7 +313,11 @@ pub fn parse_chinese_address(input : String) -> @types.Address {
       if sub.all(fn(c) { c.is_digit(10) }) {
         postal = sub.to_owned()
         // Remove postal code from detail.
-        let before = if i == 0 { "" } else { detail.get_view(end=i).unwrap().to_owned() }
+        let before = if i == 0 {
+          ""
+        } else {
+          detail.get_view(end=i).unwrap().to_owned()
+        }
         let after = if i + 6 >= detail.length() {
           ""
         } else {
@@ -336,7 +354,8 @@ pub fn parse_chinese_address(input : String) -> @types.Address {
   }
 }
 
-///| Parse a free-form address string into a structured `Address`.
+///|
+/// Parse a free-form address string into a structured `Address`.
 ///
 /// Supported formats (auto-detected):
 ///   "中国,北京,北京,海淀区,中关村大街,100080"
@@ -353,15 +372,14 @@ pub fn parse_address(input : String) -> @types.Address raise ParseError {
     raise EmptyInput
   }
   match detect_separator(trimmed) {
-    None => {
+    None =>
       // No separator found: try Chinese address parser if input contains CJK.
       if has_chinese(trimmed) {
         parse_chinese_address(trimmed)
       } else {
         raise NoSeparatorFound(trimmed)
       }
-    }
-    Some(sep) => {
+    Some(sep) =>
       // If the input contains Chinese characters, prefer the Chinese parser
       // over a naive space-based split, which would mis-parse CJK addresses.
       if has_chinese(trimmed) {
@@ -388,11 +406,11 @@ pub fn parse_address(input : String) -> @types.Address raise ParseError {
           detail: fa.detail,
         }
       }
-    }
   }
 }
 
-///| Parse a "lat,lng" coordinate string into a `GeoPoint`.
+///|
+/// Parse a "lat,lng" coordinate string into a `GeoPoint`.
 /// Accepts comma, semicolon, or whitespace as separator.
 /// Both components must parse as doubles; lat in [-90, 90], lng in [-180, 180].
 pub fn parse_coordinate(input : String) -> @types.GeoPoint raise ParseError {
@@ -411,24 +429,25 @@ pub fn parse_coordinate(input : String) -> @types.GeoPoint raise ParseError {
       let lng_trimmed = lng_part.trim().to_owned()
       // If there's a trailing whitespace+something (e.g. altitude), cut at first space.
       let lng_str = match lng_trimmed.find_by(fn(c) { c == ' ' || c == ',' }) {
-        Some(end) => lng_trimmed.get_view(end=end).unwrap().to_owned()
+        Some(end) => lng_trimmed.get_view(end~).unwrap().to_owned()
         None => lng_trimmed
       }
-      let lat = try @string.parse_double(lat_str) catch {
+      let lat = @string.parse_double(lat_str) catch {
         _ => raise BadCoordinate(trimmed)
       }
-      let lng = try @string.parse_double(lng_str) catch {
+      let lng = @string.parse_double(lng_str) catch {
         _ => raise BadCoordinate(trimmed)
       }
       if lat < -90.0 || lat > 90.0 || lng < -180.0 || lng > 180.0 {
         raise BadCoordinate(trimmed)
       }
-      { lat, lng }
+      { lat, lng, }
     }
   }
 }
 
-///| Parse a full record line of the form:
+///|
+/// Parse a full record line of the form:
 ///   "<name>\t<lat>,<lng>\t<address>"
 /// where <address> is any string accepted by `parse_address`.
 /// Tab-separated; if no tabs present, the whole line is treated as the name
@@ -439,27 +458,25 @@ pub fn parse_record_line(line : String) -> @types.GeoEntry raise ParseError {
     raise EmptyInput
   }
   let parts = trimmed.split("\t").collect()
-  let name = if parts.length() >= 1 {
-    clean(parts[0])
-  } else {
-    ""
-  }
+  let name = if parts.length() >= 1 { clean(parts[0]) } else { "" }
   let (location, address) = if parts.length() >= 3 {
-    let loc = try parse_coordinate(clean(parts[1])) catch {
+    let loc = parse_coordinate(clean(parts[1])) catch {
       _ => @types.GeoPoint::make(0.0, 0.0)
     }
-    let addr = try parse_address(clean(parts[2])) catch {
+    let addr = parse_address(clean(parts[2])) catch {
       _ => @types.Address::empty()
     }
     (loc, addr)
   } else if parts.length() == 2 {
     // Try coordinate first; if that fails, treat as address.
     let second = clean(parts[1])
-    let loc = try parse_coordinate(second) catch {
+    let loc = parse_coordinate(second) catch {
       _ => @types.GeoPoint::make(0.0, 0.0)
     }
     let addr = if loc.lat == 0.0 && loc.lng == 0.0 {
-      try parse_address(second) catch { _ => @types.Address::empty() }
+      parse_address(second) catch {
+        _ => @types.Address::empty()
+      }
     } else {
       @types.Address::empty()
     }

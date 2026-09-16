@@ -1,6 +1,7 @@
 // Copyright 2026 moonbitGEODB contributors
 // SPDX-License-Identifier: Apache-2.0
 
+///|
 /// A combined spatial + name + tag + address index over `GeoEntry` records.
 ///
 /// - Spatial: a uniform lat/lng grid buckets entry IDs for fast bbox queries.
@@ -22,11 +23,13 @@ pub(all) struct Index {
   cell_size : Double // degrees
 } derive(Eq, Debug)
 
-///| Default grid cell size: 0.1° (~11 km at the equator).
+///|
+/// Default grid cell size: 0.1° (~11 km at the equator).
 pub let default_cell_size : Double = 0.1
 
-///| Create an empty index with a given grid cell size in degrees.
-pub fn Index::new(cell_size~ : Double = default_cell_size) -> Index {
+///|
+/// Create an empty index with a given grid cell size in degrees.
+pub fn Index::new(cell_size? : Double = default_cell_size) -> Index {
   {
     entries: @hashmap.HashMap([]),
     grid: @hashmap.HashMap([]),
@@ -39,12 +42,14 @@ pub fn Index::new(cell_size~ : Double = default_cell_size) -> Index {
   }
 }
 
-///| Number of entries currently indexed.
+///|
+/// Number of entries currently indexed.
 pub fn Index::size(self : Index) -> Int {
   self.entries.length()
 }
 
-///| Floor that handles negative numbers correctly (toward -inf).
+///|
+/// Floor that handles negative numbers correctly (toward -inf).
 fn math_floor(x : Double) -> Int {
   let i = x.to_int()
   if x < 0.0 && x != i.to_double() {
@@ -54,14 +59,16 @@ fn math_floor(x : Double) -> Int {
   }
 }
 
-///| Compute the grid cell key for a geographic point.
+///|
+/// Compute the grid cell key for a geographic point.
 fn cell_key(lat : Double, lng : Double, cell_size : Double) -> String {
   let lat_idx = math_floor((lat + 90.0) / cell_size)
   let lng_idx = math_floor((lng + 180.0) / cell_size)
   "\{lat_idx},\{lng_idx}"
 }
 
-///| Insert (or replace) an entry. Updates spatial, name, tag, and address indexes.
+///|
+/// Insert (or replace) an entry. Updates spatial, name, tag, and address indexes.
 pub fn Index::insert(self : Index, entry : @types.GeoEntry) -> Unit {
   // Remove old version if present (so stale grid/name slots get cleared).
   if self.entries.contains(entry.id) {
@@ -116,7 +123,8 @@ pub fn Index::insert(self : Index, entry : @types.GeoEntry) -> Unit {
   }
 }
 
-///| Remove an entry by id. Returns the removed entry if it existed.
+///|
+/// Remove an entry by id. Returns the removed entry if it existed.
 pub fn Index::remove(self : Index, id : String) -> @types.GeoEntry? {
   match self.entries.get(id) {
     None => None
@@ -215,21 +223,24 @@ pub fn Index::remove(self : Index, id : String) -> @types.GeoEntry? {
   }
 }
 
-///| Lookup an entry by id.
+///|
+/// Lookup an entry by id.
 pub fn Index::get(self : Index, id : String) -> @types.GeoEntry? {
   self.entries.get(id)
 }
 
-///| Iterate over all entries. Order is unspecified.
+///|
+/// Iterate over all entries. Order is unspecified.
 pub fn Index::iter(self : Index) -> Iter[@types.GeoEntry] {
   self.entries.iter().map(fn(p) { p.1 })
 }
 
-///| Range query: return all entries whose location lies inside `bbox`.
+///|
+/// Range query: return all entries whose location lies inside `bbox`.
 /// Uses the grid to limit the scan to overlapping cells.
 pub fn Index::query_bbox(
   self : Index,
-  bbox : @types.BBox
+  bbox : @types.BBox,
 ) -> Array[@types.GeoEntry] {
   let result : Array[@types.GeoEntry] = []
   let min_lat_idx = math_floor((bbox.min_lat + 90.0) / self.cell_size)
@@ -261,14 +272,15 @@ pub fn Index::query_bbox(
   result
 }
 
-///| k nearest-neighbour query. Returns up to `k` (entry, distance_km) pairs
+///|
+/// k nearest-neighbour query. Returns up to `k` (entry, distance_km) pairs
 /// sorted by ascending distance. Falls back to a linear scan over all entries;
 /// suitable for tens of thousands of records. For larger scale, an R-tree
 /// would be appropriate.
 pub fn Index::query_nearest(
   self : Index,
   point : @types.GeoPoint,
-  k : Int
+  k : Int,
 ) -> Array[(@types.GeoEntry, Double)] {
   if k <= 0 {
     return []
@@ -300,10 +312,11 @@ pub fn Index::query_nearest(
   out
 }
 
-///| Exact (case-insensitive) name lookup.
+///|
+/// Exact (case-insensitive) name lookup.
 pub fn Index::find_by_name(
   self : Index,
-  name : String
+  name : String,
 ) -> Array[@types.GeoEntry] {
   let key = name.to_lower()
   match self.by_name.get(key) {
@@ -321,11 +334,12 @@ pub fn Index::find_by_name(
   }
 }
 
-///| Prefix (case-insensitive) name lookup. Returns entries whose name starts
+///|
+/// Prefix (case-insensitive) name lookup. Returns entries whose name starts
 /// with the given prefix.
 pub fn Index::find_name_prefix(
   self : Index,
-  prefix : String
+  prefix : String,
 ) -> Array[@types.GeoEntry] {
   let p = prefix.to_lower()
   if p.length() == 0 {
@@ -340,10 +354,11 @@ pub fn Index::find_name_prefix(
   out
 }
 
-///| Substring (case-insensitive) name lookup.
+///|
+/// Substring (case-insensitive) name lookup.
 pub fn Index::find_name_contains(
   self : Index,
-  needle : String
+  needle : String,
 ) -> Array[@types.GeoEntry] {
   let n = needle.to_lower()
   if n.length() == 0 {
@@ -358,16 +373,15 @@ pub fn Index::find_name_contains(
   out
 }
 
-///| Return all entries as an array (snapshot copy).
+///|
+/// Return all entries as an array (snapshot copy).
 pub fn Index::to_array(self : Index) -> Array[@types.GeoEntry] {
   self.entries.values().collect()
 }
 
-///| Find entries that have a specific tag (case-insensitive).
-pub fn Index::find_by_tag(
-  self : Index,
-  tag : String
-) -> Array[@types.GeoEntry] {
+///|
+/// Find entries that have a specific tag (case-insensitive).
+pub fn Index::find_by_tag(self : Index, tag : String) -> Array[@types.GeoEntry] {
   let key = tag.to_lower()
   match self.by_tag.get(key) {
     None => []
@@ -384,10 +398,11 @@ pub fn Index::find_by_tag(
   }
 }
 
-///| Find entries that have ALL the specified tags (AND logic).
+///|
+/// Find entries that have ALL the specified tags (AND logic).
 pub fn Index::find_by_all_tags(
   self : Index,
-  tags : Array[String]
+  tags : Array[String],
 ) -> Array[@types.GeoEntry] {
   if tags.length() == 0 {
     return self.to_array()
@@ -403,11 +418,10 @@ pub fn Index::find_by_all_tags(
       for id in ids {
         match self.entries.get(id) {
           None => ()
-          Some(entry) => {
+          Some(entry) =>
             if check_all_tags(entry.tags, sorted_tags) {
               result.push(entry)
             }
-          }
         }
       }
       result
@@ -416,7 +430,9 @@ pub fn Index::find_by_all_tags(
 }
 
 ///| Helper: check whether `tags` (already lower-cased) are all present
-///| in `entry_tags` (compared case-insensitively).
+
+///|
+/// in `entry_tags` (compared case-insensitively).
 fn check_all_tags(entry_tags : Array[String], tags : Array[String]) -> Bool {
   for t in tags {
     let mut found = false
@@ -434,7 +450,9 @@ fn check_all_tags(entry_tags : Array[String], tags : Array[String]) -> Bool {
 }
 
 ///| Helper: sort a list of lower-cased tags by ascending candidate-set
-///| size (so that the most selective tag is checked first).
+
+///|
+/// size (so that the most selective tag is checked first).
 fn sort_tag_list(tags : Array[String], idx : Index) -> Array[String] {
   let out = tags
   out.sort_by(fn(a, b) {
@@ -446,15 +464,22 @@ fn sort_tag_list(tags : Array[String], idx : Index) -> Array[String] {
       Some(arr) => arr.length()
       None => 0
     }
-    if la < lb { -1 } else if la > lb { 1 } else { 0 }
+    if la < lb {
+      -1
+    } else if la > lb {
+      1
+    } else {
+      0
+    }
   })
   out
 }
 
-///| Find entries that have ANY of the specified tags (OR logic).
+///|
+/// Find entries that have ANY of the specified tags (OR logic).
 pub fn Index::find_by_any_tags(
   self : Index,
-  tags : Array[String]
+  tags : Array[String],
 ) -> Array[@types.GeoEntry] {
   if tags.length() == 0 {
     return []
@@ -465,7 +490,7 @@ pub fn Index::find_by_any_tags(
     let key = tag.to_lower()
     match self.by_tag.get(key) {
       None => ()
-      Some(ids) => {
+      Some(ids) =>
         for id in ids {
           if !seen.contains(id) {
             seen[id] = true
@@ -475,16 +500,16 @@ pub fn Index::find_by_any_tags(
             }
           }
         }
-      }
     }
   }
   out
 }
 
-///| Find entries by province (case-insensitive).
+///|
+/// Find entries by province (case-insensitive).
 pub fn Index::find_by_province(
   self : Index,
-  province : String
+  province : String,
 ) -> Array[@types.GeoEntry] {
   let key = province.to_lower()
   match self.by_province.get(key) {
@@ -502,10 +527,11 @@ pub fn Index::find_by_province(
   }
 }
 
-///| Find entries by city (case-insensitive).
+///|
+/// Find entries by city (case-insensitive).
 pub fn Index::find_by_city(
   self : Index,
-  city : String
+  city : String,
 ) -> Array[@types.GeoEntry] {
   let key = city.to_lower()
   match self.by_city.get(key) {
@@ -523,10 +549,11 @@ pub fn Index::find_by_city(
   }
 }
 
-///| Find entries by district (case-insensitive).
+///|
+/// Find entries by district (case-insensitive).
 pub fn Index::find_by_district(
   self : Index,
-  district : String
+  district : String,
 ) -> Array[@types.GeoEntry] {
   let key = district.to_lower()
   match self.by_district.get(key) {
@@ -544,17 +571,18 @@ pub fn Index::find_by_district(
   }
 }
 
-///| Find entries by province AND city (case-insensitive).
+///|
+/// Find entries by province AND city (case-insensitive).
 pub fn Index::find_by_province_city(
   self : Index,
   province : String,
-  city : String
+  city : String,
 ) -> Array[@types.GeoEntry] {
   let prov_key = province.to_lower()
   let city_key = city.to_lower()
   match self.by_province.get(prov_key) {
     None => []
-    Some(prov_ids) => {
+    Some(prov_ids) =>
       match self.by_city.get(city_key) {
         None => []
         Some(city_ids) => {
@@ -575,11 +603,11 @@ pub fn Index::find_by_province_city(
           out
         }
       }
-    }
   }
 }
 
-///| List all unique tags in the index.
+///|
+/// List all unique tags in the index.
 pub fn Index::list_tags(self : Index) -> Array[String] {
   let out : Array[String] = []
   for key in self.by_tag.keys() {
@@ -589,7 +617,8 @@ pub fn Index::list_tags(self : Index) -> Array[String] {
   out
 }
 
-///| List all unique provinces in the index.
+///|
+/// List all unique provinces in the index.
 pub fn Index::list_provinces(self : Index) -> Array[String] {
   let out : Array[String] = []
   for key in self.by_province.keys() {
@@ -599,7 +628,8 @@ pub fn Index::list_provinces(self : Index) -> Array[String] {
   out
 }
 
-///| List all unique cities in the index.
+///|
+/// List all unique cities in the index.
 pub fn Index::list_cities(self : Index) -> Array[String] {
   let out : Array[String] = []
   for key in self.by_city.keys() {
@@ -609,7 +639,8 @@ pub fn Index::list_cities(self : Index) -> Array[String] {
   out
 }
 
-///| List all unique districts in the index.
+///|
+/// List all unique districts in the index.
 pub fn Index::list_districts(self : Index) -> Array[String] {
   let out : Array[String] = []
   for key in self.by_district.keys() {
@@ -621,7 +652,8 @@ pub fn Index::list_districts(self : Index) -> Array[String] {
 
 // ---- Geofence / advanced queries ----
 
-///| Check whether a point lies inside the index's combined bounding box.
+///|
+/// Check whether a point lies inside the index's combined bounding box.
 /// Returns None if the index is empty.
 pub fn Index::contains_point(self : Index, point : @types.GeoPoint) -> Bool {
   match self.compute_bbox() {
@@ -630,7 +662,8 @@ pub fn Index::contains_point(self : Index, point : @types.GeoPoint) -> Bool {
   }
 }
 
-///| Compute the combined bounding box of all entries.
+///|
+/// Compute the combined bounding box of all entries.
 pub fn Index::compute_bbox(self : Index) -> @types.BBox? {
   let entries = self.to_array()
   if entries.length() == 0 {
@@ -641,20 +674,29 @@ pub fn Index::compute_bbox(self : Index) -> @types.BBox? {
   let mut min_lng = 180.0
   let mut max_lng = -180.0
   for e in entries {
-    if e.location.lat < min_lat { min_lat = e.location.lat }
-    if e.location.lat > max_lat { max_lat = e.location.lat }
-    if e.location.lng < min_lng { min_lng = e.location.lng }
-    if e.location.lng > max_lng { max_lng = e.location.lng }
+    if e.location.lat < min_lat {
+      min_lat = e.location.lat
+    }
+    if e.location.lat > max_lat {
+      max_lat = e.location.lat
+    }
+    if e.location.lng < min_lng {
+      min_lng = e.location.lng
+    }
+    if e.location.lng > max_lng {
+      max_lng = e.location.lng
+    }
   }
-  Some({ min_lat, max_lat, min_lng, max_lng })
+  Some({ min_lat, max_lat, min_lng, max_lng, })
 }
 
-///| Find entries whose distance to a reference point is within `max_km`.
+///|
+/// Find entries whose distance to a reference point is within `max_km`.
 /// Returns (entry, distance_km) pairs sorted by ascending distance.
 pub fn Index::find_within_distance(
   self : Index,
   point : @types.GeoPoint,
-  max_km : Double
+  max_km : Double,
 ) -> Array[(@types.GeoEntry, Double)] {
   let bbox = @geo.bbox_around(point, max_km)
   let candidates = self.query_bbox(bbox)
@@ -665,30 +707,49 @@ pub fn Index::find_within_distance(
       pairs.push((e, d))
     }
   }
-  pairs.sort_by(fn(a, b) { if a.1 < b.1 { -1 } else if a.1 > b.1 { 1 } else { 0 } })
+  pairs.sort_by(fn(a, b) {
+    if a.1 < b.1 {
+      -1
+    } else if a.1 > b.1 {
+      1
+    } else {
+      0
+    }
+  })
   pairs
 }
 
-///| Find entries sorted by distance to a reference point (no radius filter).
+///|
+/// Find entries sorted by distance to a reference point (no radius filter).
 pub fn Index::find_sorted_by_distance(
   self : Index,
-  point : @types.GeoPoint
+  point : @types.GeoPoint,
 ) -> Array[(@types.GeoEntry, Double)] {
   let pairs : Array[(@types.GeoEntry, Double)] = []
   for e in self.to_array() {
     let d = @geo.haversine(point, e.location)
     pairs.push((e, d))
   }
-  pairs.sort_by(fn(a, b) { if a.1 < b.1 { -1 } else if a.1 > b.1 { 1 } else { 0 } })
+  pairs.sort_by(fn(a, b) {
+    if a.1 < b.1 {
+      -1
+    } else if a.1 > b.1 {
+      1
+    } else {
+      0
+    }
+  })
   pairs
 }
 
 ///| Update an existing entry's location. Returns true if the entry existed
-///| and was updated.
+
+///|
+/// and was updated.
 pub fn Index::update_location(
   self : Index,
   id : String,
-  new_location : @types.GeoPoint
+  new_location : @types.GeoPoint,
 ) -> Bool {
   match self.entries.get(id) {
     None => false
@@ -708,12 +769,10 @@ pub fn Index::update_location(
 }
 
 ///| Update an existing entry's name. Returns true if the entry existed
-///| and was updated.
-pub fn Index::update_name(
-  self : Index,
-  id : String,
-  new_name : String
-) -> Bool {
+
+///|
+/// and was updated.
+pub fn Index::update_name(self : Index, id : String, new_name : String) -> Bool {
   match self.entries.get(id) {
     None => false
     Some(entry) => {

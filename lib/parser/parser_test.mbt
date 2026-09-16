@@ -1,30 +1,35 @@
 // Copyright 2026 moonbitGEODB contributors
 // SPDX-License-Identifier: Apache-2.0
 
+///|
 test "parse_coordinate - basic comma form" {
   let p = parse_coordinate("39.9,116.4")
   @test.assert_eq(p.lat, 39.9)
   @test.assert_eq(p.lng, 116.4)
 }
 
+///|
 test "parse_coordinate - semicolon separator" {
   let p = parse_coordinate("39.9; 116.4")
   @test.assert_eq(p.lat, 39.9)
   @test.assert_eq(p.lng, 116.4)
 }
 
+///|
 test "parse_coordinate - whitespace separator" {
   let p = parse_coordinate("39.9 116.4")
   @test.assert_eq(p.lat, 39.9)
   @test.assert_eq(p.lng, 116.4)
 }
 
+///|
 test "parse_coordinate - negative values" {
   let p = parse_coordinate("-33.8688, 151.2093")
   @test.assert_eq(p.lat, -33.8688)
   @test.assert_eq(p.lng, 151.2093)
 }
 
+///|
 test "parse_coordinate - empty input raises" {
   let raised = try {
     ignore(parse_coordinate("   "))
@@ -35,6 +40,7 @@ test "parse_coordinate - empty input raises" {
   @test.assert_eq(raised, true)
 }
 
+///|
 test "parse_coordinate - out-of-range lat raises" {
   let raised = try {
     ignore(parse_coordinate("91.0, 0.0"))
@@ -45,6 +51,7 @@ test "parse_coordinate - out-of-range lat raises" {
   @test.assert_eq(raised, true)
 }
 
+///|
 test "parse_coordinate - no separator raises" {
   let raised = try {
     ignore(parse_coordinate("39.9"))
@@ -55,6 +62,7 @@ test "parse_coordinate - no separator raises" {
   @test.assert_eq(raised, true)
 }
 
+///|
 test "parse_address - comma with postal code" {
   let a = parse_address("China,Beijing,Beijing,Haidian,Zhongguancun,100080")
   @test.assert_eq(a.country, "China")
@@ -65,14 +73,18 @@ test "parse_address - comma with postal code" {
   @test.assert_eq(a.postal_code, "100080")
 }
 
+///|
 test "parse_address - slash separator" {
-  let a = parse_address("China / USA / California / San Francisco / Mission St / 94103")
+  let a = parse_address(
+    "China / USA / California / San Francisco / Mission St / 94103",
+  )
   @test.assert_eq(a.country, "China")
   @test.assert_eq(a.province, "USA")
   @test.assert_eq(a.city, "California")
   @test.assert_eq(a.postal_code, "94103")
 }
 
+///|
 test "parse_address - semicolon separator" {
   let a = parse_address("Beijing; Haidian; Zhongguancun")
   @test.assert_eq(a.country, "Beijing")
@@ -81,6 +93,7 @@ test "parse_address - semicolon separator" {
   @test.assert_eq(a.postal_code, "")
 }
 
+///|
 test "parse_address - empty input raises" {
   let raised = try {
     ignore(parse_address(""))
@@ -91,6 +104,7 @@ test "parse_address - empty input raises" {
   @test.assert_eq(raised, true)
 }
 
+///|
 test "parse_address - no separator raises" {
   let raised = try {
     ignore(parse_address("SingleToken"))
@@ -101,8 +115,11 @@ test "parse_address - no separator raises" {
   @test.assert_eq(raised, true)
 }
 
+///|
 test "parse_record_line - full 3-field line" {
-  let e = parse_record_line("Tiananmen\t39.9087, 116.3975\tChina,Beijing,Beijing,Dongcheng,Tiananmen,100009")
+  let e = parse_record_line(
+    "Tiananmen\t39.9087, 116.3975\tChina,Beijing,Beijing,Dongcheng,Tiananmen,100009",
+  )
   @test.assert_eq(e.name, "Tiananmen")
   @test.assert_eq(e.location.lat, 39.9087)
   @test.assert_eq(e.location.lng, 116.3975)
@@ -111,6 +128,7 @@ test "parse_record_line - full 3-field line" {
   @test.assert_eq(e.address.postal_code, "100009")
 }
 
+///|
 test "parse_record_line - 2-field line (name + coordinate)" {
   let e = parse_record_line("Eiffel Tower\t48.8584, 2.2945")
   @test.assert_eq(e.name, "Eiffel Tower")
@@ -118,6 +136,7 @@ test "parse_record_line - 2-field line (name + coordinate)" {
   @test.assert_eq(e.location.lng, 2.2945)
 }
 
+///|
 test "parse_record_line - single field (name only)" {
   let e = parse_record_line("JustAName")
   @test.assert_eq(e.name, "JustAName")
@@ -125,6 +144,7 @@ test "parse_record_line - single field (name only)" {
   @test.assert_eq(e.location.lng, 0.0)
 }
 
+///|
 test "parse_record_line - empty line raises" {
   let raised = try {
     ignore(parse_record_line(""))
@@ -137,6 +157,7 @@ test "parse_record_line - empty line raises" {
 
 // ---- Chinese address parser tests ----
 
+///|
 test "parse_address - Chinese municipality: 北京市海淀区颐和园路5号" {
   let a = parse_address("北京市海淀区颐和园路5号")
   @test.assert_eq(a.country, "中国")
@@ -147,6 +168,7 @@ test "parse_address - Chinese municipality: 北京市海淀区颐和园路5号" 
   @test.assert_eq(a.detail, "5号")
 }
 
+///|
 test "parse_address - Chinese municipality with postal code" {
   let a = parse_address("北京市海淀区中关村大街27号 100080")
   @test.assert_eq(a.country, "中国")
@@ -156,6 +178,7 @@ test "parse_address - Chinese municipality with postal code" {
   @test.assert_eq(a.postal_code, "100080")
 }
 
+///|
 test "parse_address - Chinese province + city + district" {
   let a = parse_address("广东省深圳市南山区科技园")
   @test.assert_eq(a.country, "中国")
@@ -164,6 +187,7 @@ test "parse_address - Chinese province + city + district" {
   @test.assert_eq(a.district, "南山区")
 }
 
+///|
 test "parse_address - Shanghai municipality" {
   let a = parse_address("上海市浦东新区陆家嘴环路1000号")
   @test.assert_eq(a.province, "上海市")
@@ -172,6 +196,7 @@ test "parse_address - Shanghai municipality" {
   @test.assert_eq(a.street, "陆家嘴环路")
 }
 
+///|
 test "parse_address - Chinese address with road variant 道" {
   let a = parse_address("广州市天河区珠江新城华夏路16号")
   @test.assert_eq(a.province, "广州市")
@@ -181,6 +206,7 @@ test "parse_address - Chinese address with road variant 道" {
   @test.assert_eq(a.detail, "16号")
 }
 
+///|
 test "parse_chinese_address - standalone function" {
   let a = parse_chinese_address("北京市海淀区颐和园路5号")
   @test.assert_eq(a.province, "北京市")
@@ -191,6 +217,7 @@ test "parse_chinese_address - standalone function" {
   @test.assert_eq(a.country, "中国")
 }
 
+///|
 test "parse_chinese_address - Hebei province" {
   let a = parse_chinese_address("河北省石家庄市桥西区中山路100号")
   @test.assert_eq(a.province, "河北省")
@@ -200,11 +227,13 @@ test "parse_chinese_address - Hebei province" {
   @test.assert_eq(a.detail, "100号")
 }
 
+///|
 test "parse_chinese_address - postal code extraction" {
   let a = parse_chinese_address("北京市海淀区中关村100080")
   @test.assert_eq(a.postal_code, "100080")
 }
 
+///|
 test "parse_address - mixed CJK + separator uses Chinese parser" {
   // With commas, the Chinese parser still works but commas may appear in fields.
   // The main Beijing address test (without commas) is covered above.

@@ -3,13 +3,13 @@ import {
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/result",
   "moonbitlang/core/test",
-  "JIA2JIA2/moonbitgeodb/lib/types" @types,
+  "JIA2JIA2/moonbitgeodb/lib/types",
 }
 
 options(
-  "native-stub": ["stub.c"],
+  "native-stub": [ "stub.c" ],
   targets: {
-    "persist_native.mbt": ["native"],
-    "persist_stub.mbt": ["not", "native"],
+    "persist_native.mbt": [ "native" ],
+    "persist_stub.mbt": [ "not", "native" ],
   },
 )

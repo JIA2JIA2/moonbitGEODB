@@ -8,11 +8,10 @@ import {
   "moonbitlang/core/ref",
   "moonbitlang/core/math",
   "moonbitlang/core/cmp",
-  "JIA2JIA2/moonbitgeodb/lib/types" @types,
-  "JIA2JIA2/moonbitgeodb/lib/geo" @geo,
-  "JIA2JIA2/moonbitgeodb/lib/parser" @parser,
-  "JIA2JIA2/moonbitgeodb/lib/index" @index,
-  "JIA2JIA2/moonbitgeodb/lib/persist" @persist,
+  "JIA2JIA2/moonbitgeodb/lib/types",
+  "JIA2JIA2/moonbitgeodb/lib/geo",
+  "JIA2JIA2/moonbitgeodb/lib/parser",
+  "JIA2JIA2/moonbitgeodb/lib/index",
+  "JIA2JIA2/moonbitgeodb/lib/persist",
   "moonbitlang/core/test",
 }
-
