@@ -875,6 +875,62 @@ fn main {
     return
   }
 
+  if cmd == "kmeans" {
+    if args.length() < 3 {
+      println("Error: kmeans requires k")
+      println("Usage: moon run cmd kmeans <k> [max_iter]")
+      return
+    }
+    let k = try { @string.parse_int(args.get(2).unwrap()) } catch {
+      _ => { println("Error: invalid k value"); return }
+    }
+    let max_iter = if args.length() > 3 {
+      try { @string.parse_int(args.get(3).unwrap()) } catch { _ => 100 }
+    } else { 100 }
+    run_kmeans(k, max_iter)
+    return
+  }
+
+  if cmd == "elbow" {
+    let max_k = if args.length() > 2 {
+      try { @string.parse_int(args.get(2).unwrap()) } catch { _ => 8 }
+    } else { 8 }
+    run_elbow(max_k)
+    return
+  }
+
+  if cmd == "centroid-all" {
+    run_all_centroid()
+    return
+  }
+
+  if cmd == "geographic-center" {
+    run_geographic_center()
+    return
+  }
+
+  if cmd == "bbox-query" {
+    if args.length() < 6 {
+      println("Error: bbox-query requires min_lat max_lat min_lng max_lng")
+      println("Usage: moon run cmd bbox-query <min_lat> <max_lat> <min_lng> <max_lng>")
+      return
+    }
+    let min_lat = try { @string.parse_double(args.get(2).unwrap()) } catch {
+      _ => { println("Error: invalid min_lat"); return }
+    }
+    let max_lat = try { @string.parse_double(args.get(3).unwrap()) } catch {
+      _ => { println("Error: invalid max_lat"); return }
+    }
+    let min_lng = try { @string.parse_double(args.get(4).unwrap()) } catch {
+      _ => { println("Error: invalid min_lng"); return }
+    }
+    let max_lng = try { @string.parse_double(args.get(5).unwrap()) } catch {
+      _ => { println("Error: invalid max_lng"); return }
+    }
+    run_bbox_query(min_lat, max_lat, min_lng, max_lng)
+    return
+  }
+
   if cmd == "voronoi" {
     run_voronoi()
     return
@@ -2323,5 +2379,125 @@ fn run_voronoi_neighbors(id : String) -> Unit {
           }
         }
       }
+  }
+}
+
+// ---- New handlers: kmeans, elbow, centroid, bbox-query ----
+
+fn run_kmeans(k : Int, max_iter : Int) -> Unit {
+  println("=== K-Means Clustering ===")
+  println("  k = " + k.to_string() + ", max_iter = " + max_iter.to_string())
+  let db = build_sample_db()
+  let clusters = db.kmeans(k, max_iter=max_iter)
+  println("")
+  let mut inertia_total = 0.0
+  let mut j = 0
+  while j < clusters.length() {
+    let cl = clusters[j]
+    println(
+      "  Cluster " + cl.id.to_string() + " (" + cl.members.length().to_string() + " members)"
+    )
+    println(
+      "    Center: (" +
+        cl.center.lat.to_string() +
+        ", " +
+        cl.center.lng.to_string() +
+        ")"
+    )
+    for m in cl.members {
+      println("      - " + m.id + " | " + m.name)
+    }
+    j = j + 1
+  }
+}
+
+fn run_elbow(max_k : Int) -> Unit {
+  println("=== Elbow Method (WCSS for k = 1.." + max_k.to_string() + ") ===")
+  let db = build_sample_db()
+  let values = db.kmeans_elbow(max_k)
+  println("")
+  for pair in values {
+    let k = pair.0
+    let wcss = pair.1
+    // ASCII bar
+    let bar_len = if wcss < 1000000.0 {
+      (wcss / 10000.0).to_int()
+    } else {
+      0
+    }
+    let mut bar = ""
+    let mut b = 0
+    while b < bar_len && b < 60 {
+      bar = bar + "#"
+      b = b + 1
+    }
+    println(
+      "  k=" +
+        k.to_string().pad_start(2, ' ') +
+        "  inertia=" +
+        wcss.to_string() +
+        "  |" +
+        bar
+    )
+  }
+}
+
+fn run_all_centroid() -> Unit {
+  println("=== Centroid (planar mean) ===")
+  let db = build_sample_db()
+  let c = db.centroid()
+  println("  DB has " + db.all().length().to_string() + " entries")
+  println("  Centroid: (" + c.lat.to_string() + ", " + c.lng.to_string() + ")")
+  println("")
+  let gc = db.geographic_center()
+  println("=== Geographic Mean Center (sphere-based) ===")
+  println("  Geographic center: (" + gc.lat.to_string() + ", " + gc.lng.to_string() + ")")
+}
+
+fn run_geographic_center() -> Unit {
+  let db = build_sample_db()
+  let gc = db.geographic_center()
+  println("=== Geographic Mean Center ===")
+  println("  DB has " + db.all().length().to_string() + " entries")
+  println("  Sphere-based center: (" + gc.lat.to_string() + ", " + gc.lng.to_string() + ")")
+  let c = db.centroid()
+  println("  Planar mean:        (" + c.lat.to_string() + ", " + c.lng.to_string() + ")")
+  let diff = @geo.haversine(gc, c)
+  println("  Difference: " + diff.to_string() + " km")
+}
+
+fn run_bbox_query(min_lat : Double, max_lat : Double, min_lng : Double, max_lng : Double) -> Unit {
+  println("=== Bounding Box Query ===")
+  println(
+    "  Region: lat [" +
+      min_lat.to_string() +
+      ", " +
+      max_lat.to_string() +
+      "], lng [" +
+      min_lng.to_string() +
+      ", " +
+      max_lng.to_string() +
+      "]"
+  )
+  let db = build_sample_db()
+  let results = db.find_bbox(min_lat, max_lat, min_lng, max_lng)
+  println("")
+  if results.length() == 0 {
+    println("  No entries found in this region.")
+  } else {
+    println("  Found " + results.length().to_string() + " entries:")
+    for e in results {
+      println(
+        "    - " +
+          e.id +
+          " | " +
+          e.name +
+          " | (" +
+          e.location.lat.to_string() +
+          ", " +
+          e.location.lng.to_string() +
+          ")"
+      )
+    }
   }
 }

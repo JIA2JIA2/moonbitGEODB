@@ -786,3 +786,185 @@ fn segment_line_intersection(
   let lng = p1.lng + t * (p2.lng - p1.lng)
   Some(@types.GeoPoint::make(lat, lng))
 }
+
+// ---- K-Means clustering ----
+
+///|
+/// A single K-Means cluster result.
+pub(all) struct KMeansCluster {
+  id : Int
+  center : @types.GeoPoint
+  members : Array[Int]  // indices into the original point array
+} derive(Debug)
+
+///|
+/// Compute the centroid (arithmetic mean lat/lng) of a point array.
+/// Returns (0, 0) for empty input.
+pub fn centroid(points : Array[@types.GeoPoint]) -> @types.GeoPoint {
+  let n = points.length()
+  if n == 0 {
+    return @types.GeoPoint::make(0.0, 0.0)
+  }
+  let mut sum_lat = 0.0
+  let mut sum_lng = 0.0
+  for p in points {
+    sum_lat = sum_lat + p.lat
+    sum_lng = sum_lng + p.lng
+  }
+  @types.GeoPoint::make(sum_lat / (n.to_double()), sum_lng / (n.to_double()))
+}
+
+///|
+/// Run K-Means clustering on a set of GeoPoints.
+/// Uses lat/lng as 2D planar coordinates for centroid computation (not Haversine),
+/// which is fine for regional-scale data. Haversine is still used for assignment.
+///
+/// - `k`: number of clusters (clamped to `[1, n]`).
+/// - `max_iter`: maximum iterations (default 100).
+///
+/// Returns `k` KMeansCluster values sorted by cluster id.
+pub fn kmeans(
+  points : Array[@types.GeoPoint],
+  k : Int,
+  max_iter~ : Int = 100,
+) -> Array[KMeansCluster] {
+  let n = points.length()
+  if n == 0 {
+    return []
+  }
+  // Clamp k.
+  let mut kk = k
+  if kk < 1 {
+    kk = 1
+  }
+  if kk > n {
+    kk = n
+  }
+  // Clamp max_iter.
+  let mut iters = max_iter
+  if iters < 1 {
+    iters = 1
+  }
+  // Initialize centroids: first k points (deterministic, no random needed).
+  // This is the "Forgy" initialization — simple and reproducible.
+  let centroids : Array[@types.GeoPoint] = []
+  let mut ci = 0
+  while ci < kk {
+    centroids.push(points[ci])
+    ci = ci + 1
+  }
+  // Cluster assignments: cluster index for each point.
+  let assignments : Array[Int] = []
+  let mut a = 0
+  while a < n {
+    assignments.push(0)
+    a = a + 1
+  }
+  let mut changed = true
+  let mut iter = 0
+  while changed && iter < iters {
+    changed = false
+    // Assignment step.
+    let mut i = 0
+    while i < n {
+      let p = points[i]
+      let mut best_c = 0
+      let mut best_d = 1.7976931348623157e+308
+      let mut c = 0
+      while c < kk {
+        let d = haversine(p, centroids[c])
+        if d < best_d {
+          best_d = d
+          best_c = c
+        }
+        c = c + 1
+      }
+      if assignments[i] != best_c {
+        assignments[i] = best_c
+        changed = true
+      }
+      i = i + 1
+    }
+    // Update step: recompute centroids as planar mean of assigned points.
+    let mut k_idx = 0
+    while k_idx < kk {
+      let mut sum_lat = 0.0
+      let mut sum_lng = 0.0
+      let mut count : Int = 0
+      let mut j = 0
+      while j < n {
+        if assignments[j] == k_idx {
+          sum_lat = sum_lat + points[j].lat
+          sum_lng = sum_lng + points[j].lng
+          count = count + 1
+        }
+        j = j + 1
+      }
+      if count > 0 {
+        centroids[k_idx] = @types.GeoPoint::make(
+          sum_lat / (count.to_double()),
+          sum_lng / (count.to_double()),
+        )
+      } else {
+        // Empty cluster: re-seed with the first unassigned point (or the previous centroid).
+        centroids[k_idx] = centroids[k_idx]
+      }
+      k_idx = k_idx + 1
+    }
+    iter = iter + 1
+  }
+  // Build result.
+  let clusters : Array[KMeansCluster] = []
+  let mut k_idx = 0
+  while k_idx < kk {
+    let members : Array[Int] = []
+    let mut j = 0
+    while j < n {
+      if assignments[j] == k_idx {
+        members.push(j)
+      }
+      j = j + 1
+    }
+    clusters.push({
+      id: k_idx,
+      center: centroids[k_idx],
+      members,
+    })
+    k_idx = k_idx + 1
+  }
+  clusters
+}
+
+///|
+/// Find which cluster a point would be assigned to given the centroids.
+/// Returns None if centroids is empty.
+pub fn nearest_cluster(point : @types.GeoPoint, centroids : Array[@types.GeoPoint]) -> Int? {
+  if centroids.length() == 0 {
+    return None
+  }
+  let mut best = 0
+  let mut best_d = 1.7976931348623157e+308
+  let mut i = 0
+  while i < centroids.length() {
+    let d = haversine(point, centroids[i])
+    if d < best_d {
+      best_d = d
+      best = i
+    }
+    i = i + 1
+  }
+  Some(best)
+}
+
+///|
+/// Compute the within-cluster sum of squares (WCSS / inertia) for a K-Means result.
+/// A smaller value means tighter clusters. Useful for the "elbow method".
+pub fn kmeans_inertia(points : Array[@types.GeoPoint], clusters : Array[KMeansCluster]) -> Double {
+  let mut total = 0.0
+  for cl in clusters {
+    for idx in cl.members {
+      total = total + sq(haversine(points[idx], cl.center))
+    }
+  }
+  total
+}

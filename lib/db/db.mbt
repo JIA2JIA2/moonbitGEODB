@@ -3224,3 +3224,155 @@ fn cells_share_edge(
   }
   false
 }
+
+// ---- Bounding box query + centroid + K-Means ----
+
+///| Convenience: find entries in a rectangular region defined by min/max lat/lng.
+/// Delegates to the existing indexed find_in_bbox.
+pub fn GeoDB::find_bbox(
+  self : GeoDB,
+  min_lat : Double,
+  max_lat : Double,
+  min_lng : Double,
+  max_lng : Double,
+) -> Array[@types.GeoEntry] {
+  self.find_in_bbox({
+    min_lat,
+    max_lat,
+    min_lng,
+    max_lng,
+  })
+}
+
+///| Compute the centroid (planar arithmetic mean lat/lng) of all entries.
+/// Returns (0, 0) if the DB is empty.
+pub fn GeoDB::centroid(self : GeoDB) -> @types.GeoPoint {
+  let entries = self.all()
+  if entries.length() == 0 {
+    return @types.GeoPoint::make(0.0, 0.0)
+  }
+  let pts : Array[@types.GeoPoint] = []
+  for e in entries {
+    pts.push(e.location)
+  }
+  @geo.centroid(pts)
+}
+
+///| Compute the true geographic mean center using a sphere-based
+/// 3D-to-lat/lng projection, which is more accurate for global-scale data
+/// than the simple arithmetic mean. Returns (0,0) for empty DB.
+pub fn GeoDB::geographic_center(self : GeoDB) -> @types.GeoPoint {
+  let entries = self.all()
+  let n = entries.length()
+  if n == 0 {
+    return @types.GeoPoint::make(0.0, 0.0)
+  }
+  let mut sx = 0.0
+  let mut sy = 0.0
+  let mut sz = 0.0
+  for e in entries {
+    let lat_r = e.location.lat * 3.14159265358979323846 / 180.0
+    let lng_r = e.location.lng * 3.14159265358979323846 / 180.0
+    let clat = @math.cos(lat_r)
+    sx = sx + clat * @math.cos(lng_r)
+    sy = sy + clat * @math.sin(lng_r)
+    sz = sz + @math.sin(lat_r)
+  }
+  let nf = n.to_double()
+  let x = sx / nf
+  let y = sy / nf
+  let z = sz / nf
+  let r = @geo.sqrt(x * x + y * y)
+  let lng = @math.atan2(y, x) * 180.0 / 3.14159265358979323846
+  let lat = @math.atan2(z, r) * 180.0 / 3.14159265358979323846
+  @types.GeoPoint::make(lat, lng)
+}
+
+///| Compute the centroid for a subset of entries matching a tag.
+pub fn GeoDB::centroid_by_tag(
+  self : GeoDB,
+  tag : String,
+) -> @types.GeoPoint {
+  let mut sum_lat = 0.0
+  let mut sum_lng = 0.0
+  let mut count : Int = 0
+  for e in self.all() {
+    let mut has_tag = false
+    for t in e.tags {
+      if t == tag {
+        has_tag = true
+        break
+      }
+    }
+    if has_tag {
+      sum_lat = sum_lat + e.location.lat
+      sum_lng = sum_lng + e.location.lng
+      count = count + 1
+    }
+  }
+  if count == 0 {
+    return @types.GeoPoint::make(0.0, 0.0)
+  }
+  @types.GeoPoint::make(sum_lat / count.to_double(), sum_lng / count.to_double())
+}
+
+///| Run K-Means clustering on the entries in this DB.
+/// Returns k clusters; each cluster contains the member entries.
+pub(all) struct DBKMeansCluster {
+  id : Int
+  center : @types.GeoPoint
+  members : Array[@types.GeoEntry]
+} derive(Debug)
+
+pub fn GeoDB::kmeans(
+  self : GeoDB,
+  k : Int,
+  max_iter~ : Int = 100,
+) -> Array[DBKMeansCluster] {
+  let entries = self.all()
+  let n = entries.length()
+  if n == 0 {
+    return []
+  }
+  let pts : Array[@types.GeoPoint] = []
+  for e in entries {
+    pts.push(e.location)
+  }
+  let clusters = @geo.kmeans(pts, k, max_iter=max_iter)
+  let result : Array[DBKMeansCluster] = []
+  for cl in clusters {
+    let members : Array[@types.GeoEntry] = []
+    for idx in cl.members {
+      members.push(entries[idx])
+    }
+    result.push({ id: cl.id, center: cl.center, members })
+  }
+  result
+}
+
+///| Compute the elbow method: run K-Means for k = 1..max_k and return
+///| (k, inertia) pairs. The "elbow" in the plot suggests a good k.
+pub fn GeoDB::kmeans_elbow(
+  self : GeoDB,
+  max_k : Int,
+) -> Array[(Int, Double)] {
+  let entries = self.all()
+  if entries.length() == 0 {
+    return []
+  }
+  let pts : Array[@types.GeoPoint] = []
+  for e in entries {
+    pts.push(e.location)
+  }
+  let results : Array[(Int, Double)] = []
+  let mut k = 1
+  let n = entries.length()
+  let limit = if max_k > n { n } else { max_k }
+  while k <= limit {
+    let clusters = @geo.kmeans(pts, k)
+    let inertia = @geo.kmeans_inertia(pts, clusters)
+    results.push((k, inertia))
+    k = k + 1
+  }
+  results
+}
