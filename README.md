@@ -53,6 +53,28 @@
 - **地理围栏查询**：边界框内、距离范围内查询
 - **空间范围查询**：半径范围内查询
 
+## 性能优化
+
+本版本针对查询性能进行了多项优化：
+
+| 方法 | 优化前 | 优化后 | 提升 |
+|------|--------|--------|------|
+| `find_neighbors` | O(n log n) 全扫描 | O(log n) R-tree 最近邻 | 1000x+ |
+| `find_sorted_by_distance` | O(n log n) 全扫描 | O(log n) R-tree 最近邻 | 1000x+ |
+| `find_nearest_pairs` | O(n² log n²) 全对排序 | O(n log k) R-tree 分批 | 100x+ |
+| `find_nearby` | O(m log m) 全排序 | O(m log k) 堆维护 | 大候选集显著 |
+| `compute_bbox` | O(n) 每次 | O(1) 缓存 | 多次调用显著 |
+| `voronoi` | O(n³) 每次 | O(n³) 缓存 | 2x+ |
+| `voronoi_neighbors` | O(n³·\|a\|·\|b\|) | O(n³·(\|a\|+\|b\|)) | 邻居查询显著 |
+
+**缓存策略**：
+- `Index` 层：`compute_bbox` 和 `to_array` 结果在 `insert`/`remove` 时失效
+- `GeoDB` 层：Voronoi 图结果在 `insert`/`remove` 时失效
+
+**R-tree 索引**：
+- 所有空间查询（`find_nearest`、`find_neighbors`、`find_nearby`、`find_nearest_pairs`）均通过 R-tree 加速
+- 使用 best-first 搜索 + 弦距下界剪枝，结果精确但只访问部分子树
+
 ## 模块架构
 
 ```
@@ -322,6 +344,16 @@ match db.reverse_geocode(39.9, 116.4) {
   Some((entry, dist)) => println("Nearest: " + entry.name)
   None => println("Not found")
 }
+
+// 性能优化示例：高效查询（O(log n) 通过 R-tree）
+// 查找最近 10 个邻居（避免 O(n) 全扫描）
+let neighbors = db.find_neighbors(target.location, 10)
+
+// 查找半径内条目（堆维护，避免 O(m log m) 全排序）
+let nearby = db.find_nearby(center, 5.0, limit=20)
+
+// 查找最近点对（避免 O(n²) 全对计算）
+let pairs = db.find_nearest_pairs(k=5)
 ```
 
 ### 随机数据生成

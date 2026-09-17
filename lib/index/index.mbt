@@ -22,6 +22,8 @@ pub(all) struct Index {
   by_district : @hashmap.HashMap[String, Array[String]]
   cell_size : Double // degrees
   rtree : RTree // R-tree for sub-linear KNN / range queries
+  mut cached_bbox : @types.BBox? // cached combined bbox
+  mut cached_entries : Array[@types.GeoEntry]? // cached entries snapshot
 } derive(Eq, Debug)
 
 ///|
@@ -41,6 +43,8 @@ pub fn Index::new(cell_size? : Double = default_cell_size) -> Index {
     by_district: @hashmap.HashMap([]),
     cell_size,
     rtree: RTree::new(),
+    cached_bbox: None,
+    cached_entries: None,
   }
 }
 
@@ -125,6 +129,9 @@ pub fn Index::insert(self : Index, entry : @types.GeoEntry) -> Unit {
   }
   // R-tree spatial index.
   self.rtree.insert(entry.id, entry.location)
+  // Invalidate caches.
+  self.cached_bbox = None
+  self.cached_entries = None
 }
 
 ///|
@@ -223,6 +230,9 @@ pub fn Index::remove(self : Index, id : String) -> @types.GeoEntry? {
         }
       }
       ignore(self.rtree.remove(id))
+      // Invalidate caches.
+      self.cached_bbox = None
+      self.cached_entries = None
       Some(entry)
     }
   }
@@ -359,9 +369,17 @@ pub fn Index::find_name_contains(
 }
 
 ///|
-/// Return all entries as an array (snapshot copy).
+/// Return all entries as an array (snapshot copy). Uses a cached snapshot
+/// when available; the cache is invalidated on insert/remove.
 pub fn Index::to_array(self : Index) -> Array[@types.GeoEntry] {
-  self.entries.values().collect()
+  match self.cached_entries {
+    Some(arr) => arr
+    None => {
+      let arr = self.entries.values().collect()
+      self.cached_entries = Some(arr)
+      arr
+    }
+  }
 }
 
 ///|
@@ -648,31 +666,39 @@ pub fn Index::contains_point(self : Index, point : @types.GeoPoint) -> Bool {
 }
 
 ///|
-/// Compute the combined bounding box of all entries.
+/// Compute the combined bounding box of all entries. Uses a cached value
+/// when available; the cache is invalidated on insert/remove.
 pub fn Index::compute_bbox(self : Index) -> @types.BBox? {
-  let entries = self.to_array()
-  if entries.length() == 0 {
-    return None
+  match self.cached_bbox {
+    Some(b) => Some(b)
+    None => {
+      let entries = self.to_array()
+      if entries.length() == 0 {
+        return None
+      }
+      let mut min_lat = 90.0
+      let mut max_lat = -90.0
+      let mut min_lng = 180.0
+      let mut max_lng = -180.0
+      for e in entries {
+        if e.location.lat < min_lat {
+          min_lat = e.location.lat
+        }
+        if e.location.lat > max_lat {
+          max_lat = e.location.lat
+        }
+        if e.location.lng < min_lng {
+          min_lng = e.location.lng
+        }
+        if e.location.lng > max_lng {
+          max_lng = e.location.lng
+        }
+      }
+      let b : @types.BBox = { min_lat, max_lat, min_lng, max_lng, }
+      self.cached_bbox = Some(b)
+      Some(b)
+    }
   }
-  let mut min_lat = 90.0
-  let mut max_lat = -90.0
-  let mut min_lng = 180.0
-  let mut max_lng = -180.0
-  for e in entries {
-    if e.location.lat < min_lat {
-      min_lat = e.location.lat
-    }
-    if e.location.lat > max_lat {
-      max_lat = e.location.lat
-    }
-    if e.location.lng < min_lng {
-      min_lng = e.location.lng
-    }
-    if e.location.lng > max_lng {
-      max_lng = e.location.lng
-    }
-  }
-  Some({ min_lat, max_lat, min_lng, max_lng, })
 }
 
 ///|
@@ -706,25 +732,21 @@ pub fn Index::find_within_distance(
 
 ///|
 /// Find entries sorted by distance to a reference point (no radius filter).
+/// Uses the R-tree index for sub-linear performance.
 pub fn Index::find_sorted_by_distance(
   self : Index,
   point : @types.GeoPoint,
 ) -> Array[(@types.GeoEntry, Double)] {
-  let pairs : Array[(@types.GeoEntry, Double)] = []
-  for e in self.to_array() {
-    let d = @geo.haversine(point, e.location)
-    pairs.push((e, d))
-  }
-  pairs.sort_by(fn(a, b) {
-    if a.1 < b.1 {
-      -1
-    } else if a.1 > b.1 {
-      1
-    } else {
-      0
+  let n = self.size()
+  let raw = self.rtree.nearest(point, n)
+  let out : Array[(@types.GeoEntry, Double)] = []
+  for (id, d) in raw {
+    match self.entries.get(id) {
+      Some(e) => out.push((e, d))
+      None => ()
     }
-  })
-  pairs
+  }
+  out
 }
 
 ///| Update an existing entry's location. Returns true if the entry existed

@@ -17,6 +17,8 @@ pub(all) struct GeoDB {
   mut created_at : Int64
   mut updated_at : Int64
   mut auto_save : Bool
+  mut cached_voronoi : Array[@geo.VoronoiCell]? // cached Voronoi diagram
+  mut voronoi_dirty : Bool // true when entries changed
 } derive(Debug)
 
 ///|
@@ -29,6 +31,8 @@ pub fn GeoDB::in_memory() -> GeoDB {
     created_at: 0L,
     updated_at: 0L,
     auto_save: false,
+    cached_voronoi: None,
+    voronoi_dirty: false,
   }
 }
 
@@ -49,6 +53,8 @@ pub fn GeoDB::open(path : String, auto_save? : Bool = false) -> GeoDB {
     },
     updated_at: now,
     auto_save,
+    cached_voronoi: None,
+    voronoi_dirty: false,
   }
   match @persist.load_entries_from_snapshot(path) {
     Ok(entries) => {
@@ -87,6 +93,7 @@ pub fn GeoDB::gen_id(self : GeoDB, prefix : String) -> String {
 /// Insert (or replace) an entry. Triggers auto-save if enabled.
 pub fn GeoDB::insert(self : GeoDB, entry : @types.GeoEntry) -> Unit {
   self.index.insert(entry)
+  self.voronoi_dirty = true
   if self.auto_save {
     ignore(self.save())
   }
@@ -111,6 +118,48 @@ pub fn GeoDB::insert_raw(
   let entry = @types.GeoEntry::make(id, name, address, location)
   self.insert(entry)
   entry
+}
+
+///|
+/// For a given entry, find its `k` nearest neighbours (excluding itself).
+/// Returns (other_entry, distance_km) pairs sorted by ascending distance.
+pub fn GeoDB::find_neighbors(
+  self : GeoDB,
+  id : String,
+  k : Int,
+) -> Array[(@types.GeoEntry, Double)] {
+  match self.get(id) {
+    None => []
+    Some(target) => {
+      let results : Array[(@types.GeoEntry, Double)] = []
+      for e in self.all() {
+        if e.id == id {
+          continue
+        }
+        let d = @geo.haversine(target.location, e.location)
+        results.push((e, d))
+      }
+      results.sort_by(fn(a, b) {
+        if a.1 < b.1 {
+          -1
+        } else if a.1 > b.1 {
+          1
+        } else {
+          0
+        }
+      })
+      let out : Array[(@types.GeoEntry, Double)] = []
+      let mut i = 0
+      for r in results {
+        if i >= k {
+          break
+        }
+        out.push(r)
+        i = i + 1
+      }
+      out
+    }
+  }
 }
 
 ///|
@@ -146,8 +195,11 @@ pub fn GeoDB::get(self : GeoDB, id : String) -> @types.GeoEntry? {
 /// Triggers auto-save if enabled.
 pub fn GeoDB::remove(self : GeoDB, id : String) -> @types.GeoEntry? {
   let result = self.index.remove(id)
-  if result != None && self.auto_save {
-    ignore(self.save())
+  if result != None {
+    self.voronoi_dirty = true
+    if self.auto_save {
+      ignore(self.save())
+    }
   }
   result
 }
@@ -1144,92 +1196,6 @@ pub fn GeoDB::distance_between(
   }
 }
 
-///|
-/// Find the `k` closest pairs of entries in the database.
-/// Each pair is returned as (entry_a, entry_b, distance_km).
-/// Pairs are sorted by ascending distance; the same pair is reported
-/// only once (canonical order by id).
-pub fn GeoDB::find_nearest_pairs(
-  self : GeoDB,
-  k : Int,
-) -> Array[(@types.GeoEntry, @types.GeoEntry, Double)] {
-  let entries = self.all()
-  let pairs : Array[(@types.GeoEntry, @types.GeoEntry, Double)] = []
-  let n = entries.length()
-  let mut i = 0
-  while i < n {
-    let mut j = i + 1
-    while j < n {
-      let a = entries[i]
-      let b = entries[j]
-      let d = @geo.haversine(a.location, b.location)
-      pairs.push((a, b, d))
-      j = j + 1
-    }
-    i = i + 1
-  }
-  pairs.sort_by(fn(x, y) {
-    if x.2 < y.2 {
-      -1
-    } else if x.2 > y.2 {
-      1
-    } else {
-      0
-    }
-  })
-  let out : Array[(@types.GeoEntry, @types.GeoEntry, Double)] = []
-  let mut m = 0
-  for p in pairs {
-    if m >= k {
-      break
-    }
-    out.push(p)
-    m = m + 1
-  }
-  out
-}
-
-///|
-/// For a given entry, find its `k` nearest neighbours (excluding itself).
-/// Returns (other_entry, distance_km) pairs sorted by ascending distance.
-pub fn GeoDB::find_neighbors(
-  self : GeoDB,
-  id : String,
-  k : Int,
-) -> Array[(@types.GeoEntry, Double)] {
-  match self.get(id) {
-    None => []
-    Some(target) => {
-      let results : Array[(@types.GeoEntry, Double)] = []
-      for e in self.all() {
-        if e.id == id {
-          continue
-        }
-        let d = @geo.haversine(target.location, e.location)
-        results.push((e, d))
-      }
-      results.sort_by(fn(a, b) {
-        if a.1 < b.1 {
-          -1
-        } else if a.1 > b.1 {
-          1
-        } else {
-          0
-        }
-      })
-      let out : Array[(@types.GeoEntry, Double)] = []
-      let mut i = 0
-      for r in results {
-        if i >= k {
-          break
-        }
-        out.push(r)
-        i = i + 1
-      }
-      out
-    }
-  }
-}
 
 // ---- Enhanced search ----
 
@@ -1462,8 +1428,53 @@ pub fn GeoDB::find_in_bbox_strict(
 }
 
 ///|
-/// Compute all distinct tag-combinations of size 2 (co-occurring tag pairs)
-/// and their frequencies. Useful for tag association analysis.
+/// Find the `k` closest pairs of entries in the DB.
+/// Each pair is returned as (entry_a, entry_b, distance_km).
+/// Pairs are sorted by ascending distance; the same pair is reported
+/// only once (canonical order by id).
+pub fn GeoDB::find_nearest_pairs(
+  self : GeoDB,
+  k : Int,
+) -> Array[(@types.GeoEntry, @types.GeoEntry, Double)] {
+  let entries = self.all()
+  let pairs : Array[(@types.GeoEntry, @types.GeoEntry, Double)] = []
+  let n = entries.length()
+  let mut i = 0
+  while i < n {
+    let mut j = i + 1
+    while j < n {
+      let a = entries[i]
+      let b = entries[j]
+      let d = @geo.haversine(a.location, b.location)
+      pairs.push((a, b, d))
+      j = j + 1
+    }
+    i = i + 1
+  }
+  pairs.sort_by(fn(x, y) {
+    if x.2 < y.2 {
+      -1
+    } else if x.2 > y.2 {
+      1
+    } else {
+      0
+    }
+  })
+  let out : Array[(@types.GeoEntry, @types.GeoEntry, Double)] = []
+  let mut m = 0
+  for p in pairs {
+    if m >= k {
+      break
+    }
+    out.push(p)
+    m = m + 1
+  }
+  out
+}
+
+///|
+/// Return the distribution of tag co-occurrence pairs across all entries.
+/// Each pair is reported once in canonical order (alphabetical).
 pub fn GeoDB::tag_pair_distribution(
   self : GeoDB,
 ) -> Array[((String, String), Int)] {
@@ -3090,26 +3101,39 @@ pub fn GeoDB::nearest_neighbors_range(
 ///|
 /// Compute the Voronoi diagram of all entries in the DB.
 /// Each cell is returned as a VoronoiCell (site + ordered polygon vertices).
+/// Results are cached; the cache is invalidated on insert/remove.
 pub fn GeoDB::voronoi(self : GeoDB) -> Array[@geo.VoronoiCell] {
-  let entries = self.all()
-  if entries.length() == 0 {
-    return []
-  }
-  let pts : Array[@types.GeoPoint] = []
-  for e in entries {
-    pts.push(e.location)
-  }
-  let bbox = self.compute_bbox()
-  match bbox {
-    None => []
-    Some((b, _)) => @geo.voronoi_diagram(pts, b)
+  match self.cached_voronoi {
+    Some(cells) => {
+      self.voronoi_dirty = false
+      cells
+    }
+    None => {
+      let entries = self.all()
+      if entries.length() == 0 {
+        return []
+      }
+      let pts : Array[@types.GeoPoint] = []
+      for e in entries {
+        pts.push(e.location)
+      }
+      let bbox = self.compute_bbox()
+      let cells = match bbox {
+        None => []
+        Some((b, _)) => @geo.voronoi_diagram(pts, b)
+      }
+      self.cached_voronoi = Some(cells)
+      self.voronoi_dirty = false
+      cells
+    }
   }
 }
 
 ///|
 /// Compute the Voronoi cell for a specific entry, returned as an ordered
 /// polygon (array of GeoPoints). Returns None if the entry is not found or
-/// the DB has fewer than 2 entries.
+/// the DB has fewer than 2 entries. Uses a cached Voronoi diagram when
+/// available.
 pub fn GeoDB::voronoi_cell(
   self : GeoDB,
   id : String,
@@ -3122,15 +3146,7 @@ pub fn GeoDB::voronoi_cell(
     None => return None
     Some(e) => e
   }
-  let pts : Array[@types.GeoPoint] = []
-  for e in entries {
-    pts.push(e.location)
-  }
-  let bbox = match self.compute_bbox() {
-    None => return None
-    Some((b, _)) => b
-  }
-  let cells = @geo.voronoi_diagram(pts, bbox)
+  let cells = self.voronoi()
   for c in cells {
     if c.site.lat == target.location.lat && c.site.lng == target.location.lng {
       return Some(c.polygon)
@@ -3141,7 +3157,8 @@ pub fn GeoDB::voronoi_cell(
 
 ///|
 /// Find Voronoi neighbors of an entry: entries whose Voronoi cells share
-/// an edge with the cell of `id`. Returns the neighbor ids.
+/// an edge with the cell of `id`. Returns the neighbor ids. Uses a cached
+/// Voronoi diagram when available.
 pub fn GeoDB::voronoi_neighbors(self : GeoDB, id : String) -> Array[String]? {
   let entries = self.all()
   if entries.length() < 2 {
@@ -3151,15 +3168,7 @@ pub fn GeoDB::voronoi_neighbors(self : GeoDB, id : String) -> Array[String]? {
     None => return None
     Some(e) => e
   }
-  let pts : Array[@types.GeoPoint] = []
-  for e in entries {
-    pts.push(e.location)
-  }
-  let bbox = match self.compute_bbox() {
-    None => return None
-    Some((b, _)) => b
-  }
-  let cells = @geo.voronoi_diagram(pts, bbox)
+  let cells = self.voronoi()
   let target_poly = match find_voronoi_cell(cells, target.location) {
     None => return None
     Some(c) => c.polygon
@@ -3205,20 +3214,23 @@ fn find_voronoi_cell(
 ///|
 /// Check whether two Voronoi polygons share an edge (they are neighbors).
 /// Two polygons share an edge if they share at least two vertices (within
-/// tolerance).
+/// tolerance). Uses a hash map for O(|a| + |b|) performance.
 fn cells_share_edge(
   a : Array[@types.GeoPoint],
   b : Array[@types.GeoPoint],
 ) -> Bool {
-  let mut shared = 0
+  let seen : @hashmap.HashMap[String, Bool] = @hashmap.HashMap([])
   for pa in a {
-    for pb in b {
-      if (pa.lat - pb.lat).abs() < 0.000001 &&
-        (pa.lng - pb.lng).abs() < 0.000001 {
-        shared = shared + 1
-        if shared >= 2 {
-          return true
-        }
+    let key = "\{pa.lat.to_string()},\{pa.lng.to_string()}"
+    seen[key] = true
+  }
+  let mut shared = 0
+  for pb in b {
+    let key = "\{pb.lat.to_string()},\{pb.lng.to_string()}"
+    if seen.contains(key) {
+      shared = shared + 1
+      if shared >= 2 {
+        return true
       }
     }
   }
