@@ -628,3 +628,161 @@ pub fn average_nn_distance(points : Array[@types.GeoPoint]) -> Double {
     total / count.to_double()
   }
 }
+// ---- Voronoi diagram (iterative clipping, planar approximation) ----
+
+///|
+/// A Voronoi cell: the site point and its clipped polygon (ordered vertices).
+pub(all) struct VoronoiCell {
+  site : @types.GeoPoint
+  polygon : Array[@types.GeoPoint]
+} derive(Eq, Debug)
+
+///|
+/// Compute the Voronoi diagram of a set of points within a bounding box.
+/// Uses iterative half-plane clipping (O(n²) per cell, O(n³) total).
+/// The planar approximation is accurate for small regions; for global-scale
+/// data the result should be treated as an approximation.
+pub fn voronoi_diagram(
+  points : Array[@types.GeoPoint],
+  bbox : @types.BBox,
+) -> Array[VoronoiCell] {
+  let n = points.length()
+  if n == 0 {
+    return []
+  }
+  let cells : Array[VoronoiCell] = []
+  let mut i = 0
+  while i < n {
+    let site = points[i]
+    let mut poly : Array[@types.GeoPoint] = [
+      @types.GeoPoint::make(bbox.min_lat, bbox.min_lng),
+      @types.GeoPoint::make(bbox.min_lat, bbox.max_lng),
+      @types.GeoPoint::make(bbox.max_lat, bbox.max_lng),
+      @types.GeoPoint::make(bbox.max_lat, bbox.min_lng),
+    ]
+    let mut j = 0
+    while j < n {
+      if i != j {
+        let other = points[j]
+        let (a, b, c) = perpendicular_bisector(site, other)
+        // Keep the side containing `site` (negative side).
+        poly = clip_polygon(poly, a, b, c, true)
+        if poly.length() < 3 {
+          break
+        }
+      }
+      j = j + 1
+    }
+    if poly.length() >= 3 {
+      cells.push({ site, polygon: poly, })
+    }
+    i = i + 1
+  }
+  cells
+}
+
+///|
+/// Compute the perpendicular bisector line between two points in the form
+/// a*lat + b*lng + c = 0 (planar approximation).
+fn perpendicular_bisector(
+  p1 : @types.GeoPoint,
+  p2 : @types.GeoPoint,
+) -> (Double, Double, Double) {
+  let a = p2.lat - p1.lat
+  let b = p2.lng - p1.lng
+  let c = (
+      p1.lat * p1.lat + p1.lng * p1.lng - p2.lat * p2.lat - p2.lng * p2.lng
+    ) /
+    2.0
+  (a, b, c)
+}
+
+///|
+/// Evaluate the signed distance of a point from the line a*lat + b*lng + c = 0.
+/// Positive = one side, negative = the other, zero = on the line.
+fn line_side(p : @types.GeoPoint, a : Double, b : Double, c : Double) -> Double {
+  a * p.lat + b * p.lng + c
+}
+
+///|
+/// Clip a polygon against a half-plane using the Sutherland-Hodgman algorithm.
+/// `keep_negative` determines which side to keep (negative = true, positive = false).
+fn clip_polygon(
+  poly : Array[@types.GeoPoint],
+  a : Double,
+  b : Double,
+  c : Double,
+  keep_negative : Bool,
+) -> Array[@types.GeoPoint] {
+  let n = poly.length()
+  if n == 0 {
+    return []
+  }
+  let out : Array[@types.GeoPoint] = []
+  let mut prev = poly[n - 1]
+  let mut prev_side = side_sign(line_side(prev, a, b, c), keep_negative)
+  let mut k = 0
+  while k < n {
+    let curr = poly[k]
+    let curr_side = side_sign(line_side(curr, a, b, c), keep_negative)
+    if prev_side {
+      if curr_side {
+        // Both inside: keep curr
+        out.push(curr)
+      } else {
+        // Inside -> outside: keep intersection
+        match segment_line_intersection(prev, curr, a, b, c) {
+          Some(ip) => out.push(ip)
+          None => ()
+        }
+      }
+    } else if curr_side {
+      // Outside -> inside: keep intersection + curr
+      match segment_line_intersection(prev, curr, a, b, c) {
+        Some(ip) => {
+          out.push(ip)
+          out.push(curr)
+        }
+        None => out.push(curr)
+      }
+    }
+    // Both outside: keep nothing
+    prev = curr
+    prev_side = curr_side
+    k = k + 1
+  }
+  out
+}
+
+///|
+/// Determine whether a point is on the "keep" side of the bisector.
+fn side_sign(value : Double, keep_negative : Bool) -> Bool {
+  if keep_negative {
+    value <= 0.0
+  } else {
+    value >= 0.0
+  }
+}
+
+///|
+/// Compute the intersection of a line segment with the line a*lat + b*lng + c = 0.
+/// Returns None if the segment is parallel or degenerate.
+fn segment_line_intersection(
+  p1 : @types.GeoPoint,
+  p2 : @types.GeoPoint,
+  a : Double,
+  b : Double,
+  c : Double,
+) -> @types.GeoPoint? {
+  let d1 = line_side(p1, a, b, c)
+  let d2 = line_side(p2, a, b, c)
+  // If both on same side or either on the line, no proper intersection
+  if d1 * d2 >= 0.0 {
+    return None
+  }
+  // Linear interpolation: t = d1 / (d1 - d2)
+  let t = d1 / (d1 - d2)
+  let lat = p1.lat + t * (p2.lat - p1.lat)
+  let lng = p1.lng + t * (p2.lng - p1.lng)
+  Some(@types.GeoPoint::make(lat, lng))
+}

@@ -135,24 +135,30 @@ fn build_usage() -> String {
     "  moon run cmd distance-summary [lat] [lng]  Distance distribution summary\n"
   let s54 = s53 +
     "  moon run cmd nn-range <id> [k]           k nearest neighbors distance range\n"
-  let s55 = s54 + "\n"
-  let s56 = s55 + "Examples:\n"
-  let s57 = s56 + "  moon run cmd\n"
-  let s58 = s57 + "  moon run cmd \"北京市海淀区颐和园路5号\"\n"
-  let s59 = s58 + "  moon run cmd search \"颐和园\"\n"
-  let s60 = s59 + "  moon run cmd fuzzy \"Yuan\" 2\n"
-  let s61 = s60 + "  moon run cmd tag \"poi\"\n"
-  let s62 = s61 + "  moon run cmd province \"北京市\"\n"
-  let s63 = s62 + "  moon run cmd stats\n"
-  let s64 = s63 + "  moon run cmd export output.csv\n"
-  let s65 = s64 + "  moon run cmd seed 500\n"
-  let s66 = s65 + "  moon run cmd save geo.db\n"
-  let s67 = s66 + "  moon run cmd to-json out.json\n"
-  let s68 = s67 + "  moon run cmd cluster 5.0\n"
-  let s69 = s68 + "  moon run cmd ring-query 39.9 116.4 1.0 5.0\n"
-  let s70 = s69 + "  moon run cmd distance-histogram 39.9 116.4 50.0 10\n"
-  let s71 = s70 + "  moon run cmd nn-range yhy001 5\n"
-  s71
+  let s55 = s54 +
+    "  moon run cmd voronoi                     Voronoi diagram of all entries\n"
+  let s56 = s55 +
+    "  moon run cmd voronoi-cell <id>           Voronoi polygon for a single entry\n"
+  let s57 = s56 +
+    "  moon run cmd voronoi-neighbors <id>      Voronoi neighbors of an entry\n"
+  let s58 = s57 + "\n"
+  let s59 = s58 + "Examples:\n"
+  let s60 = s59 + "  moon run cmd\n"
+  let s61 = s60 + "  moon run cmd \"北京市海淀区颐和园路5号\"\n"
+  let s62 = s61 + "  moon run cmd search \"颐和园\"\n"
+  let s63 = s62 + "  moon run cmd fuzzy \"Yuan\" 2\n"
+  let s64 = s63 + "  moon run cmd tag \"poi\"\n"
+  let s65 = s64 + "  moon run cmd province \"北京市\"\n"
+  let s66 = s65 + "  moon run cmd stats\n"
+  let s67 = s66 + "  moon run cmd export output.csv\n"
+  let s68 = s67 + "  moon run cmd seed 500\n"
+  let s69 = s68 + "  moon run cmd save geo.db\n"
+  let s70 = s69 + "  moon run cmd to-json out.json\n"
+  let s71 = s70 + "  moon run cmd cluster 5.0\n"
+  let s72 = s71 + "  moon run cmd ring-query 39.9 116.4 1.0 5.0\n"
+  let s73 = s72 + "  moon run cmd distance-histogram 39.9 116.4 50.0 10\n"
+  let s74 = s73 + "  moon run cmd nn-range yhy001 5\n"
+  s74
 }
 
 ///|
@@ -866,6 +872,31 @@ fn main {
       5
     }
     run_nn_range(args.get(2).unwrap(), k)
+    return
+  }
+
+  if cmd == "voronoi" {
+    run_voronoi()
+    return
+  }
+
+  if cmd == "voronoi-cell" {
+    if args.length() < 3 {
+      println("Error: voronoi-cell requires an id")
+      println("Usage: moon run cmd voronoi-cell <id>")
+      return
+    }
+    run_voronoi_cell(args.get(2).unwrap())
+    return
+  }
+
+  if cmd == "voronoi-neighbors" {
+    if args.length() < 3 {
+      println("Error: voronoi-neighbors requires an id")
+      println("Usage: moon run cmd voronoi-neighbors <id>")
+      return
+    }
+    run_voronoi_neighbors(args.get(2).unwrap())
     return
   }
 
@@ -2231,5 +2262,66 @@ fn run_nn_range(id : String, k : Int) -> Unit {
         }
       }
     }
+  }
+}
+
+///|
+fn run_voronoi() -> Unit {
+  println("=== Voronoi Diagram ===")
+  let db = build_sample_db()
+  let cells = db.voronoi()
+  if cells.length() == 0 {
+    println("  No entries in DB.")
+    return
+  }
+  println("  Cells: " + cells.length().to_string())
+  for c in cells {
+    println(
+      "  Cell: (" +
+      c.site.lat.to_string() +
+      ", " +
+      c.site.lng.to_string() +
+      ") -> " +
+      c.polygon.length().to_string() +
+      " vertices",
+    )
+  }
+}
+
+///|
+fn run_voronoi_cell(id : String) -> Unit {
+  println("=== Voronoi Cell ===")
+  println("  Entry: " + id)
+  let db = build_sample_db()
+  match db.voronoi_cell(id) {
+    None => println("  Entry not found or DB has fewer than 2 entries.")
+    Some(poly) => {
+      println("  Vertices: " + poly.length().to_string())
+      for v in poly {
+        println("    (" + v.lat.to_string() + ", " + v.lng.to_string() + ")")
+      }
+    }
+  }
+}
+
+///|
+fn run_voronoi_neighbors(id : String) -> Unit {
+  println("=== Voronoi Neighbors ===")
+  println("  Entry: " + id)
+  let db = build_sample_db()
+  match db.voronoi_neighbors(id) {
+    None => println("  Entry not found or DB has fewer than 2 entries.")
+    Some(neighbors) =>
+      if neighbors.length() == 0 {
+        println("  No neighbors found.")
+      } else {
+        println("  Neighbors: " + neighbors.length().to_string())
+        for nid in neighbors {
+          match db.get(nid) {
+            None => ()
+            Some(e) => println("    - " + e.id + " | " + e.name)
+          }
+        }
+      }
   }
 }

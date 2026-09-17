@@ -3086,3 +3086,141 @@ pub fn GeoDB::nearest_neighbors_range(
     }
   }
 }
+
+///|
+/// Compute the Voronoi diagram of all entries in the DB.
+/// Each cell is returned as a VoronoiCell (site + ordered polygon vertices).
+pub fn GeoDB::voronoi(self : GeoDB) -> Array[@geo.VoronoiCell] {
+  let entries = self.all()
+  if entries.length() == 0 {
+    return []
+  }
+  let pts : Array[@types.GeoPoint] = []
+  for e in entries {
+    pts.push(e.location)
+  }
+  let bbox = self.compute_bbox()
+  match bbox {
+    None => []
+    Some((b, _)) => @geo.voronoi_diagram(pts, b)
+  }
+}
+
+///|
+/// Compute the Voronoi cell for a specific entry, returned as an ordered
+/// polygon (array of GeoPoints). Returns None if the entry is not found or
+/// the DB has fewer than 2 entries.
+pub fn GeoDB::voronoi_cell(
+  self : GeoDB,
+  id : String,
+) -> Array[@types.GeoPoint]? {
+  let entries = self.all()
+  if entries.length() < 2 {
+    return None
+  }
+  let target = match self.get(id) {
+    None => return None
+    Some(e) => e
+  }
+  let pts : Array[@types.GeoPoint] = []
+  for e in entries {
+    pts.push(e.location)
+  }
+  let bbox = match self.compute_bbox() {
+    None => return None
+    Some((b, _)) => b
+  }
+  let cells = @geo.voronoi_diagram(pts, bbox)
+  for c in cells {
+    if c.site.lat == target.location.lat && c.site.lng == target.location.lng {
+      return Some(c.polygon)
+    }
+  }
+  None
+}
+
+///|
+/// Find Voronoi neighbors of an entry: entries whose Voronoi cells share
+/// an edge with the cell of `id`. Returns the neighbor ids.
+pub fn GeoDB::voronoi_neighbors(self : GeoDB, id : String) -> Array[String]? {
+  let entries = self.all()
+  if entries.length() < 2 {
+    return None
+  }
+  let target = match self.get(id) {
+    None => return None
+    Some(e) => e
+  }
+  let pts : Array[@types.GeoPoint] = []
+  for e in entries {
+    pts.push(e.location)
+  }
+  let bbox = match self.compute_bbox() {
+    None => return None
+    Some((b, _)) => b
+  }
+  let cells = @geo.voronoi_diagram(pts, bbox)
+  let target_poly = match find_voronoi_cell(cells, target.location) {
+    None => return None
+    Some(c) => c.polygon
+  }
+  if target_poly.length() < 3 {
+    return Some([])
+  }
+  let neighbors : Array[String] = []
+  let seen : @hashmap.HashMap[String, Bool] = @hashmap.HashMap([])
+  for c in cells {
+    if c.site.lat == target.location.lat && c.site.lng == target.location.lng {
+      continue
+    }
+    if cells_share_edge(target_poly, c.polygon) {
+      for e in entries {
+        if e.location.lat == c.site.lat && e.location.lng == c.site.lng {
+          if !seen.contains(e.id) {
+            seen[e.id] = true
+            neighbors.push(e.id)
+          }
+          break
+        }
+      }
+    }
+  }
+  Some(neighbors)
+}
+
+///|
+/// Find a Voronoi cell by site location.
+fn find_voronoi_cell(
+  cells : Array[@geo.VoronoiCell],
+  loc : @types.GeoPoint,
+) -> @geo.VoronoiCell? {
+  for c in cells {
+    if c.site.lat == loc.lat && c.site.lng == loc.lng {
+      return Some(c)
+    }
+  }
+  None
+}
+
+///|
+/// Check whether two Voronoi polygons share an edge (they are neighbors).
+/// Two polygons share an edge if they share at least two vertices (within
+/// tolerance).
+fn cells_share_edge(
+  a : Array[@types.GeoPoint],
+  b : Array[@types.GeoPoint],
+) -> Bool {
+  let mut shared = 0
+  for pa in a {
+    for pb in b {
+      if (pa.lat - pb.lat).abs() < 0.000001 &&
+        (pa.lng - pb.lng).abs() < 0.000001 {
+        shared = shared + 1
+        if shared >= 2 {
+          return true
+        }
+      }
+    }
+  }
+  false
+}

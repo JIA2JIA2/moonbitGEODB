@@ -108,3 +108,84 @@ test "bearing - due north is 0°" {
   let brg = bearing(a, b)
   @test.assert_eq(brg < 0.5 || brg > 359.5, true)
 }
+
+///|
+test "voronoi_diagram - single point fills bbox" {
+  let pts = [@types.GeoPoint::make(0.0, 0.0)]
+  let bbox : @types.BBox = {
+    min_lat: -1.0,
+    max_lat: 1.0,
+    min_lng: -1.0,
+    max_lng: 1.0,
+  }
+  let cells = voronoi_diagram(pts, bbox)
+  @test.assert_eq(cells.length(), 1)
+  @test.assert_eq(cells[0].polygon.length(), 4)
+}
+
+///|
+test "voronoi_diagram - two points split bbox" {
+  let pts = [@types.GeoPoint::make(0.0, 0.0), @types.GeoPoint::make(2.0, 0.0)]
+  let bbox : @types.BBox = {
+    min_lat: -1.0,
+    max_lat: 3.0,
+    min_lng: -1.0,
+    max_lng: 3.0,
+  }
+  let cells = voronoi_diagram(pts, bbox)
+  @test.assert_eq(cells.length(), 2)
+  @test.assert_eq(cells[0].polygon.length(), 4)
+  @test.assert_eq(cells[1].polygon.length(), 4)
+}
+
+///|
+test "voronoi_diagram - three points in triangle" {
+  let pts = [
+    @types.GeoPoint::make(0.0, 0.0),
+    @types.GeoPoint::make(2.0, 0.0),
+    @types.GeoPoint::make(1.0, 2.0),
+  ]
+  let bbox : @types.BBox = {
+    min_lat: -1.0,
+    max_lat: 3.0,
+    min_lng: -1.0,
+    max_lng: 3.0,
+  }
+  let cells = voronoi_diagram(pts, bbox)
+  @test.assert_eq(cells.length(), 3)
+  for c in cells {
+    @test.assert_eq(c.polygon.length() >= 3, true)
+  }
+}
+
+///|
+test "voronoi_diagram - cells cover bbox area" {
+  let pts = [
+    @types.GeoPoint::make(0.5, 0.5),
+    @types.GeoPoint::make(0.5, 1.5),
+    @types.GeoPoint::make(1.5, 0.5),
+    @types.GeoPoint::make(1.5, 1.5),
+  ]
+  let bbox : @types.BBox = {
+    min_lat: 0.0,
+    max_lat: 2.0,
+    min_lng: 0.0,
+    max_lng: 2.0,
+  }
+  let cells = voronoi_diagram(pts, bbox)
+  @test.assert_eq(cells.length(), 4)
+  for c in cells {
+    @test.assert_eq(c.polygon.length() >= 3, true)
+  }
+}
+
+///|
+test "voronoi_diagram - empty points returns empty" {
+  let bbox : @types.BBox = {
+    min_lat: 0.0,
+    max_lat: 1.0,
+    min_lng: 0.0,
+    max_lng: 1.0,
+  }
+  @test.assert_eq(voronoi_diagram([], bbox).length(), 0)
+}

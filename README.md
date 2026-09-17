@@ -73,7 +73,7 @@ moonbitGEODB/
 | 模块 | 说明 |
 |------|------|
 | **types** | 定义 `GeoPoint`（地理坐标点）、`Address`（结构化地址）、`GeoEntry`（数据库条目）、`BBox`（边界框）等核心数据类型 |
-| **geo** | 实现 Haversine 公式、Geohash 编解码、WGS84↔GCJ-02 坐标转换、凸包计算、多边形面积、点-in-多边形、径向密度等地理运算 |
+| **geo** | 实现 Haversine 公式、Geohash 编解码、WGS84↔GCJ-02 坐标转换、凸包计算、Voronoi 图（泰森多边形）、多边形面积、点-in-多边形、径向密度等地理运算 |
 | **parser** | 支持逗号分隔、制表符分隔、中文行政区划等多种地址格式的解析 |
 | **index** | 网格空间索引加速 BBox 查询；R-tree（`rtree.mbt`）提供亚线性的 k 最近邻与范围查询；基于 HashMap 的名称/标签/地址索引 |
 | **persist** | 二进制编解码（codec.mbt）、GeoEntry 序列化（binary.mbt）、C FFI IO（persist_native.mbt）、原子写入与备份 |
@@ -152,6 +152,9 @@ moon run cmd polygon <lat1>,<lng1> <lat2>,<lng2> ... 多边形操作
 moon run cmd geohash-neighbors <hash> [precision] Geohash 邻域
 moon run cmd radial-density <lat> <lng> <km> <rings> 径向密度
 moon run cmd to-geojson-bbox [path] 带 BBox 的 GeoJSON
+moon run cmd voronoi                     Voronoi 图（泰森多边形）
+moon run cmd voronoi-cell <id>           单个条目的 Voronoi 多边形
+moon run cmd voronoi-neighbors <id>      条目的 Voronoi 邻居
 moon run cmd clear                 清空所有条目
 moon run cmd help                  显示帮助
 ```
@@ -292,6 +295,15 @@ let inside = @geo.point_in_polygon(point, polygon)
 
 // 平均最近邻距离
 let avg_nn = @geo.average_nn_distance(points)
+
+// Voronoi 图（泰森多边形）
+let cells = @geo.voronoi_diagram(points, bbox)
+
+// 单个条目的 Voronoi 多边形
+let poly = db.voronoi_cell("id1")
+
+// Voronoi 邻居（共享边的条目）
+let neighbors = db.voronoi_neighbors("id1")
 
 // 重复数据检测
 let groups = db.find_duplicates(max_distance_km=0.1, max_edit_dist=2)
