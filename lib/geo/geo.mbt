@@ -968,3 +968,184 @@ pub fn kmeans_inertia(points : Array[@types.GeoPoint], clusters : Array[KMeansCl
   }
   total
 }
+
+// ---- Moran's I spatial autocorrelation ----
+
+///|
+/// Result of Moran's I computation.
+/// `index` is the Moran's I statistic (-1 to 1).
+/// `interpretation`:
+///   Positive I → clustered (like values near each other)
+///   I ≈ 0      → random spatial distribution
+///   Negative I → dispersed (unlike values near each other)
+pub(all) struct MoranIResult {
+  index : Double
+  expected : Double  // -1/(n-1), the null expectation
+  n : Int
+} derive(Debug)
+
+///|
+/// Compute Moran's I spatial autocorrelation statistic for a set of
+/// points with numeric attribute values. Uses an inverse-distance-weighted
+/// spatial weight matrix: w_ij = 1 / haversine(p_i, p_j).
+///
+/// `points`: geographic locations
+/// `values`: attribute values at each location (same length)
+///
+/// Returns MoranIResult or None if fewer than 3 points.
+pub fn morans_i(
+  points : Array[@types.GeoPoint],
+  values : Array[Double],
+) -> MoranIResult? {
+  let n = points.length()
+  if n < 3 || values.length() != n {
+    return None
+  }
+  let nf = n.to_double()
+  // Compute mean.
+  let mut sum_v = 0.0
+  for v in values {
+    sum_v = sum_v + v
+  }
+  let mean_v = sum_v / nf
+  // Center values.
+  let z : Array[Double] = []
+  for v in values {
+    z.push(v - mean_v)
+  }
+  // Compute denominator: sum z_i².
+  let mut denom = 0.0
+  for zi in z {
+    denom = denom + zi * zi
+  }
+  if denom == 0.0 {
+    return None  // All values identical
+  }
+  // Build weight matrix (inverse haversine), compute numerator and W sum.
+  let mut num = 0.0
+  let mut w_sum = 0.0
+  let mut i = 0
+  while i < n {
+    let mut j = 0
+    while j < n {
+      if i != j {
+        let d = haversine(points[i], points[j])
+        if d > 0.0 {
+          let w = 1.0 / d
+          num = num + w * z[i] * z[j]
+          w_sum = w_sum + w
+        }
+      }
+      j = j + 1
+    }
+    i = i + 1
+  }
+  if w_sum == 0.0 {
+    return None
+  }
+  let index = (nf / w_sum) * (num / denom)
+  let expected = -1.0 / (nf - 1.0)
+  Some({ index, expected, n })
+}
+
+// ---- Standard Deviation Ellipse (SDE) ----
+
+///|
+/// Standard Deviation Ellipse result: measures directional dispersion of
+/// a point set. The center equals the centroid; `semi_major` >= `semi_minor`.
+pub(all) struct StdDevEllipse {
+  center : @types.GeoPoint
+  semi_major_km : Double
+  semi_minor_km : Double
+  rotation_deg : Double  // degrees clockwise from north
+  area_sq_km : Double
+  eccentricity : Double  // sqrt(1 - (b/a)²), 0 = circle, 1 = line
+} derive(Debug)
+
+///|
+/// Compute the Standard Deviation Ellipse of a point set.
+/// Projects lat/lng to a local km coordinate system using equirectangular
+/// approximation centered on the centroid. Returns None for < 3 points.
+pub fn std_dev_ellipse(points : Array[@types.GeoPoint]) -> StdDevEllipse? {
+  let n = points.length()
+  if n < 3 {
+    return None
+  }
+  let center = centroid(points)
+  let cos_lat = @math.cos(center.lat * 3.14159265358979323846 / 180.0)
+  let cos_lat_safe = if cos_lat.abs() < 0.000001 { 0.000001 } else { cos_lat }
+  let km_per_deg_lat = 111.32
+  let km_per_deg_lng = 111.32 * cos_lat_safe
+  // Project to local (x_km, y_km). y = north, x = east.
+  let xs : Array[Double] = []
+  let ys : Array[Double] = []
+  for p in points {
+    let x = (p.lng - center.lng) * km_per_deg_lng
+    let y = (p.lat - center.lat) * km_per_deg_lat
+    xs.push(x)
+    ys.push(y)
+  }
+  let nf = n.to_double()
+  // Covariance terms (centered at origin already, since we subtracted mean).
+  let mut sxx = 0.0
+  let mut syy = 0.0
+  let mut sxy = 0.0
+  let mut i = 0
+  while i < n {
+    sxx = sxx + xs[i] * xs[i]
+    syy = syy + ys[i] * ys[i]
+    sxy = sxy + xs[i] * ys[i]
+    i = i + 1
+  }
+  sxx = sxx / nf
+  syy = syy / nf
+  sxy = sxy / nf
+  // Solve 2x2 eigenvalue problem for the ellipse axes.
+  // Eigenvalues of [[sxx, sxy], [sxy, syy]].
+  let trace = sxx + syy
+  let det = sxx * syy - sxy * sxy
+  let diff = sqrt((sxx - syy) * (sxx - syy) + 4.0 * sxy * sxy)
+  let lambda1 = (trace + diff) / 2.0
+  let lambda2 = (trace - diff) / 2.0
+  let semi_major = if lambda1 >= lambda2 {
+    sqrt(lambda1)
+  } else {
+    sqrt(lambda2)
+  }
+  let semi_minor = if lambda1 >= lambda2 {
+    sqrt(lambda2)
+  } else {
+    sqrt(lambda1)
+  }
+  // Rotation angle: the eigenvector for the largest eigenvalue.
+  // angle = 0.5 * atan2(2*sxy, sxx - syy), converted so 0° = north.
+  let rot_rad = 0.5 * @math.atan2(2.0 * sxy, sxx - syy)
+  // Convert from math convention (0 = east, CCW) to compass (0 = north, CW).
+  let rot_deg = (90.0 - rot_rad * 180.0 / 3.14159265358979323846 + 360.0) % 360.0
+  let area = 3.14159265358979323846 * semi_major * semi_minor
+  let ecc = if semi_major > 0.0 {
+    sqrt(1.0 - (semi_minor / semi_major) * (semi_minor / semi_major))
+  } else {
+    0.0
+  }
+  Some({
+    center,
+    semi_major_km: semi_major,
+    semi_minor_km: semi_minor,
+    rotation_deg: rot_deg,
+    area_sq_km: area,
+    eccentricity: ecc,
+  })
+}
+
+///|
+/// Return a human-readable compass direction from a bearing in degrees [0, 360).
+pub fn compass_direction(bearing_deg : Double) -> String {
+  let b = ((bearing_deg % 360.0) + 360.0) % 360.0
+  let dirs : Array[String] = [
+    "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+    "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
+  ]
+  let idx = ((b + 11.25) / 22.5).to_int() % 16
+  dirs[idx]
+}

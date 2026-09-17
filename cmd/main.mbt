@@ -931,6 +931,26 @@ fn main {
     return
   }
 
+  if cmd == "moran-i" {
+    run_morans_i()
+    return
+  }
+
+  if cmd == "sde" {
+    run_std_dev_ellipse()
+    return
+  }
+
+  if cmd == "tsp" {
+    if args.length() < 3 {
+      println("Error: tsp requires start_id")
+      println("Usage: moon run cmd tsp <start_id>")
+      return
+    }
+    run_tsp(args.get(2).unwrap())
+    return
+  }
+
   if cmd == "voronoi" {
     run_voronoi()
     return
@@ -2498,6 +2518,102 @@ fn run_bbox_query(min_lat : Double, max_lat : Double, min_lng : Double, max_lng 
           e.location.lng.to_string() +
           ")"
       )
+    }
+  }
+}
+
+// ---- Moran's I handler ----
+
+fn run_morans_i() -> Unit {
+  let db = build_sample_db()
+  println("=== Moran's I Spatial Autocorrelation ===")
+  let lat_res = db.morans_i_on_lat()
+  match lat_res {
+    None => println("  (computation failed)")
+    Some(r) => {
+      println("  Moran's I (on latitude): " + r.index.to_string())
+      println("  Expected (random):      " + r.expected.to_string())
+      println("  Interpretation:")
+      let i = r.index
+      if i > 0.3 {
+        println("    → Strong positive spatial autocorrelation (clustered)")
+      } else if i > 0.1 {
+        println("    → Moderate positive spatial autocorrelation")
+      } else if i > -0.1 {
+        println("    → Near zero: random spatial pattern")
+      } else if i > -0.3 {
+        println("    → Moderate negative autocorrelation (dispersed)")
+      } else {
+        println("    → Strong negative autocorrelation")
+      }
+    }
+  }
+  let lng_res = db.morans_i_on_lng()
+  match lng_res {
+    None => ()
+    Some(r) => {
+      println("  Moran's I (on longitude): " + r.index.to_string())
+    }
+  }
+}
+
+// ---- Standard Deviation Ellipse handler ----
+
+fn run_std_dev_ellipse() -> Unit {
+  let db = build_sample_db()
+  println("=== Standard Deviation Ellipse ===")
+  match db.std_dev_ellipse() {
+    None => println("  (computation failed)")
+    Some(sde) => {
+      println("  Center: (" +
+        sde.center.lat.to_string() + ", " +
+        sde.center.lng.to_string() + ")")
+      println("  Semi-major axis: " + sde.semi_major_km.to_string() + " km")
+      println("  Semi-minor axis: " + sde.semi_minor_km.to_string() + " km")
+      println("  Rotation:        " +
+        sde.rotation_deg.to_string() +
+        "° (" + @geo.compass_direction(sde.rotation_deg) + ")")
+      println("  Area:            " + sde.area_sq_km.to_string() + " sq km")
+      println("  Eccentricity:    " + sde.eccentricity.to_string())
+      let shape = if sde.eccentricity < 0.3 {
+        "roughly circular"
+      } else if sde.eccentricity < 0.7 {
+        "moderately elongated"
+      } else {
+        "strongly elongated"
+      }
+      println("  Shape:           " + shape)
+    }
+  }
+}
+
+// ---- TSP nearest-neighbor handler ----
+
+fn run_tsp(start_id : String) -> Unit {
+  let db = build_sample_db()
+  println("=== TSP Nearest-Neighbor Route ===")
+  println("  Start: " + start_id)
+  match db.tsp_nearest(start_id) {
+    None => {
+      println("  Error: start id not found")
+      let all = db.all()
+      println("  Available ids:")
+      for e in all {
+        println("    - " + e.id)
+      }
+    }
+    Some((route, total_km)) => {
+      println("  Total distance: " + total_km.to_string() + " km")
+      println("  Route (" + route.length().to_string() + " stops):")
+      let mut idx = 0
+      for stop in route {
+        let label = if idx == 0 { "START" } else if idx == route.length() - 1 { "END  " } else { "     " }
+        println("    " + label + "  " +
+          stop.entry.id + " | " +
+          stop.entry.name + " | cum=" +
+          stop.cum_distance_km.to_string() + " km")
+        idx = idx + 1
+      }
     }
   }
 }

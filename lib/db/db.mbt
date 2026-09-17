@@ -3376,3 +3376,137 @@ pub fn GeoDB::kmeans_elbow(
   }
   results
 }
+
+// ---- Moran's I spatial autocorrelation ----
+
+///| Compute Moran's I for the DB's entry locations using the given
+///| numeric attribute values (one per entry). The values array must be
+///| the same length as the number of entries.
+/// Uses inverse-distance weighting (Haversine).
+pub fn GeoDB::morans_i(self : GeoDB, values : Array[Double]) -> @geo.MoranIResult? {
+  let entries = self.all()
+  let pts : Array[@types.GeoPoint] = []
+  for e in entries {
+    pts.push(e.location)
+  }
+  @geo.morans_i(pts, values)
+}
+
+///| Convenience: compute Moran's I where the attribute value is simply
+///| the latitude of each entry. Tests whether entries with similar latitudes
+///| tend to cluster together spatially.
+pub fn GeoDB::morans_i_on_lat(self : GeoDB) -> @geo.MoranIResult? {
+  let entries = self.all()
+  let pts : Array[@types.GeoPoint] = []
+  let vals : Array[Double] = []
+  for e in entries {
+    pts.push(e.location)
+    vals.push(e.location.lat)
+  }
+  @geo.morans_i(pts, vals)
+}
+
+///| Convenience: compute Moran's I where the attribute is longitude.
+pub fn GeoDB::morans_i_on_lng(self : GeoDB) -> @geo.MoranIResult? {
+  let entries = self.all()
+  let pts : Array[@types.GeoPoint] = []
+  let vals : Array[Double] = []
+  for e in entries {
+    pts.push(e.location)
+    vals.push(e.location.lng)
+  }
+  @geo.morans_i(pts, vals)
+}
+
+// ---- Standard Deviation Ellipse ----
+
+///| Compute the Standard Deviation Ellipse for all entries in the DB.
+pub fn GeoDB::std_dev_ellipse(self : GeoDB) -> @geo.StdDevEllipse? {
+  let entries = self.all()
+  let pts : Array[@types.GeoPoint] = []
+  for e in entries {
+    pts.push(e.location)
+  }
+  @geo.std_dev_ellipse(pts)
+}
+
+// ---- TSP nearest-neighbor heuristic ----
+
+///| A route stop in a TSP solution.
+pub(all) struct RouteStop {
+  entry : @types.GeoEntry
+  cum_distance_km : Double  // cumulative distance from start to this stop
+} derive(Debug)
+
+///| Solve a small TSP using the greedy nearest-neighbor heuristic,
+///| starting from the entry with id `start_id`. Returns the ordered
+///| route plus the total travel distance. The route does NOT return
+///| to the start (open tour).
+///
+/// Returns None if the start id is not found or the DB is empty.
+pub fn GeoDB::tsp_nearest(
+  self : GeoDB,
+  start_id : String,
+) -> (Array[RouteStop], Double)? {
+  let entries = self.all()
+  let n = entries.length()
+  if n == 0 {
+    return None
+  }
+  // Find start.
+  let start_idx = find_entry_idx(entries, start_id)
+  match start_idx {
+    None => None
+    Some(si) => {
+      // Track visited.
+      let visited : Array[Bool] = []
+      let mut vi = 0
+      while vi < n {
+        visited.push(false)
+        vi = vi + 1
+      }
+      visited[si] = true
+      let route : Array[RouteStop] = []
+      route.push({ entry: entries[si], cum_distance_km: 0.0 })
+      let mut prev = si
+      let mut total_dist = 0.0
+      let mut step = 1
+      while step < n {
+        let mut best = -1
+        let mut best_d = 1.7976931348623157e+308
+        let mut j = 0
+        while j < n {
+          if !visited[j] {
+            let d = @geo.haversine(entries[prev].location, entries[j].location)
+            if d < best_d {
+              best_d = d
+              best = j
+            }
+          }
+          j = j + 1
+        }
+        if best < 0 {
+          break  // No unvisited
+        }
+        visited[best] = true
+        total_dist = total_dist + best_d
+        route.push({ entry: entries[best], cum_distance_km: total_dist })
+        prev = best
+        step = step + 1
+      }
+      Some((route, total_dist))
+    }
+  }
+}
+
+///| Helper: find an entry's index by id.
+fn find_entry_idx(entries : Array[@types.GeoEntry], id : String) -> Int? {
+  let mut i = 0
+  while i < entries.length() {
+    if entries[i].id == id {
+      return Some(i)
+    }
+    i = i + 1
+  }
+  None
+}
