@@ -1196,7 +1196,6 @@ pub fn GeoDB::distance_between(
   }
 }
 
-
 // ---- Enhanced search ----
 
 ///|
@@ -3239,7 +3238,8 @@ fn cells_share_edge(
 
 // ---- Bounding box query + centroid + K-Means ----
 
-///| Convenience: find entries in a rectangular region defined by min/max lat/lng.
+///|
+/// Convenience: find entries in a rectangular region defined by min/max lat/lng.
 /// Delegates to the existing indexed find_in_bbox.
 pub fn GeoDB::find_bbox(
   self : GeoDB,
@@ -3248,15 +3248,11 @@ pub fn GeoDB::find_bbox(
   min_lng : Double,
   max_lng : Double,
 ) -> Array[@types.GeoEntry] {
-  self.find_in_bbox({
-    min_lat,
-    max_lat,
-    min_lng,
-    max_lng,
-  })
+  self.find_in_bbox({ min_lat, max_lat, min_lng, max_lng, })
 }
 
-///| Compute the centroid (planar arithmetic mean lat/lng) of all entries.
+///|
+/// Compute the centroid (planar arithmetic mean lat/lng) of all entries.
 /// Returns (0, 0) if the DB is empty.
 pub fn GeoDB::centroid(self : GeoDB) -> @types.GeoPoint {
   let entries = self.all()
@@ -3270,7 +3266,8 @@ pub fn GeoDB::centroid(self : GeoDB) -> @types.GeoPoint {
   @geo.centroid(pts)
 }
 
-///| Compute the true geographic mean center using a sphere-based
+///|
+/// Compute the true geographic mean center using a sphere-based
 /// 3D-to-lat/lng projection, which is more accurate for global-scale data
 /// than the simple arithmetic mean. Returns (0,0) for empty DB.
 pub fn GeoDB::geographic_center(self : GeoDB) -> @types.GeoPoint {
@@ -3300,11 +3297,9 @@ pub fn GeoDB::geographic_center(self : GeoDB) -> @types.GeoPoint {
   @types.GeoPoint::make(lat, lng)
 }
 
-///| Compute the centroid for a subset of entries matching a tag.
-pub fn GeoDB::centroid_by_tag(
-  self : GeoDB,
-  tag : String,
-) -> @types.GeoPoint {
+///|
+/// Compute the centroid for a subset of entries matching a tag.
+pub fn GeoDB::centroid_by_tag(self : GeoDB, tag : String) -> @types.GeoPoint {
   let mut sum_lat = 0.0
   let mut sum_lng = 0.0
   let mut count : Int = 0
@@ -3325,10 +3320,14 @@ pub fn GeoDB::centroid_by_tag(
   if count == 0 {
     return @types.GeoPoint::make(0.0, 0.0)
   }
-  @types.GeoPoint::make(sum_lat / count.to_double(), sum_lng / count.to_double())
+  @types.GeoPoint::make(
+    sum_lat / count.to_double(),
+    sum_lng / count.to_double(),
+  )
 }
 
-///| Run K-Means clustering on the entries in this DB.
+///|
+/// Run K-Means clustering on the entries in this DB.
 /// Returns k clusters; each cluster contains the member entries.
 pub(all) struct DBKMeansCluster {
   id : Int
@@ -3336,10 +3335,11 @@ pub(all) struct DBKMeansCluster {
   members : Array[@types.GeoEntry]
 } derive(Debug)
 
+///|
 pub fn GeoDB::kmeans(
   self : GeoDB,
   k : Int,
-  max_iter~ : Int = 100,
+  max_iter? : Int = 100,
 ) -> Array[DBKMeansCluster] {
   let entries = self.all()
   let n = entries.length()
@@ -3350,24 +3350,23 @@ pub fn GeoDB::kmeans(
   for e in entries {
     pts.push(e.location)
   }
-  let clusters = @geo.kmeans(pts, k, max_iter=max_iter)
+  let clusters = @geo.kmeans(pts, k, max_iter~)
   let result : Array[DBKMeansCluster] = []
   for cl in clusters {
     let members : Array[@types.GeoEntry] = []
     for idx in cl.members {
       members.push(entries[idx])
     }
-    result.push({ id: cl.id, center: cl.center, members })
+    result.push({ id: cl.id, center: cl.center, members, })
   }
   result
 }
 
 ///| Compute the elbow method: run K-Means for k = 1..max_k and return
-///| (k, inertia) pairs. The "elbow" in the plot suggests a good k.
-pub fn GeoDB::kmeans_elbow(
-  self : GeoDB,
-  max_k : Int,
-) -> Array[(Int, Double)] {
+
+///|
+/// (k, inertia) pairs. The "elbow" in the plot suggests a good k.
+pub fn GeoDB::kmeans_elbow(self : GeoDB, max_k : Int) -> Array[(Int, Double)] {
   let entries = self.all()
   if entries.length() == 0 {
     return []
@@ -3392,10 +3391,16 @@ pub fn GeoDB::kmeans_elbow(
 // ---- Moran's I spatial autocorrelation ----
 
 ///| Compute Moran's I for the DB's entry locations using the given
+
 ///| numeric attribute values (one per entry). The values array must be
-///| the same length as the number of entries.
+
+///|
+/// the same length as the number of entries.
 /// Uses inverse-distance weighting (Haversine).
-pub fn GeoDB::morans_i(self : GeoDB, values : Array[Double]) -> @geo.MoranIResult? {
+pub fn GeoDB::morans_i(
+  self : GeoDB,
+  values : Array[Double],
+) -> @geo.MoranIResult? {
   let entries = self.all()
   let pts : Array[@types.GeoPoint] = []
   for e in entries {
@@ -3405,8 +3410,11 @@ pub fn GeoDB::morans_i(self : GeoDB, values : Array[Double]) -> @geo.MoranIResul
 }
 
 ///| Convenience: compute Moran's I where the attribute value is simply
+
 ///| the latitude of each entry. Tests whether entries with similar latitudes
-///| tend to cluster together spatially.
+
+///|
+/// tend to cluster together spatially.
 pub fn GeoDB::morans_i_on_lat(self : GeoDB) -> @geo.MoranIResult? {
   let entries = self.all()
   let pts : Array[@types.GeoPoint] = []
@@ -3418,7 +3426,8 @@ pub fn GeoDB::morans_i_on_lat(self : GeoDB) -> @geo.MoranIResult? {
   @geo.morans_i(pts, vals)
 }
 
-///| Convenience: compute Moran's I where the attribute is longitude.
+///|
+/// Convenience: compute Moran's I where the attribute is longitude.
 pub fn GeoDB::morans_i_on_lng(self : GeoDB) -> @geo.MoranIResult? {
   let entries = self.all()
   let pts : Array[@types.GeoPoint] = []
@@ -3430,9 +3439,74 @@ pub fn GeoDB::morans_i_on_lng(self : GeoDB) -> @geo.MoranIResult? {
   @geo.morans_i(pts, vals)
 }
 
+// ---- Spatial autocorrelation with significance / hotspot analysis ----
+
+///| Enhanced global Moran's I with z-score and two-sided p-value, using
+
+///| mutual-kNN binary weights. `values` must have one entry per record
+
+///| (same order as `all()`). Returns None for fewer than 4 entries or
+
+///|
+/// zero-variance values.
+pub fn GeoDB::morans_i_test(
+  self : GeoDB,
+  values : Array[Double],
+  k? : Int = 5,
+) -> @geo.MoranResult? {
+  let entries = self.all()
+  let pts : Array[@types.GeoPoint] = []
+  for e in entries {
+    pts.push(e.location)
+  }
+  let weights = @geo.knn_weights(pts, k~)
+  @geo.morans_i_test(pts, values, weights)
+}
+
+///| Getis-Ord Gi* hot/cold spot detection over all entries, using
+
+///| mutual-kNN binary weights. `values` must have one entry per record.
+
+///|
+/// `threshold` is the |z| cut-off (default 1.96 ≈ 95% confidence).
+pub fn GeoDB::getis_ord(
+  self : GeoDB,
+  values : Array[Double],
+  k? : Int = 5,
+  threshold? : Double = 1.96,
+) -> Array[@geo.GetisResult] {
+  let entries = self.all()
+  let pts : Array[@types.GeoPoint] = []
+  for e in entries {
+    pts.push(e.location)
+  }
+  let weights = @geo.knn_weights(pts, k~)
+  @geo.getis_ord_gi_star(pts, values, weights, threshold~)
+}
+
+///| Local Moran's I (LISA) cluster typing over all entries, using
+
+///|
+/// mutual-kNN binary weights. `values` must have one entry per record.
+pub fn GeoDB::lisa(
+  self : GeoDB,
+  values : Array[Double],
+  k? : Int = 5,
+  threshold? : Double = 1.96,
+) -> Array[@geo.LocalMoranResult] {
+  let entries = self.all()
+  let pts : Array[@types.GeoPoint] = []
+  for e in entries {
+    pts.push(e.location)
+  }
+  let weights = @geo.knn_weights(pts, k~)
+  @geo.local_morans(pts, values, weights, threshold~)
+}
+
 // ---- Standard Deviation Ellipse ----
 
-///| Compute the Standard Deviation Ellipse for all entries in the DB.
+///|
+/// Compute the Standard Deviation Ellipse for all entries in the DB.
 pub fn GeoDB::std_dev_ellipse(self : GeoDB) -> @geo.StdDevEllipse? {
   let entries = self.all()
   let pts : Array[@types.GeoPoint] = []
@@ -3444,16 +3518,21 @@ pub fn GeoDB::std_dev_ellipse(self : GeoDB) -> @geo.StdDevEllipse? {
 
 // ---- TSP nearest-neighbor heuristic ----
 
-///| A route stop in a TSP solution.
+///|
+/// A route stop in a TSP solution.
 pub(all) struct RouteStop {
   entry : @types.GeoEntry
-  cum_distance_km : Double  // cumulative distance from start to this stop
+  cum_distance_km : Double // cumulative distance from start to this stop
 } derive(Debug)
 
 ///| Solve a small TSP using the greedy nearest-neighbor heuristic,
+
 ///| starting from the entry with id `start_id`. Returns the ordered
+
 ///| route plus the total travel distance. The route does NOT return
-///| to the start (open tour).
+
+///|
+/// to the start (open tour).
 ///
 /// Returns None if the start id is not found or the DB is empty.
 pub fn GeoDB::tsp_nearest(
@@ -3479,7 +3558,7 @@ pub fn GeoDB::tsp_nearest(
       }
       visited[si] = true
       let route : Array[RouteStop] = []
-      route.push({ entry: entries[si], cum_distance_km: 0.0 })
+      route.push({ entry: entries[si], cum_distance_km: 0.0, })
       let mut prev = si
       let mut total_dist = 0.0
       let mut step = 1
@@ -3498,11 +3577,11 @@ pub fn GeoDB::tsp_nearest(
           j = j + 1
         }
         if best < 0 {
-          break  // No unvisited
+          break // No unvisited
         }
         visited[best] = true
         total_dist = total_dist + best_d
-        route.push({ entry: entries[best], cum_distance_km: total_dist })
+        route.push({ entry: entries[best], cum_distance_km: total_dist, })
         prev = best
         step = step + 1
       }
@@ -3511,7 +3590,8 @@ pub fn GeoDB::tsp_nearest(
   }
 }
 
-///| Helper: find an entry's index by id.
+///|
+/// Helper: find an entry's index by id.
 fn find_entry_idx(entries : Array[@types.GeoEntry], id : String) -> Int? {
   let mut i = 0
   while i < entries.length() {

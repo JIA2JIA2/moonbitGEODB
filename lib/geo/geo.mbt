@@ -794,7 +794,7 @@ fn segment_line_intersection(
 pub(all) struct KMeansCluster {
   id : Int
   center : @types.GeoPoint
-  members : Array[Int]  // indices into the original point array
+  members : Array[Int] // indices into the original point array
 } derive(Debug)
 
 ///|
@@ -811,7 +811,7 @@ pub fn centroid(points : Array[@types.GeoPoint]) -> @types.GeoPoint {
     sum_lat = sum_lat + p.lat
     sum_lng = sum_lng + p.lng
   }
-  @types.GeoPoint::make(sum_lat / (n.to_double()), sum_lng / (n.to_double()))
+  @types.GeoPoint::make(sum_lat / n.to_double(), sum_lng / n.to_double())
 }
 
 ///|
@@ -826,7 +826,7 @@ pub fn centroid(points : Array[@types.GeoPoint]) -> @types.GeoPoint {
 pub fn kmeans(
   points : Array[@types.GeoPoint],
   k : Int,
-  max_iter~ : Int = 100,
+  max_iter? : Int = 100,
 ) -> Array[KMeansCluster] {
   let n = points.length()
   if n == 0 {
@@ -902,8 +902,8 @@ pub fn kmeans(
       }
       if count > 0 {
         centroids[k_idx] = @types.GeoPoint::make(
-          sum_lat / (count.to_double()),
-          sum_lng / (count.to_double()),
+          sum_lat / count.to_double(),
+          sum_lng / count.to_double(),
         )
       } else {
         // Empty cluster: re-seed with the first unassigned point (or the previous centroid).
@@ -925,11 +925,7 @@ pub fn kmeans(
       }
       j = j + 1
     }
-    clusters.push({
-      id: k_idx,
-      center: centroids[k_idx],
-      members,
-    })
+    clusters.push({ id: k_idx, center: centroids[k_idx], members, })
     k_idx = k_idx + 1
   }
   clusters
@@ -938,7 +934,10 @@ pub fn kmeans(
 ///|
 /// Find which cluster a point would be assigned to given the centroids.
 /// Returns None if centroids is empty.
-pub fn nearest_cluster(point : @types.GeoPoint, centroids : Array[@types.GeoPoint]) -> Int? {
+pub fn nearest_cluster(
+  point : @types.GeoPoint,
+  centroids : Array[@types.GeoPoint],
+) -> Int? {
   if centroids.length() == 0 {
     return None
   }
@@ -959,7 +958,10 @@ pub fn nearest_cluster(point : @types.GeoPoint, centroids : Array[@types.GeoPoin
 ///|
 /// Compute the within-cluster sum of squares (WCSS / inertia) for a K-Means result.
 /// A smaller value means tighter clusters. Useful for the "elbow method".
-pub fn kmeans_inertia(points : Array[@types.GeoPoint], clusters : Array[KMeansCluster]) -> Double {
+pub fn kmeans_inertia(
+  points : Array[@types.GeoPoint],
+  clusters : Array[KMeansCluster],
+) -> Double {
   let mut total = 0.0
   for cl in clusters {
     for idx in cl.members {
@@ -980,7 +982,7 @@ pub fn kmeans_inertia(points : Array[@types.GeoPoint], clusters : Array[KMeansCl
 ///   Negative I → dispersed (unlike values near each other)
 pub(all) struct MoranIResult {
   index : Double
-  expected : Double  // -1/(n-1), the null expectation
+  expected : Double // -1/(n-1), the null expectation
   n : Int
 } derive(Debug)
 
@@ -1019,7 +1021,7 @@ pub fn morans_i(
     denom = denom + zi * zi
   }
   if denom == 0.0 {
-    return None  // All values identical
+    return None // All values identical
   }
   // Build weight matrix (inverse haversine), compute numerator and W sum.
   let mut num = 0.0
@@ -1043,9 +1045,9 @@ pub fn morans_i(
   if w_sum == 0.0 {
     return None
   }
-  let index = (nf / w_sum) * (num / denom)
+  let index = nf / w_sum * (num / denom)
   let expected = -1.0 / (nf - 1.0)
-  Some({ index, expected, n })
+  Some({ index, expected, n, })
 }
 
 // ---- Standard Deviation Ellipse (SDE) ----
@@ -1057,9 +1059,9 @@ pub(all) struct StdDevEllipse {
   center : @types.GeoPoint
   semi_major_km : Double
   semi_minor_km : Double
-  rotation_deg : Double  // degrees clockwise from north
+  rotation_deg : Double // degrees clockwise from north
   area_sq_km : Double
-  eccentricity : Double  // sqrt(1 - (b/a)²), 0 = circle, 1 = line
+  eccentricity : Double // sqrt(1 - (b/a)²), 0 = circle, 1 = line
 } derive(Debug)
 
 ///|
@@ -1121,10 +1123,11 @@ pub fn std_dev_ellipse(points : Array[@types.GeoPoint]) -> StdDevEllipse? {
   // angle = 0.5 * atan2(2*sxy, sxx - syy), converted so 0° = north.
   let rot_rad = 0.5 * @math.atan2(2.0 * sxy, sxx - syy)
   // Convert from math convention (0 = east, CCW) to compass (0 = north, CW).
-  let rot_deg = (90.0 - rot_rad * 180.0 / 3.14159265358979323846 + 360.0) % 360.0
+  let rot_deg = (90.0 - rot_rad * 180.0 / 3.14159265358979323846 + 360.0) %
+    360.0
   let area = 3.14159265358979323846 * semi_major * semi_minor
   let ecc = if semi_major > 0.0 {
-    sqrt(1.0 - (semi_minor / semi_major) * (semi_minor / semi_major))
+    sqrt(1.0 - semi_minor / semi_major * (semi_minor / semi_major))
   } else {
     0.0
   }
@@ -1141,10 +1144,10 @@ pub fn std_dev_ellipse(points : Array[@types.GeoPoint]) -> StdDevEllipse? {
 ///|
 /// Return a human-readable compass direction from a bearing in degrees [0, 360).
 pub fn compass_direction(bearing_deg : Double) -> String {
-  let b = ((bearing_deg % 360.0) + 360.0) % 360.0
+  let b = (bearing_deg % 360.0 + 360.0) % 360.0
   let dirs : Array[String] = [
-    "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
-    "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
+    "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W",
+    "WNW", "NW", "NNW",
   ]
   let idx = ((b + 11.25) / 22.5).to_int() % 16
   dirs[idx]

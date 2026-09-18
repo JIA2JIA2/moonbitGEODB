@@ -141,7 +141,19 @@ fn build_usage() -> String {
     "  moon run cmd voronoi-cell <id>           Voronoi polygon for a single entry\n"
   let s57 = s56 +
     "  moon run cmd voronoi-neighbors <id>      Voronoi neighbors of an entry\n"
-  let s58 = s57 + "\n"
+  let s58 = s57 +
+    "  moon run cmd morans-i-lat                Global Moran's I on latitude\n"
+  let s59 = s58 +
+    "  moon run cmd morans-i-lng                Global Moran's I on longitude\n"
+  let s60 = s59 +
+    "  moon run cmd hotspot-lat                 Getis-Ord Gi* hot/cold spots on latitude\n"
+  let s61 = s60 +
+    "  moon run cmd hotspot-lng                 Getis-Ord Gi* hot/cold spots on longitude\n"
+  let s62 = s61 +
+    "  moon run cmd lisa-lat                    Local Moran's I (LISA) on latitude\n"
+  let s63 = s62 +
+    "  moon run cmd lisa-lng                    Local Moran's I (LISA) on longitude\n"
+  let s64 = s63 + "\n"
   let s59 = s58 + "Examples:\n"
   let s60 = s59 + "  moon run cmd\n"
   let s61 = s60 + "  moon run cmd \"北京市海淀区颐和园路5号\"\n"
@@ -158,7 +170,10 @@ fn build_usage() -> String {
   let s72 = s71 + "  moon run cmd ring-query 39.9 116.4 1.0 5.0\n"
   let s73 = s72 + "  moon run cmd distance-histogram 39.9 116.4 50.0 10\n"
   let s74 = s73 + "  moon run cmd nn-range yhy001 5\n"
-  s74
+  let s75 = s74 + "  moon run cmd morans-i-lat\n"
+  let s76 = s75 + "  moon run cmd hotspot-lat\n"
+  let s77 = s76 + "  moon run cmd lisa-lat\n"
+  s77
 }
 
 ///|
@@ -881,20 +896,31 @@ fn main {
       println("Usage: moon run cmd kmeans <k> [max_iter]")
       return
     }
-    let k = try { @string.parse_int(args.get(2).unwrap()) } catch {
-      _ => { println("Error: invalid k value"); return }
+    let k = @string.parse_int(args.get(2).unwrap()) catch {
+      _ => {
+        println("Error: invalid k value")
+        return
+      }
     }
     let max_iter = if args.length() > 3 {
-      try { @string.parse_int(args.get(3).unwrap()) } catch { _ => 100 }
-    } else { 100 }
+      @string.parse_int(args.get(3).unwrap()) catch {
+        _ => 100
+      }
+    } else {
+      100
+    }
     run_kmeans(k, max_iter)
     return
   }
 
   if cmd == "elbow" {
     let max_k = if args.length() > 2 {
-      try { @string.parse_int(args.get(2).unwrap()) } catch { _ => 8 }
-    } else { 8 }
+      @string.parse_int(args.get(2).unwrap()) catch {
+        _ => 8
+      }
+    } else {
+      8
+    }
     run_elbow(max_k)
     return
   }
@@ -912,20 +938,34 @@ fn main {
   if cmd == "bbox-query" {
     if args.length() < 6 {
       println("Error: bbox-query requires min_lat max_lat min_lng max_lng")
-      println("Usage: moon run cmd bbox-query <min_lat> <max_lat> <min_lng> <max_lng>")
+      println(
+        "Usage: moon run cmd bbox-query <min_lat> <max_lat> <min_lng> <max_lng>",
+      )
       return
     }
-    let min_lat = try { @string.parse_double(args.get(2).unwrap()) } catch {
-      _ => { println("Error: invalid min_lat"); return }
+    let min_lat = @string.parse_double(args.get(2).unwrap()) catch {
+      _ => {
+        println("Error: invalid min_lat")
+        return
+      }
     }
-    let max_lat = try { @string.parse_double(args.get(3).unwrap()) } catch {
-      _ => { println("Error: invalid max_lat"); return }
+    let max_lat = @string.parse_double(args.get(3).unwrap()) catch {
+      _ => {
+        println("Error: invalid max_lat")
+        return
+      }
     }
-    let min_lng = try { @string.parse_double(args.get(4).unwrap()) } catch {
-      _ => { println("Error: invalid min_lng"); return }
+    let min_lng = @string.parse_double(args.get(4).unwrap()) catch {
+      _ => {
+        println("Error: invalid min_lng")
+        return
+      }
     }
-    let max_lng = try { @string.parse_double(args.get(5).unwrap()) } catch {
-      _ => { println("Error: invalid max_lng"); return }
+    let max_lng = @string.parse_double(args.get(5).unwrap()) catch {
+      _ => {
+        println("Error: invalid max_lng")
+        return
+      }
     }
     run_bbox_query(min_lat, max_lat, min_lng, max_lng)
     return
@@ -973,6 +1013,36 @@ fn main {
       return
     }
     run_voronoi_neighbors(args.get(2).unwrap())
+    return
+  }
+
+  if cmd == "morans-i-lat" {
+    run_morans_i_lat()
+    return
+  }
+
+  if cmd == "morans-i-lng" {
+    run_morans_i_lng()
+    return
+  }
+
+  if cmd == "hotspot-lat" {
+    run_hotspot_lat()
+    return
+  }
+
+  if cmd == "hotspot-lng" {
+    run_hotspot_lng()
+    return
+  }
+
+  if cmd == "lisa-lat" {
+    run_lisa_lat()
+    return
+  }
+
+  if cmd == "lisa-lng" {
+    run_lisa_lng()
     return
   }
 
@@ -2404,25 +2474,30 @@ fn run_voronoi_neighbors(id : String) -> Unit {
 
 // ---- New handlers: kmeans, elbow, centroid, bbox-query ----
 
+///|
 fn run_kmeans(k : Int, max_iter : Int) -> Unit {
   println("=== K-Means Clustering ===")
   println("  k = " + k.to_string() + ", max_iter = " + max_iter.to_string())
   let db = build_sample_db()
-  let clusters = db.kmeans(k, max_iter=max_iter)
+  let clusters = db.kmeans(k, max_iter~)
   println("")
   let mut inertia_total = 0.0
   let mut j = 0
   while j < clusters.length() {
     let cl = clusters[j]
     println(
-      "  Cluster " + cl.id.to_string() + " (" + cl.members.length().to_string() + " members)"
+      "  Cluster " +
+      cl.id.to_string() +
+      " (" +
+      cl.members.length().to_string() +
+      " members)",
     )
     println(
       "    Center: (" +
-        cl.center.lat.to_string() +
-        ", " +
-        cl.center.lng.to_string() +
-        ")"
+      cl.center.lat.to_string() +
+      ", " +
+      cl.center.lng.to_string() +
+      ")",
     )
     for m in cl.members {
       println("      - " + m.id + " | " + m.name)
@@ -2431,6 +2506,7 @@ fn run_kmeans(k : Int, max_iter : Int) -> Unit {
   }
 }
 
+///|
 fn run_elbow(max_k : Int) -> Unit {
   println("=== Elbow Method (WCSS for k = 1.." + max_k.to_string() + ") ===")
   let db = build_sample_db()
@@ -2440,11 +2516,7 @@ fn run_elbow(max_k : Int) -> Unit {
     let k = pair.0
     let wcss = pair.1
     // ASCII bar
-    let bar_len = if wcss < 1000000.0 {
-      (wcss / 10000.0).to_int()
-    } else {
-      0
-    }
+    let bar_len = if wcss < 1000000.0 { (wcss / 10000.0).to_int() } else { 0 }
     let mut bar = ""
     let mut b = 0
     while b < bar_len && b < 60 {
@@ -2453,15 +2525,16 @@ fn run_elbow(max_k : Int) -> Unit {
     }
     println(
       "  k=" +
-        k.to_string().pad_start(2, ' ') +
-        "  inertia=" +
-        wcss.to_string() +
-        "  |" +
-        bar
+      k.to_string().pad_start(2, ' ') +
+      "  inertia=" +
+      wcss.to_string() +
+      "  |" +
+      bar,
     )
   }
 }
 
+///|
 fn run_all_centroid() -> Unit {
   println("=== Centroid (planar mean) ===")
   let db = build_sample_db()
@@ -2471,33 +2544,58 @@ fn run_all_centroid() -> Unit {
   println("")
   let gc = db.geographic_center()
   println("=== Geographic Mean Center (sphere-based) ===")
-  println("  Geographic center: (" + gc.lat.to_string() + ", " + gc.lng.to_string() + ")")
+  println(
+    "  Geographic center: (" +
+    gc.lat.to_string() +
+    ", " +
+    gc.lng.to_string() +
+    ")",
+  )
 }
 
+///|
 fn run_geographic_center() -> Unit {
   let db = build_sample_db()
   let gc = db.geographic_center()
   println("=== Geographic Mean Center ===")
   println("  DB has " + db.all().length().to_string() + " entries")
-  println("  Sphere-based center: (" + gc.lat.to_string() + ", " + gc.lng.to_string() + ")")
+  println(
+    "  Sphere-based center: (" +
+    gc.lat.to_string() +
+    ", " +
+    gc.lng.to_string() +
+    ")",
+  )
   let c = db.centroid()
-  println("  Planar mean:        (" + c.lat.to_string() + ", " + c.lng.to_string() + ")")
+  println(
+    "  Planar mean:        (" +
+    c.lat.to_string() +
+    ", " +
+    c.lng.to_string() +
+    ")",
+  )
   let diff = @geo.haversine(gc, c)
   println("  Difference: " + diff.to_string() + " km")
 }
 
-fn run_bbox_query(min_lat : Double, max_lat : Double, min_lng : Double, max_lng : Double) -> Unit {
+///|
+fn run_bbox_query(
+  min_lat : Double,
+  max_lat : Double,
+  min_lng : Double,
+  max_lng : Double,
+) -> Unit {
   println("=== Bounding Box Query ===")
   println(
     "  Region: lat [" +
-      min_lat.to_string() +
-      ", " +
-      max_lat.to_string() +
-      "], lng [" +
-      min_lng.to_string() +
-      ", " +
-      max_lng.to_string() +
-      "]"
+    min_lat.to_string() +
+    ", " +
+    max_lat.to_string() +
+    "], lng [" +
+    min_lng.to_string() +
+    ", " +
+    max_lng.to_string() +
+    "]",
   )
   let db = build_sample_db()
   let results = db.find_bbox(min_lat, max_lat, min_lng, max_lng)
@@ -2509,14 +2607,14 @@ fn run_bbox_query(min_lat : Double, max_lat : Double, min_lng : Double, max_lng 
     for e in results {
       println(
         "    - " +
-          e.id +
-          " | " +
-          e.name +
-          " | (" +
-          e.location.lat.to_string() +
-          ", " +
-          e.location.lng.to_string() +
-          ")"
+        e.id +
+        " | " +
+        e.name +
+        " | (" +
+        e.location.lat.to_string() +
+        ", " +
+        e.location.lng.to_string() +
+        ")",
       )
     }
   }
@@ -2524,6 +2622,7 @@ fn run_bbox_query(min_lat : Double, max_lat : Double, min_lng : Double, max_lng 
 
 // ---- Moran's I handler ----
 
+///|
 fn run_morans_i() -> Unit {
   let db = build_sample_db()
   println("=== Moran's I Spatial Autocorrelation ===")
@@ -2551,28 +2650,35 @@ fn run_morans_i() -> Unit {
   let lng_res = db.morans_i_on_lng()
   match lng_res {
     None => ()
-    Some(r) => {
-      println("  Moran's I (on longitude): " + r.index.to_string())
-    }
+    Some(r) => println("  Moran's I (on longitude): " + r.index.to_string())
   }
 }
 
 // ---- Standard Deviation Ellipse handler ----
 
+///|
 fn run_std_dev_ellipse() -> Unit {
   let db = build_sample_db()
   println("=== Standard Deviation Ellipse ===")
   match db.std_dev_ellipse() {
     None => println("  (computation failed)")
     Some(sde) => {
-      println("  Center: (" +
-        sde.center.lat.to_string() + ", " +
-        sde.center.lng.to_string() + ")")
+      println(
+        "  Center: (" +
+        sde.center.lat.to_string() +
+        ", " +
+        sde.center.lng.to_string() +
+        ")",
+      )
       println("  Semi-major axis: " + sde.semi_major_km.to_string() + " km")
       println("  Semi-minor axis: " + sde.semi_minor_km.to_string() + " km")
-      println("  Rotation:        " +
+      println(
+        "  Rotation:        " +
         sde.rotation_deg.to_string() +
-        "° (" + @geo.compass_direction(sde.rotation_deg) + ")")
+        "° (" +
+        @geo.compass_direction(sde.rotation_deg) +
+        ")",
+      )
       println("  Area:            " + sde.area_sq_km.to_string() + " sq km")
       println("  Eccentricity:    " + sde.eccentricity.to_string())
       let shape = if sde.eccentricity < 0.3 {
@@ -2589,6 +2695,7 @@ fn run_std_dev_ellipse() -> Unit {
 
 // ---- TSP nearest-neighbor handler ----
 
+///|
 fn run_tsp(start_id : String) -> Unit {
   let db = build_sample_db()
   println("=== TSP Nearest-Neighbor Route ===")
@@ -2607,13 +2714,206 @@ fn run_tsp(start_id : String) -> Unit {
       println("  Route (" + route.length().to_string() + " stops):")
       let mut idx = 0
       for stop in route {
-        let label = if idx == 0 { "START" } else if idx == route.length() - 1 { "END  " } else { "     " }
-        println("    " + label + "  " +
-          stop.entry.id + " | " +
-          stop.entry.name + " | cum=" +
-          stop.cum_distance_km.to_string() + " km")
+        let label = if idx == 0 {
+          "START"
+        } else if idx == route.length() - 1 {
+          "END  "
+        } else {
+          "     "
+        }
+        println(
+          "    " +
+          label +
+          "  " +
+          stop.entry.id +
+          " | " +
+          stop.entry.name +
+          " | cum=" +
+          stop.cum_distance_km.to_string() +
+          " km",
+        )
         idx = idx + 1
       }
     }
   }
+}
+// ---- Spatial autocorrelation / hotspot analysis ----
+
+///|
+fn run_morans_i_lat() -> Unit {
+  let db = build_sample_db()
+  println("=== Global Moran's I (Latitude) ===")
+  match db.morans_i_on_lat() {
+    None => println("  Not enough data or zero variance.")
+    Some(r) => {
+      println("  Moran's I:    " + r.index.to_string())
+      println("  Expected I:   " + r.expected.to_string())
+      println("  Observations: " + r.n.to_string())
+    }
+  }
+}
+
+///|
+fn run_morans_i_lng() -> Unit {
+  let db = build_sample_db()
+  println("=== Global Moran's I (Longitude) ===")
+  match db.morans_i_on_lng() {
+    None => println("  Not enough data or zero variance.")
+    Some(r) => {
+      println("  Moran's I:    " + r.index.to_string())
+      println("  Expected I:   " + r.expected.to_string())
+      println("  Observations: " + r.n.to_string())
+    }
+  }
+}
+
+///|
+fn run_hotspot_lat() -> Unit {
+  let db = build_sample_db()
+  println("=== Getis-Ord Gi* Hot/Cold Spots (Latitude) ===")
+  let entries = db.all()
+  let vals : Array[Double] = []
+  for e in entries {
+    vals.push(e.location.lat)
+  }
+  let results = db.getis_ord(vals, k=5, threshold=1.96)
+  let mut hot = 0
+  let mut cold = 0
+  for r in results {
+    if r.is_hotspot {
+      hot = hot + 1
+    }
+    if r.is_coldspot {
+      cold = cold + 1
+    }
+  }
+  println("  Entries: " + results.length().to_string())
+  println("  Hotspots: " + hot.to_string() + "  Coldspots: " + cold.to_string())
+  println("  Top hotspots:")
+  let sorted : Array[(Double, @geo.GetisResult)] = []
+  for r in results {
+    if r.is_hotspot || r.is_coldspot {
+      sorted.push((r.gi_star.abs(), r))
+    }
+  }
+  sorted.sort_by(fn(a, b) {
+    if a.0 < b.0 {
+      1
+    } else if a.0 > b.0 {
+      -1
+    } else {
+      0
+    }
+  })
+  let mut shown = 0
+  for (abs_gi, r) in sorted {
+    if shown >= 5 {
+      break
+    }
+    match db.get(entries[r.index].id) {
+      None => ()
+      Some(e) => {
+        let label = if r.is_hotspot { "HOT" } else { "COLD" }
+        println(
+          "    [" +
+          label +
+          "] " +
+          e.id +
+          " | " +
+          e.name +
+          "  Gi*=" +
+          r.gi_star.to_string(),
+        )
+        shown = shown + 1
+      }
+    }
+  }
+}
+
+///|
+fn run_hotspot_lng() -> Unit {
+  let db = build_sample_db()
+  println("=== Getis-Ord Gi* Hot/Cold Spots (Longitude) ===")
+  let entries = db.all()
+  let vals : Array[Double] = []
+  for e in entries {
+    vals.push(e.location.lng)
+  }
+  let results = db.getis_ord(vals, k=5, threshold=1.96)
+  let mut hot = 0
+  let mut cold = 0
+  for r in results {
+    if r.is_hotspot {
+      hot = hot + 1
+    }
+    if r.is_coldspot {
+      cold = cold + 1
+    }
+  }
+  println("  Entries: " + results.length().to_string())
+  println("  Hotspots: " + hot.to_string() + "  Coldspots: " + cold.to_string())
+}
+
+///|
+fn run_lisa_lat() -> Unit {
+  let db = build_sample_db()
+  println("=== Local Moran's I (LISA) (Latitude) ===")
+  let entries = db.all()
+  let vals : Array[Double] = []
+  for e in entries {
+    vals.push(e.location.lat)
+  }
+  let results = db.lisa(vals, k=5, threshold=1.96)
+  let mut hh = 0
+  let mut ll = 0
+  let mut hl = 0
+  let mut lh = 0
+  let mut ns = 0
+  for r in results {
+    match r.cluster {
+      "HH" => hh = hh + 1
+      "LL" => ll = ll + 1
+      "HL" => hl = hl + 1
+      "LH" => lh = lh + 1
+      _ => ns = ns + 1
+    }
+  }
+  println("  Entries: " + results.length().to_string())
+  println("  HH (high-high): " + hh.to_string())
+  println("  LL (low-low):   " + ll.to_string())
+  println("  HL (high-low):  " + hl.to_string())
+  println("  LH (low-high):  " + lh.to_string())
+  println("  NS (not sig):   " + ns.to_string())
+}
+
+///|
+fn run_lisa_lng() -> Unit {
+  let db = build_sample_db()
+  println("=== Local Moran's I (LISA) (Longitude) ===")
+  let entries = db.all()
+  let vals : Array[Double] = []
+  for e in entries {
+    vals.push(e.location.lng)
+  }
+  let results = db.lisa(vals, k=5, threshold=1.96)
+  let mut hh = 0
+  let mut ll = 0
+  let mut hl = 0
+  let mut lh = 0
+  let mut ns = 0
+  for r in results {
+    match r.cluster {
+      "HH" => hh = hh + 1
+      "LL" => ll = ll + 1
+      "HL" => hl = hl + 1
+      "LH" => lh = lh + 1
+      _ => ns = ns + 1
+    }
+  }
+  println("  Entries: " + results.length().to_string())
+  println("  HH (high-high): " + hh.to_string())
+  println("  LL (low-low):   " + ll.to_string())
+  println("  HL (high-low):  " + hl.to_string())
+  println("  LH (low-high):  " + lh.to_string())
+  println("  NS (not sig):   " + ns.to_string())
 }
