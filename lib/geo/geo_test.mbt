@@ -189,3 +189,171 @@ test "voronoi_diagram - empty points returns empty" {
   }
   @test.assert_eq(voronoi_diagram([], bbox).length(), 0)
 }
+
+// ---- K-Means ----
+
+///|
+test "kmeans with 2 tight clusters" {
+  let pts = [
+    @types.GeoPoint::make(0.0, 0.0),
+    @types.GeoPoint::make(0.1, 0.1),
+    @types.GeoPoint::make(-0.1, -0.1),
+    @types.GeoPoint::make(10.0, 10.0),
+    @types.GeoPoint::make(10.1, 10.1),
+    @types.GeoPoint::make(9.9, 9.9),
+  ]
+  let clusters = kmeans(pts, 2)
+  @test.assert_eq(clusters.length(), 2)
+  for cl in clusters {
+    @test.assert_eq(cl.members.length() >= 2, true)
+    @test.assert_eq(cl.members.length() <= 4, true)
+  }
+}
+
+///|
+test "kmeans single cluster returns one group" {
+  let pts = [
+    @types.GeoPoint::make(0.0, 0.0),
+    @types.GeoPoint::make(0.1, 0.0),
+    @types.GeoPoint::make(0.0, 0.1),
+  ]
+  let clusters = kmeans(pts, 1)
+  @test.assert_eq(clusters.length(), 1)
+  @test.assert_eq(clusters[0].members.length(), 3)
+}
+
+///|
+test "kmeans_inertia decreases as k grows" {
+  let pts = [
+    @types.GeoPoint::make(0.0, 0.0),
+    @types.GeoPoint::make(10.0, 0.0),
+    @types.GeoPoint::make(0.0, 10.0),
+    @types.GeoPoint::make(10.0, 10.0),
+  ]
+  let c1 = kmeans(pts, 1)
+  let c2 = kmeans(pts, 2)
+  let i1 = kmeans_inertia(pts, c1)
+  let i2 = kmeans_inertia(pts, c2)
+  @test.assert_eq(i2 < i1, true)
+}
+
+// ---- Centroid ----
+
+///|
+test "centroid of symmetric points" {
+  let pts = [
+    @types.GeoPoint::make(10.0, 20.0),
+    @types.GeoPoint::make(20.0, 30.0),
+    @types.GeoPoint::make(30.0, 40.0),
+  ]
+  let c = centroid(pts)
+  @test.assert_eq((c.lat - 20.0).abs() < 0.001, true)
+  @test.assert_eq((c.lng - 30.0).abs() < 0.001, true)
+}
+
+///|
+test "centroid of single point is itself" {
+  let c = centroid([@types.GeoPoint::make(39.9, 116.4)])
+  @test.assert_eq((c.lat - 39.9).abs() < 0.0001, true)
+  @test.assert_eq((c.lng - 116.4).abs() < 0.0001, true)
+}
+
+// ---- Standard Deviation Ellipse ----
+
+///|
+test "std_dev_ellipse on colinear points is very elongated" {
+  let pts = [
+    @types.GeoPoint::make(0.0, 0.0),
+    @types.GeoPoint::make(2.0, 0.0),
+    @types.GeoPoint::make(4.0, 0.0),
+    @types.GeoPoint::make(6.0, 0.0),
+  ]
+  match std_dev_ellipse(pts) {
+    None => @test.assert_eq(false, true)
+    Some(sde) => {
+      @test.assert_eq(sde.eccentricity > 0.9, true)
+      @test.assert_eq(sde.semi_major_km > sde.semi_minor_km, true)
+    }
+  }
+}
+
+///|
+test "std_dev_ellipse on square points is more circular" {
+  let pts = [
+    @types.GeoPoint::make(0.0, 0.0),
+    @types.GeoPoint::make(1.0, 0.0),
+    @types.GeoPoint::make(0.0, 1.0),
+    @types.GeoPoint::make(1.0, 1.0),
+  ]
+  match std_dev_ellipse(pts) {
+    None => @test.assert_eq(false, true)
+    Some(sde) => {
+      @test.assert_eq(sde.eccentricity < 0.5, true)
+      @test.assert_eq(sde.semi_minor_km > 0.0, true)
+    }
+  }
+}
+
+///|
+test "std_dev_ellipse on < 3 points returns None" {
+  let pts = [@types.GeoPoint::make(0.0, 0.0), @types.GeoPoint::make(1.0, 1.0)]
+  @test.assert_eq(std_dev_ellipse(pts) is None, true)
+}
+
+// ---- Moran's I ----
+
+///|
+test "morans_i with perfectly clustered values has high positive I" {
+  // Two tight clusters of 3 each. Cluster 1 has all low values,
+  // cluster 2 has all high values → very strong positive I.
+  let pts = [
+    @types.GeoPoint::make(0.0, 0.0),
+    @types.GeoPoint::make(0.0, 0.01),
+    @types.GeoPoint::make(0.01, 0.0),
+    @types.GeoPoint::make(10.0, 10.0),
+    @types.GeoPoint::make(10.0, 10.01),
+    @types.GeoPoint::make(10.01, 10.0),
+  ]
+  let vals = [1.0, 1.1, 0.9, 10.0, 10.1, 9.9]
+  match morans_i(pts, vals) {
+    None => @test.assert_eq(false, true)
+    Some(r) => {
+      @test.assert_eq(r.index > 0.7, true)
+    }
+  }
+}
+
+///|
+test "morans_i with dispersed values has negative I" {
+  let pts = [
+    @types.GeoPoint::make(0.0, 0.0),
+    @types.GeoPoint::make(0.0, 1.0),
+    @types.GeoPoint::make(0.0, 2.0),
+    @types.GeoPoint::make(0.0, 3.0),
+  ]
+  // High, Low, High, Low → nearby values are unalike.
+  let vals = [1.0, 4.0, 1.0, 4.0]
+  match morans_i(pts, vals) {
+    None => @test.assert_eq(false, true)
+    Some(r) => {
+      @test.assert_eq(r.index < 0.0, true)
+    }
+  }
+}
+
+///|
+test "morans_i with mismatched lengths returns None" {
+  let pts = [@types.GeoPoint::make(0.0, 0.0), @types.GeoPoint::make(1.0, 1.0)]
+  @test.assert_eq(morans_i(pts, [1.0, 2.0, 3.0]) is None, true)
+}
+
+// ---- Compass direction ----
+
+///|
+test "compass_direction" {
+  @test.assert_eq(compass_direction(0.0), "N")
+  @test.assert_eq(compass_direction(90.0), "E")
+  @test.assert_eq(compass_direction(180.0), "S")
+  @test.assert_eq(compass_direction(270.0), "W")
+  @test.assert_eq(compass_direction(360.0), "N")
+}

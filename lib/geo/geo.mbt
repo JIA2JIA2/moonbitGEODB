@@ -1023,29 +1023,55 @@ pub fn morans_i(
   if denom == 0.0 {
     return None // All values identical
   }
-  // Build weight matrix (inverse haversine), compute numerator and W sum.
-  let mut num = 0.0
-  let mut w_sum = 0.0
+  // Build weight matrix + row sums, then row-standardize.
+  // Raw weight w_ij = 1/haversine(p_i, p_j) for i != j.
+  let raw_w : Array[Array[Double]] = []
   let mut i = 0
+  while i < n {
+    let row : Array[Double] = []
+    let mut w_sum_row = 0.0
+    let mut j = 0
+    while j < n {
+      if i == j {
+        row.push(0.0)
+      } else {
+        let d = haversine(points[i], points[j])
+        let w = if d > 0.0 { 1.0 / d } else { 0.0 }
+        row.push(w)
+        w_sum_row = w_sum_row + w
+      }
+      j = j + 1
+    }
+    // Row-standardize so each row sums to 1.
+    let norm_row : Array[Double] = []
+    if w_sum_row > 0.0 {
+      for w in row {
+        norm_row.push(w / w_sum_row)
+      }
+    } else {
+      for w in row {
+        norm_row.push(w)
+      }
+    }
+    raw_w.push(norm_row)
+    i = i + 1
+  }
+  // Compute numerator with row-standardized weights.
+  let mut num = 0.0
+  i = 0
   while i < n {
     let mut j = 0
     while j < n {
       if i != j {
-        let d = haversine(points[i], points[j])
-        if d > 0.0 {
-          let w = 1.0 / d
-          num = num + w * z[i] * z[j]
-          w_sum = w_sum + w
-        }
+        num = num + raw_w[i][j] * z[i] * z[j]
       }
       j = j + 1
     }
     i = i + 1
   }
-  if w_sum == 0.0 {
-    return None
-  }
-  let index = nf / w_sum * (num / denom)
+  // With row-standardized weights (each row sums to 1), W = n, so:
+  // I = (n/n) * num/denom = num / denom
+  let index = num / denom
   let expected = -1.0 / (nf - 1.0)
   Some({ index, expected, n, })
 }

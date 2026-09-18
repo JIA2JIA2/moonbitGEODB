@@ -2621,3 +2621,140 @@ test "GeoDB::nearest_neighbors_range on singleton DB returns None" {
   db.insert(make_entry("nn01", "A", 0.0, 0.0))
   @test.assert_eq(db.nearest_neighbors_range("nn01", 5) is None, true)
 }
+
+// ---- New feature tests (TSP, kmeans, bbox, ring, spatial_join, sde) ----
+
+///|
+test "GeoDB::tsp_nearest visits all entries" {
+  let db = GeoDB::in_memory()
+  db.insert(make_entry("a", "A", 0.0, 0.0))
+  db.insert(make_entry("b", "B", 0.1, 0.0))
+  db.insert(make_entry("c", "C", 10.0, 10.0))
+  db.insert(make_entry("d", "D", 10.1, 10.0))
+  match db.tsp_nearest("a") {
+    None => @test.assert_eq(false, true)
+    Some((route, total)) => {
+      @test.assert_eq(route.length(), 4)
+      @test.assert_eq(route[0].entry.id, "a")
+      @test.assert_eq(total > 0.0, true)
+    }
+  }
+}
+
+///|
+test "GeoDB::tsp_nearest with missing start returns None" {
+  let db = GeoDB::in_memory()
+  db.insert(make_entry("a", "A", 0.0, 0.0))
+  @test.assert_eq(db.tsp_nearest("missing") is None, true)
+}
+
+///|
+test "GeoDB::kmeans produces k clusters" {
+  let db = GeoDB::in_memory()
+  db.insert(make_entry("a", "A", 0.0, 0.0))
+  db.insert(make_entry("b", "B", 0.1, 0.1))
+  db.insert(make_entry("c", "C", 10.0, 10.0))
+  db.insert(make_entry("d", "D", 10.1, 10.1))
+  let clusters = db.kmeans(2)
+  @test.assert_eq(clusters.length(), 2)
+}
+
+///|
+test "GeoDB::find_bbox filters correctly" {
+  let db = GeoDB::in_memory()
+  db.insert(make_entry("a", "A", 39.5, 116.5))
+  db.insert(make_entry("b", "B", 41.0, 116.5))  // outside
+  db.insert(make_entry("c", "C", 39.5, 118.0))  // outside lng
+  let r = db.find_bbox(39.0, 40.0, 116.0, 117.0)
+  @test.assert_eq(r.length(), 1)
+  @test.assert_eq(r[0].id, "a")
+}
+
+///|
+test "GeoDB::find_in_ring uses index correctly" {
+  let db = GeoDB::in_memory()
+  db.insert(make_entry("a", "A", 0.0, 0.0))
+  db.insert(make_entry("b", "B", 0.0, 0.5))   // ~55 km
+  db.insert(make_entry("c", "C", 0.0, 5.0))   // ~500 km
+  db.insert(make_entry("d", "D", 0.0, 10.0))  // ~1100 km
+  let center = @types.GeoPoint::make(0.0, 0.0)
+  // Ring between 500 km and 1200 km → c and d
+  let r = db.find_in_ring(center, 500.0, 1200.0)
+  @test.assert_eq(r.length(), 2)
+}
+
+///|
+test "GeoDB::centroid and geographic_center" {
+  let db = GeoDB::in_memory()
+  db.insert(make_entry("a", "A", 0.0, 0.0))
+  db.insert(make_entry("b", "B", 10.0, 10.0))
+  let c = db.centroid()
+  @test.assert_eq((c.lat - 5.0).abs() < 0.001, true)
+  let gc = db.geographic_center()
+  @test.assert_eq((gc.lat - 5.0).abs() < 1.0, true)
+}
+
+///|
+test "GeoDB::std_dev_ellipse" {
+  let db = GeoDB::in_memory()
+  db.insert(make_entry("a", "A", 0.0, 0.0))
+  db.insert(make_entry("b", "B", 1.0, 0.0))
+  db.insert(make_entry("c", "C", 0.0, 1.0))
+  db.insert(make_entry("d", "D", 1.0, 1.0))
+  match db.std_dev_ellipse() {
+    None => @test.assert_eq(false, true)
+    Some(sde) => {
+      @test.assert_eq(sde.semi_major_km > 0.0, true)
+      @test.assert_eq(sde.area_sq_km > 0.0, true)
+    }
+  }
+}
+
+///|
+test "GeoDB::spatial_join_nearest using temp R-tree" {
+  let db = GeoDB::in_memory()
+  db.insert(make_entry("a", "A", 0.0, 0.0))
+  db.insert(make_entry("b", "B", 10.0, 10.0))
+  let other = [
+    make_entry("x", "X", 0.1, 0.1),
+    make_entry("y", "Y", 9.9, 9.9),
+  ]
+  let pairs = db.spatial_join_nearest(other)
+  @test.assert_eq(pairs.length(), 2)
+  // Each left entry should be paired with the closer right entry.
+  // (a→x, b→y) after sorting by distance.
+  @test.assert_eq(pairs[0].distance_km < pairs[1].distance_km, true)
+  @test.assert_eq(pairs[0].right.id == "x" || pairs[0].right.id == "y", true)
+}
+
+///|
+test "GeoDB::spatial_join_knearest temp R-tree" {
+  let db = GeoDB::in_memory()
+  db.insert(make_entry("a", "A", 0.0, 0.0))
+  let other = [
+    make_entry("x", "X", 0.1, 0.0),
+    make_entry("y", "Y", 0.2, 0.0),
+    make_entry("z", "Z", 10.0, 10.0),
+  ]
+  let pairs = db.spatial_join_knearest(other, 2)
+  @test.assert_eq(pairs.length(), 2)
+  // The k=2 nearest should be x and y (both ~11 and ~22 km), not z (~1570 km)
+  @test.assert_eq(pairs[0].distance_km < pairs[1].distance_km, true)
+  @test.assert_eq(pairs[1].distance_km < 100.0, true)
+}
+
+///|
+test "GeoDB::nearest_neighbors_range still works after R-tree opt" {
+  let db = GeoDB::in_memory()
+  db.insert(make_entry("a", "A", 0.0, 0.0))
+  db.insert(make_entry("b", "B", 0.0, 0.1))
+  db.insert(make_entry("c", "C", 10.0, 10.0))
+  match db.nearest_neighbors_range("a", 2) {
+    None => @test.assert_eq(false, true)
+    Some((n, min_d, max_d, mean_d, median_d)) => {
+      @test.assert_eq(n >= 2, true)
+      @test.assert_eq(min_d <= max_d, true)
+      @test.assert_eq(mean_d > 0.0, true)
+    }
+  }
+}

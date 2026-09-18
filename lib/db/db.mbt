@@ -2942,68 +2942,93 @@ pub fn GeoDB::spatial_join_nearest(
 ) -> Array[SpatialJoinPair] {
   let results : Array[SpatialJoinPair] = []
   let left_entries = self.all()
-  if other.length() == 0 {
+  if other.length() == 0 || left_entries.length() == 0 {
     return results
   }
+  // Build a temporary R-tree over `other` for O(log m) KNN lookups.
+  let temp = build_rtree_for(other)
   for a in left_entries {
-    let mut best : @types.GeoEntry = other[0]
-    let mut best_d = @geo.haversine(a.location, best.location)
-    let mut j = 1
-    while j < other.length() {
-      let d = @geo.haversine(a.location, other[j].location)
-      if d < best_d {
-        best_d = d
-        best = other[j]
+    let knn = temp.nearest(a.location, 1)
+    if knn.length() > 0 {
+      let (rid, d) = knn[0]
+      match temp.entries.get(rid) {
+        Some(b) => results.push({ left: a, right: b, distance_km: d, })
+        None => ()
       }
-      j = j + 1
     }
-    results.push({ left: a, right: best, distance_km: best_d, })
   }
   results.sort_by(fn(a, b) {
-    if a.distance_km < b.distance_km {
-      -1
-    } else if a.distance_km > b.distance_km {
-      1
-    } else {
-      0
-    }
+    if a.distance_km < b.distance_km { -1 } else if a.distance_km > b.distance_km { 1 } else { 0 }
   })
   results
 }
 
+///| Helper: build a lightweight struct containing both an R-tree and an
+///| id→entry map for a small external array of entries, so spatial_join_*
+///| can do O(log m) queries against it.
+fn build_rtree_for(entries : Array[@types.GeoEntry]) -> TempJoinIndex {
+  let tree = @index.RTree::new()
+  let map : @hashmap.HashMap[String, @types.GeoEntry] = @hashmap.HashMap([])
+  for e in entries {
+    tree.insert(e.id, e.location)
+    map[e.id] = e
+  }
+  { rtree: tree, entries: map }
+}
+
+///| Lightweight (rtree + entries map) pair used for spatial_join_*.
+struct TempJoinIndex {
+  rtree : @index.RTree
+  entries : @hashmap.HashMap[String, @types.GeoEntry]
+}
+
+fn TempJoinIndex::nearest(self : TempJoinIndex, point : @types.GeoPoint, k : Int) -> Array[(String, Double)] {
+  self.rtree.nearest(point, k)
+}
+
+fn TempJoinIndex::search(self : TempJoinIndex, bbox : @types.BBox) -> Array[String] {
+  self.rtree.search(bbox)
+}
+
 ///|
 /// Find all pairs (a from DB, b from `other`) whose distance is <= `max_km`.
-/// Returns pairs sorted by ascending distance. Useful for "what is near what"
-/// between two distinct datasets.
+/// Uses a temporary R-tree over `other` to prune candidates.
 pub fn GeoDB::spatial_join_within(
   self : GeoDB,
   other : Array[@types.GeoEntry],
   max_km : Double,
 ) -> Array[SpatialJoinPair] {
   let results : Array[SpatialJoinPair] = []
-  for a in self.all() {
-    for b in other {
-      let d = @geo.haversine(a.location, b.location)
-      if d <= max_km {
-        results.push({ left: a, right: b, distance_km: d, })
+  let left_entries = self.all()
+  if other.length() == 0 || left_entries.length() == 0 {
+    return results
+  }
+  let temp = build_rtree_for(other)
+  for a in left_entries {
+    // Build bbox around a to get candidates, then refine with haversine.
+    let bbox = @geo.bbox_around(a.location, max_km)
+    let cands = temp.search(bbox)
+    for rid in cands {
+      match temp.entries.get(rid) {
+        Some(b) => {
+          let d = @geo.haversine(a.location, b.location)
+          if d <= max_km {
+            results.push({ left: a, right: b, distance_km: d, })
+          }
+        }
+        None => ()
       }
     }
   }
   results.sort_by(fn(a, b) {
-    if a.distance_km < b.distance_km {
-      -1
-    } else if a.distance_km > b.distance_km {
-      1
-    } else {
-      0
-    }
+    if a.distance_km < b.distance_km { -1 } else if a.distance_km > b.distance_km { 1 } else { 0 }
   })
   results
 }
 
 ///|
 /// For every entry in this DB, find up to `k` closest entries from `other`.
-/// Returns a flat list of pairs grouped logically by left entry.
+/// Uses a temporary R-tree over `other` for O(log m) per left entry.
 pub fn GeoDB::spatial_join_knearest(
   self : GeoDB,
   other : Array[@types.GeoEntry],
@@ -3011,31 +3036,18 @@ pub fn GeoDB::spatial_join_knearest(
 ) -> Array[SpatialJoinPair] {
   let results : Array[SpatialJoinPair] = []
   let left_entries = self.all()
-  if other.length() == 0 || k <= 0 {
+  if other.length() == 0 || k <= 0 || left_entries.length() == 0 {
     return results
   }
+  let temp = build_rtree_for(other)
+  let k_eff = if other.length() < k { other.length() } else { k }
   for a in left_entries {
-    // Compute all distances from a to other.
-    let pairs : Array[(@types.GeoEntry, Double)] = []
-    for b in other {
-      pairs.push((b, @geo.haversine(a.location, b.location)))
-    }
-    pairs.sort_by(fn(x, y) {
-      if x.1 < y.1 {
-        -1
-      } else if x.1 > y.1 {
-        1
-      } else {
-        0
+    let knn = temp.nearest(a.location, k_eff)
+    for (rid, d) in knn {
+      match temp.entries.get(rid) {
+        Some(b) => results.push({ left: a, right: b, distance_km: d, })
+        None => ()
       }
-    })
-    let mut taken = 0
-    for p in pairs {
-      if taken >= k {
-        break
-      }
-      results.push({ left: a, right: p.0, distance_km: p.1, })
-      taken = taken + 1
     }
   }
   results
@@ -3564,6 +3576,13 @@ pub fn GeoDB::tsp_nearest(
   match start_idx {
     None => None
     Some(si) => {
+      // Build id → index map for O(1) lookups from R-tree results.
+      let id_to_idx : @hashmap.HashMap[String, Int] = @hashmap.HashMap([])
+      let mut ii = 0
+      while ii < n {
+        id_to_idx[entries[ii].id] = ii
+        ii = ii + 1
+      }
       // Track visited.
       let visited : Array[Bool] = []
       let mut vi = 0
@@ -3574,30 +3593,39 @@ pub fn GeoDB::tsp_nearest(
       visited[si] = true
       let route : Array[RouteStop] = []
       route.push({ entry: entries[si], cum_distance_km: 0.0, })
-      let mut prev = si
+      let mut prev_idx = si
       let mut total_dist = 0.0
       let mut step = 1
       while step < n {
-        let mut best = -1
-        let mut best_d = 1.7976931348623157e+308
-        let mut j = 0
-        while j < n {
-          if !visited[j] {
-            let d = @geo.haversine(entries[prev].location, entries[j].location)
-            if d < best_d {
-              best_d = d
-              best = j
+        // Ask R-tree for the next 16 nearest neighbors. If some are already
+        // visited, skip them. If all visited, ask for more (up to 3 rounds).
+        let mut k = 16
+        let mut chosen = -1
+        let mut chosen_d = 0.0
+        let mut rounds = 0
+        while chosen < 0 && rounds < 4 {
+          let raw = self.index.query_nearest(entries[prev_idx].location, k)
+          for (e, d) in raw {
+            match id_to_idx.get(e.id) {
+              None => ()
+              Some(idx) =>
+                if !visited[idx] {
+                  chosen = idx
+                  chosen_d = d
+                  break
+                }
             }
           }
-          j = j + 1
+          k = k * 2
+          rounds = rounds + 1
         }
-        if best < 0 {
-          break // No unvisited
+        if chosen < 0 {
+          break  // R-tree couldn't find any unvisited (shouldn't happen)
         }
-        visited[best] = true
-        total_dist = total_dist + best_d
-        route.push({ entry: entries[best], cum_distance_km: total_dist, })
-        prev = best
+        visited[chosen] = true
+        total_dist = total_dist + chosen_d
+        route.push({ entry: entries[chosen], cum_distance_km: total_dist, })
+        prev_idx = chosen
         step = step + 1
       }
       Some((route, total_dist))
