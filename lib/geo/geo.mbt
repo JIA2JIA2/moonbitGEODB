@@ -1178,3 +1178,322 @@ pub fn compass_direction(bearing_deg : Double) -> String {
   let idx = ((b + 11.25) / 22.5).to_int() % 16
   dirs[idx]
 }
+
+// ---- IDW Inverse Distance Weighting ----
+
+///|
+/// Inverse Distance Weighting interpolation.
+///
+/// Given known (point, value) pairs and a query point, estimate the value
+/// at the query location as a weighted average where weights decay with
+/// distance raised to the power `power` (default 2.0, the classic power).
+///
+/// Returns None if no input points or if the query point coincides with a
+/// known point (returns that known value directly in that case).
+pub fn idw_interpolate(
+  points : Array[@types.GeoPoint],
+  values : Array[Double],
+  query : @types.GeoPoint,
+  power? : Double = 2.0,
+) -> Double? {
+  let n = points.length()
+  if n < 1 || values.length() != n {
+    return None
+  }
+  let mut num = 0.0
+  let mut w_sum = 0.0
+  let mut i = 0
+  while i < n {
+    let d = haversine(query, points[i])
+    if d < 0.000001 {
+      // Coincides with a known point → exact value.
+      return Some(values[i])
+    }
+    let w = 1.0 / @math.pow(d, power)
+    num = num + w * values[i]
+    w_sum = w_sum + w
+    i = i + 1
+  }
+  if w_sum == 0.0 {
+    None
+  } else {
+    Some(num / w_sum)
+  }
+}
+
+///|
+/// IDW interpolation restricted to the k nearest neighbors only.
+/// Faster and more localized than using all points.
+pub fn idw_interpolate_knn(
+  points : Array[@types.GeoPoint],
+  values : Array[Double],
+  query : @types.GeoPoint,
+  k : Int,
+  power? : Double = 2.0,
+) -> Double? {
+  let n = points.length()
+  if n < 1 || values.length() != n {
+    return None
+  }
+  let k_eff = if k < n { k } else { n }
+  // Compute all distances, take k smallest.
+  let dists : Array[(Double, Double)] = []
+  let mut i = 0
+  while i < n {
+    dists.push((haversine(query, points[i]), values[i]))
+    i = i + 1
+  }
+  dists.sort_by(fn(a, b) { if a.0 < b.0 { -1 } else if a.0 > b.0 { 1 } else { 0 } })
+  let mut num = 0.0
+  let mut w_sum = 0.0
+  let mut j = 0
+  while j < k_eff {
+    let (d, v) = dists[j]
+    if d < 0.000001 {
+      return Some(v)
+    }
+    let w = 1.0 / @math.pow(d, power)
+    num = num + w * v
+    w_sum = w_sum + w
+    j = j + 1
+  }
+  if w_sum == 0.0 { None } else { Some(num / w_sum) }
+}
+
+// ---- Concave Hull (Alpha-Shape) ----
+
+///|
+/// Compute the concave hull (alpha-shape) of a point set using the
+/// Delaunay triangulation. Edges whose circumcircle radius exceeds
+/// `1/alpha` are removed; the remaining boundary edges form the hull.
+///
+/// - `alpha`: Controls concavity. alpha=0 → convex hull; alpha→∞ → all
+///   points lie on the hull boundary. Typical values 0.5 – 2.0.
+/// - Returns the ordered boundary vertices (as GeoPoints).
+/// - For < 3 points, falls back to convex_hull.
+pub fn concave_hull(
+  points : Array[@types.GeoPoint],
+  alpha : Double,
+) -> Array[@types.GeoPoint] {
+  let n = points.length()
+  if n < 3 || alpha <= 0.0 {
+    return convex_hull(points)
+  }
+  // Get Delaunay triangulation via Voronoi dual.
+  let tris = delaunay_triangulation(points)
+  if tris.length() == 0 {
+    return convex_hull(points)
+  }
+  let threshold = 1.0 / alpha
+  // Count how many triangles share each edge. Boundary edges are shared
+  // by exactly one triangle. Remove edges whose circumradius > threshold.
+  // Work in (min_idx, max_idx) canonical form.
+  let edge_count : @hashmap.HashMap[String, Int] = @hashmap.HashMap([])
+  let edge_radius : @hashmap.HashMap[String, Double] = @hashmap.HashMap([])
+  for t in tris {
+    let (_, r) = circumcircle(points[t.a], points[t.b], points[t.c])
+    add_edge_radius(edge_count, edge_radius, t.a, t.b, r)
+    add_edge_radius(edge_count, edge_radius, t.b, t.c, r)
+    add_edge_radius(edge_count, edge_radius, t.c, t.a, r)
+  }
+  // Collect boundary edges (count == 1) whose radius <= threshold.
+  let boundary_edges : Array[(Int, Int)] = []
+  for (key, cnt) in edge_count {
+    let r = match edge_radius.get(key) {
+      Some(v) => v
+      None => 1.0e308
+    }
+    if cnt == 1 && r <= threshold {
+      let parts = key.split(",").collect()
+      let a = @string.parse_int(parts[0]) catch { _ => -1 }
+      let b = @string.parse_int(parts[1]) catch { _ => -1 }
+      if a >= 0 && b >= 0 {
+        boundary_edges.push((a, b))
+      }
+    }
+  }
+  if boundary_edges.length() == 0 {
+    return convex_hull(points)
+  }
+  // Build adjacency list for boundary walk.
+  let adj : @hashmap.HashMap[Int, Array[Int]] = @hashmap.HashMap([])
+  for (a, b) in boundary_edges {
+    match adj.get(a) {
+      None => adj[a] = [b]
+      Some(arr) => arr.push(b)
+    }
+    match adj.get(b) {
+      None => adj[b] = [a]
+      Some(arr) => arr.push(a)
+    }
+  }
+  // Walk the boundary starting from the vertex with smallest lng (then lat).
+  let mut start = boundary_edges[0].0
+  let mut min_lng = points[start].lng
+  let mut i = 0
+  while i < boundary_edges.length() {
+    let (a, b) = boundary_edges[i]
+    if points[a].lng < min_lng ||
+      (points[a].lng == min_lng && points[a].lat < points[start].lat) {
+      start = a
+      min_lng = points[a].lng
+    }
+    if points[b].lng < min_lng ||
+      (points[b].lng == min_lng && points[b].lat < points[start].lat) {
+      start = b
+      min_lng = points[b].lng
+    }
+    i = i + 1
+  }
+  let path : Array[Int] = [start]
+  let mut prev = -1
+  let mut curr = start
+  let mut safety = 0
+  while safety < n * 3 {
+    let nexts = match adj.get(curr) {
+      None => break
+      Some(arr) => arr
+    }
+    let mut next = -1
+    for nb in nexts {
+      if nb != prev {
+        next = nb
+        break
+      }
+    }
+    if next < 0 {
+      // Try back edge (prev could still have another neighbor).
+      for nb in nexts {
+        if nb != curr {
+          next = nb
+          break
+        }
+      }
+    }
+    if next < 0 || next == start {
+      break
+    }
+    path.push(next)
+    prev = curr
+    curr = next
+    safety = safety + 1
+  }
+  if path.length() < 3 {
+    return convex_hull(points)
+  }
+  // Convert indices → points, remove consecutive duplicates.
+  let result : Array[@types.GeoPoint] = []
+  for idx in path {
+    let p = points[idx]
+    if result.length() == 0 {
+      result.push(p)
+    } else {
+      let last = result[result.length() - 1]
+      if last.lat != p.lat || last.lng != p.lng {
+        result.push(p)
+      }
+    }
+  }
+  result
+}
+
+///| Helper: record an edge's circumradius. Uses canonical (min, max) key.
+fn add_edge_radius(
+  count : @hashmap.HashMap[String, Int],
+  radius : @hashmap.HashMap[String, Double],
+  a : Int,
+  b : Int,
+  r : Double,
+) -> Unit {
+  let (lo, hi) = if a < b { (a, b) } else { (b, a) }
+  let key = "\{lo},\{hi}"
+  match count.get(key) {
+    None => {
+      count[key] = 1
+      radius[key] = r
+    }
+    Some(c) => count[key] = c + 1
+  }
+}
+// ---- Buffer analysis ----
+
+///|
+/// Destination point from an origin, initial bearing (degrees clockwise from
+/// north), and distance in km. Uses the spherical-law-of-cosines exact
+/// forward-geodesy formula; accurate for Earth-scale distances.
+pub fn destination_point(
+  origin : @types.GeoPoint,
+  bearing_deg : Double,
+  distance_km : Double,
+) -> @types.GeoPoint {
+  let phi1 = to_rad(origin.lat)
+  let lambda1 = to_rad(origin.lng)
+  let theta = to_rad(bearing_deg)
+  let delta = distance_km / earth_radius_km // angular distance (radians)
+  let sin_phi1 = @math.sin(phi1)
+  let cos_phi1 = @math.cos(phi1)
+  let sin_delta = @math.sin(delta)
+  let cos_delta = @math.cos(delta)
+  let sin_phi2 = sin_phi1 * cos_delta + cos_phi1 * sin_delta * @math.cos(theta)
+  let phi2 = @math.asin(if sin_phi2 > 1.0 { 1.0 } else if sin_phi2 < -1.0 { -1.0 } else { sin_phi2 })
+  let y = @math.sin(theta) * sin_delta * cos_phi1
+  let x = cos_delta - sin_phi1 * @math.sin(phi2)
+  let lambda2 = lambda1 + @math.atan2(y, x)
+  // Normalize longitude to [-180, 180].
+  let lng = to_deg(lambda2)
+  let lng_norm = ((lng + 540.0) % 360.0) - 180.0
+  @types.GeoPoint::make(to_deg(phi2), lng_norm)
+}
+
+///|
+/// Compute a circular buffer polygon around a point. Approximates the circle
+/// as a regular polygon with `segments` vertices (default 32). The result is
+/// a closed ring (first point == last point).
+pub fn buffer_point(
+  center : @types.GeoPoint,
+  radius_km : Double,
+  segments? : Int = 32,
+) -> Array[@types.GeoPoint] {
+  let n = if segments < 3 { 3 } else { segments }
+  let out : Array[@types.GeoPoint] = []
+  let mut i = 0
+  while i < n {
+    let bearing = 360.0 * i.to_double() / n.to_double()
+    out.push(destination_point(center, bearing, radius_km))
+    i = i + 1
+  }
+  out.push(out[0])
+  out
+}
+
+///|
+/// Compute the buffer polygon around a polyline/polygon (ordered vertex
+/// list). For each vertex, a circular cap of `radius_km` is generated; the
+/// union's convex hull is returned. This is a round-cap buffer approximation
+/// that is exact for convex inputs and generous for concave ones.
+pub fn buffer_polygon(
+  polygon : Array[@types.GeoPoint],
+  radius_km : Double,
+  segments? : Int = 16,
+) -> Array[@types.GeoPoint] {
+  let n = polygon.length()
+  if n == 0 {
+    return []
+  }
+  if n == 1 {
+    return buffer_point(polygon[0], radius_km, segments~)
+  }
+  // Collect every vertex's cap as sample points, then take the convex hull.
+  let samples : Array[@types.GeoPoint] = []
+  let mut i = 0
+  while i < n {
+    let cap = buffer_point(polygon[i], radius_km, segments~)
+    let mut j = 0
+    while j < cap.length() - 1 {
+      samples.push(cap[j])
+      j = j + 1
+    }
+    i = i + 1
+  }
+  convex_hull(samples)
+}

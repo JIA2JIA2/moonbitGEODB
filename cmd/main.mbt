@@ -1005,6 +1005,37 @@ fn main {
     return
   }
 
+  if cmd == "tsp-2opt" {
+    if args.length() < 3 {
+      println("Error: tsp-2opt requires start_id")
+      println("Usage: moon run cmd tsp-2opt <start_id>")
+      return
+    }
+    run_tsp_2opt(args.get(2).unwrap())
+    return
+  }
+
+  if cmd == "idw" {
+    if args.length() < 4 {
+      println("Error: idw requires lat lng [power]")
+      println("Usage: moon run cmd idw <lat> <lng> [power]")
+      return
+    }
+    let power_str = if args.length() >= 5 { args.get(4).unwrap() } else { "2.0" }
+    run_idw(args.get(2).unwrap(), args.get(3).unwrap(), power_str)
+    return
+  }
+
+  if cmd == "concave-hull" {
+    if args.length() < 3 {
+      println("Error: concave-hull requires alpha")
+      println("Usage: moon run cmd concave-hull <alpha>")
+      return
+    }
+    run_concave_hull(args.get(2).unwrap())
+    return
+  }
+
   if cmd == "voronoi" {
     run_voronoi()
     return
@@ -2810,6 +2841,119 @@ fn run_tsp(start_id : String) -> Unit {
       }
     }
   }
+}
+
+///| TSP 2-opt CLI.
+fn run_tsp_2opt(start_id : String) -> Unit {
+  let db = build_sample_db()
+  println("=== TSP: Nearest-Neighbor + 2-opt Improvement ===")
+  println("  Start: " + start_id)
+  match db.tsp_2opt(start_id) {
+    None => {
+      println("  Error: start id not found")
+    }
+    Some((route, total_km)) => {
+      // Also compute pure NN route for comparison.
+      let nn = db.tsp_nearest(start_id)
+      match nn {
+        Some((_, nn_total)) => {
+          let saved = nn_total - total_km
+          let pct = if nn_total > 0.0 { saved / nn_total * 100.0 } else { 0.0 }
+          println(
+            "  NN total:   " + nn_total.to_string() + " km",
+          )
+          println(
+            "  2-opt total: " + total_km.to_string() + " km",
+          )
+          println(
+            "  Saved:      " + saved.to_string() + " km (" + pct.to_string() + "%)",
+          )
+        }
+        None => ()
+      }
+      println("  Route (" + route.length().to_string() + " stops):")
+      let mut idx = 0
+      for stop in route {
+        let label = if idx == 0 {
+          "START"
+        } else if idx == route.length() - 1 {
+          "END  "
+        } else {
+          "     "
+        }
+        println(
+          "    " + label + "  " + stop.entry.id + " | " +
+          stop.entry.name + " | cum=" + stop.cum_distance_km.to_string() + " km",
+        )
+        idx = idx + 1
+      }
+    }
+  }
+}
+
+///| IDW interpolation CLI. Predicts longitude at the given (lat, lng)
+///| based on sample values distributed across the sample DB. We use the
+///| longitude of each entry as the attribute to predict, so a sensible
+///| query (lat near Beijing, lng between Beijing and Shanghai) shows
+///| interpolation at work.
+fn run_idw(lat_str : String, lng_str : String, power_str : String) -> Unit {
+  let lat = try { @string.parse_double(lat_str) } catch { _ => 39.9 }
+  let lng = try { @string.parse_double(lng_str) } catch { _ => 118.0 }
+  let power = try { @string.parse_double(power_str) } catch { _ => 2.0 }
+  let db = build_sample_db()
+  let q = @types.GeoPoint::make(lat, lng)
+  println("=== IDW Inverse Distance Weighting ===")
+  println(
+    "  Query point: (" + lat.to_string() + "°N, " + lng.to_string() + "°E)",
+  )
+  println("  Power:       " + power.to_string())
+  // Predict longitude attribute.
+  match db.idw_predict(q, fn(e) { e.location.lng }, power~) {
+    None => println("  No prediction (empty DB)")
+    Some(pred_lng) => {
+      println("  Predicted longitude: " + pred_lng.to_string() + "°E")
+      println(
+        "  Distance from query to nearest entry: " +
+        find_nearest_dist(db, q).to_string() + " km",
+      )
+    }
+  }
+  // Also show KNN version.
+  let knn = db.idw_predict_knn(q, 5, fn(e) { e.location.lng }, power~)
+  match knn {
+    Some(v) => println("  KNN(5) version:      " + v.to_string() + "°E")
+    None => ()
+  }
+}
+
+///| Concave hull CLI.
+fn run_concave_hull(alpha_str : String) -> Unit {
+  let alpha = try { @string.parse_double(alpha_str) } catch { _ => 1.0 }
+  let db = build_sample_db()
+  println("=== Concave Hull (Alpha-Shape) ===")
+  println("  Alpha: " + alpha.to_string())
+  let hull = db.concave_hull(alpha)
+  println("  Hull vertices: " + hull.length().to_string())
+  for p in hull {
+    println(
+      "    (" + p.lat.to_string() + "°N, " + p.lng.to_string() + "°E)",
+    )
+  }
+  // Compare with convex hull.
+  let entries = db.all()
+  let pts : Array[@types.GeoPoint] = []
+  for e in entries {
+    pts.push(e.location)
+  }
+  let convex = @geo.convex_hull(pts)
+  println("  Convex hull vertices: " + convex.length().to_string())
+  println("  (alpha → 0 recovers convex hull; alpha → ∞ tends toward all points)")
+}
+
+///| Helper: distance from a query point to the nearest DB entry.
+fn find_nearest_dist(db : @db.GeoDB, q : @types.GeoPoint) -> Double {
+  let arr = db.find_nearest(q, 1)
+  if arr.length() > 0 { arr[0].1 } else { 0.0 }
 }
 
 // ---- Benchmark ----

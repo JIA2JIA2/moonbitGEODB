@@ -3645,3 +3645,149 @@ fn find_entry_idx(entries : Array[@types.GeoEntry], id : String) -> Int? {
   }
   None
 }
+
+// ---- 2-opt TSP improvement ----
+
+///|
+/// Improve a nearest-neighbor TSP route using the 2-opt local search heuristic.
+/// Iteratively swaps two edges (reverses a sub-path) whenever it reduces
+/// total distance. Returns the improved (route, total_distance).
+///
+/// `max_iterations` caps the outer loop (default 200) to guarantee termination.
+pub fn GeoDB::tsp_2opt(
+  self : GeoDB,
+  start_id : String,
+  max_iterations? : Int = 200,
+) -> (Array[RouteStop], Double)? {
+  match self.tsp_nearest(start_id) {
+    None => None
+    Some((route, total)) => {
+      let entries = self.all()
+      // Build index map for O(1) lookup.
+      let id_to_entry : @hashmap.HashMap[String, @types.GeoEntry] = @hashmap.HashMap([])
+      for e in entries {
+        id_to_entry[e.id] = e
+      }
+      // Extract ids in route order.
+      let ids : Array[String] = []
+      for stop in route {
+        ids.push(stop.entry.id)
+      }
+      let n = ids.length()
+      if n < 4 {
+        return Some((route, total))
+      }
+      // Helper: haversine between route indices i and j.
+      let dist_between = fn(i : Int, j : Int) -> Double {
+        let ei = id_to_entry.get(ids[i]).unwrap()
+        let ej = id_to_entry.get(ids[j]).unwrap()
+        @geo.haversine(ei.location, ej.location)
+      }
+      // 2-opt main loop.
+      let mut improved = true
+      let mut t = 0
+      while improved && t < max_iterations {
+        improved = false
+        t = t + 1
+        let mut i = 0
+        // No return-to-start here (open tour), so i goes up to n-3.
+        while i < n - 2 {
+          let mut j = i + 2
+          while j < n {
+            // Try reversing ids[i+1 .. j].
+            let d_before = dist_between(i, i + 1) + dist_between(j, j + 1)
+            let d_after = dist_between(i, j) + dist_between(i + 1, j + 1)
+            if d_after < d_before - 0.000001 {
+              // Reverse the sub-path.
+              let mut lo = i + 1
+              let mut hi = j
+              while lo < hi {
+                let tmp = ids[lo]
+                ids[lo] = ids[hi]
+                ids[hi] = tmp
+                lo = lo + 1
+                hi = hi - 1
+              }
+              improved = true
+            }
+            j = j + 1
+          }
+          i = i + 1
+        }
+      }
+      // Rebuild route + compute cumulative distance.
+      let new_route : Array[RouteStop] = []
+      let mut cum = 0.0
+      new_route.push({
+        entry: id_to_entry.get(ids[0]).unwrap(),
+        cum_distance_km: 0.0,
+      })
+      let mut k = 1
+      while k < n {
+        let prev = id_to_entry.get(ids[k - 1]).unwrap()
+        let cur = id_to_entry.get(ids[k]).unwrap()
+        let d = @geo.haversine(prev.location, cur.location)
+        cum = cum + d
+        new_route.push({ entry: cur, cum_distance_km: cum })
+        k = k + 1
+      }
+      Some((new_route, cum))
+    }
+  }
+}
+
+// ---- IDW spatial interpolation ----
+
+///|
+/// Predict an attribute value at a query location using Inverse Distance
+/// Weighting over all DB entries. `value_fn` extracts the numeric attribute
+/// from each entry (e.g. latitude, a tag-derived value, etc.).
+///
+/// Returns None if the DB is empty.
+pub fn GeoDB::idw_predict(
+  self : GeoDB,
+  query : @types.GeoPoint,
+  value_fn : (@types.GeoEntry) -> Double,
+  power? : Double = 2.0,
+) -> Double? {
+  let entries = self.all()
+  let pts : Array[@types.GeoPoint] = []
+  let vals : Array[Double] = []
+  for e in entries {
+    pts.push(e.location)
+    vals.push(value_fn(e))
+  }
+  @geo.idw_interpolate(pts, vals, query, power~)
+}
+
+///|
+/// IDW restricted to k nearest neighbors (faster for large DBs).
+pub fn GeoDB::idw_predict_knn(
+  self : GeoDB,
+  query : @types.GeoPoint,
+  k : Int,
+  value_fn : (@types.GeoEntry) -> Double,
+  power? : Double = 2.0,
+) -> Double? {
+  let entries = self.all()
+  let pts : Array[@types.GeoPoint] = []
+  let vals : Array[Double] = []
+  for e in entries {
+    pts.push(e.location)
+    vals.push(value_fn(e))
+  }
+  @geo.idw_interpolate_knn(pts, vals, query, k, power~)
+}
+
+// ---- Concave hull ----
+
+///|
+/// Compute the concave hull (alpha-shape) of all entry locations.
+pub fn GeoDB::concave_hull(self : GeoDB, alpha : Double) -> Array[@types.GeoPoint] {
+  let entries = self.all()
+  let pts : Array[@types.GeoPoint] = []
+  for e in entries {
+    pts.push(e.location)
+  }
+  @geo.concave_hull(pts, alpha)
+}
