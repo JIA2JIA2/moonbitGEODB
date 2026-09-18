@@ -177,9 +177,11 @@ moon run cmd polygon <lat1>,<lng1> <lat2>,<lng2> ... 多边形操作
 moon run cmd geohash-neighbors <hash> [precision] Geohash 邻域
 moon run cmd radial-density <lat> <lng> <km> <rings> 径向密度
 moon run cmd to-geojson-bbox [path] 带 BBox 的 GeoJSON
-moon run cmd voronoi                     Voronoi 图（泰森多边形）
-moon run cmd voronoi-cell <id>           单个条目的 Voronoi 多边形
-moon run cmd voronoi-neighbors <id>      条目的 Voronoi 邻居
+ moon run cmd voronoi                     Voronoi 图（泰森多边形）
+ moon run cmd voronoi-cell <id>           单个条目的 Voronoi 多边形
+ moon run cmd voronoi-neighbors <id>      条目的 Voronoi 邻居
+ moon run cmd delaunay                    Delaunay 三角剖分
+ moon run cmd delaunay-edges              Delaunay 边（唯一）
 moon run cmd morans-i-lat                  全局 Moran's I（纬度）
 moon run cmd morans-i-lng                  全局 Moran's I（经度）
 moon run cmd hotspot-lat                   Getis-Ord Gi* 热点/冷点（纬度）
@@ -335,6 +337,12 @@ let poly = db.voronoi_cell("id1")
 
 // Voronoi 邻居（共享边的条目）
 let neighbors = db.voronoi_neighbors("id1")
+
+// Delaunay 三角剖分（Voronoi 对偶）
+let tris = db.delaunay()  // 返回三角形索引数组
+
+// Delaunay 边（唯一）
+let edges = db.delaunay_edges()
 
 // 空间自相关：Moran's I 全局聚集度检验（纬度）
 let moran = db.morans_i_on_lat()

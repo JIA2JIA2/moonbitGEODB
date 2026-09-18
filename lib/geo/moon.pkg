@@ -4,6 +4,7 @@ import {
   "moonbitlang/core/cmp",
   "moonbitlang/core/string",
   "moonbitlang/core/char",
+  "moonbitlang/core/hashmap",
   "moonbitlang/core/test",
   "JIA2JIA2/moonbitgeodb/lib/types",
 }

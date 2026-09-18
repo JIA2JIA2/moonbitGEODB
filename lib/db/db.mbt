@@ -3516,6 +3516,31 @@ pub fn GeoDB::std_dev_ellipse(self : GeoDB) -> @geo.StdDevEllipse? {
   @geo.std_dev_ellipse(pts)
 }
 
+// ---- Delaunay triangulation ----
+
+///|
+/// Compute the Delaunay triangulation of all entry locations.
+/// Each triangle is returned as three indices into the `all()` array.
+pub fn GeoDB::delaunay(self : GeoDB) -> Array[@geo.DelaunayTriangle] {
+  let entries = self.all()
+  let pts : Array[@types.GeoPoint] = []
+  for e in entries {
+    pts.push(e.location)
+  }
+  @geo.delaunay_triangulation(pts)
+}
+
+///|
+/// Compute all Delaunay edges (unique, sorted) for the entry locations.
+pub fn GeoDB::delaunay_edges(self : GeoDB) -> Array[@geo.DelaunayEdge] {
+  let entries = self.all()
+  let pts : Array[@types.GeoPoint] = []
+  for e in entries {
+    pts.push(e.location)
+  }
+  @geo.delaunay_edges(pts)
+}
+
 // ---- TSP nearest-neighbor heuristic ----
 
 ///|

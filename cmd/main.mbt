@@ -153,7 +153,11 @@ fn build_usage() -> String {
     "  moon run cmd lisa-lat                    Local Moran's I (LISA) on latitude\n"
   let s63 = s62 +
     "  moon run cmd lisa-lng                    Local Moran's I (LISA) on longitude\n"
-  let s64 = s63 + "\n"
+  let s64 = s63 +
+    "  moon run cmd delaunay                    Delaunay triangulation of all entries\n"
+  let s65 = s64 +
+    "  moon run cmd delaunay-edges              Delaunay edges (unique) of all entries\n"
+  let s66 = s65 + "\n"
   let s59 = s58 + "Examples:\n"
   let s60 = s59 + "  moon run cmd\n"
   let s61 = s60 + "  moon run cmd \"北京市海淀区颐和园路5号\"\n"
@@ -1043,6 +1047,16 @@ fn main {
 
   if cmd == "lisa-lng" {
     run_lisa_lng()
+    return
+  }
+
+  if cmd == "delaunay" {
+    run_delaunay()
+    return
+  }
+
+  if cmd == "delaunay-edges" {
+    run_delaunay_edges()
     return
   }
 
@@ -2916,4 +2930,57 @@ fn run_lisa_lng() -> Unit {
   println("  HL (high-low):  " + hl.to_string())
   println("  LH (low-high):  " + lh.to_string())
   println("  NS (not sig):   " + ns.to_string())
+}
+
+// ---- Delaunay triangulation ----
+
+///|
+fn run_delaunay() -> Unit {
+  let db = build_sample_db()
+  println("=== Delaunay Triangulation ===")
+  let entries = db.all()
+  let tris = db.delaunay()
+  println("  Triangles: " + tris.length().to_string())
+  let mut shown = 0
+  for t in tris {
+    if shown >= 10 {
+      break
+    }
+    if t.a < entries.length() &&
+      t.b < entries.length() &&
+      t.c < entries.length() {
+      let a = entries[t.a]
+      let b = entries[t.b]
+      let c = entries[t.c]
+      println("    (" + a.id + " | " + b.id + " | " + c.id + ")")
+      shown = shown + 1
+    }
+  }
+  if tris.length() > shown {
+    println("  ... and " + (tris.length() - shown).to_string() + " more")
+  }
+}
+
+///|
+fn run_delaunay_edges() -> Unit {
+  let db = build_sample_db()
+  println("=== Delaunay Edges ===")
+  let entries = db.all()
+  let edges = db.delaunay_edges()
+  println("  Edges: " + edges.length().to_string())
+  let mut shown = 0
+  for e in edges {
+    if shown >= 15 {
+      break
+    }
+    if e.a < entries.length() && e.b < entries.length() {
+      let a = entries[e.a]
+      let b = entries[e.b]
+      println("    " + a.id + " <-> " + b.id)
+      shown = shown + 1
+    }
+  }
+  if edges.length() > shown {
+    println("  ... and " + (edges.length() - shown).to_string() + " more")
+  }
 }
