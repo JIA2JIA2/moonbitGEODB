@@ -20,17 +20,22 @@
 ### 高级空间分析
 
 - **DBSCAN 密度聚类**：自动识别空间簇和噪声点
+- **K-Means 聚类**：Fogy 初始化 + Haversine 距离，确定性结果
+- **Elbow 方法**：自动跑 k=1..N 计算 WCSS，辅助选最佳 k
+- **标准差椭圆 (SDE)**：量化方向趋势和离散度（长轴/短轴/旋转角/偏心率）
+- **TSP 最近邻路由**：贪心启发式求遍历所有 POI 的近优路径
+- **Moran's I 空间自相关**：反距离加权矩阵，判断聚集/随机/离散模式
 - **多边形操作**：面积计算（鞋带公式）和点-in-多边形测试（射线法）
 - **Geohash 编码/解码**：支持空间索引、前缀查询和邻域查询
 - **坐标转换**：WGS84 ↔ GCJ-02（火星坐标）转换
 - **凸包计算**：Andrew's monotone chain 算法
+- **质心计算**：平面质心和球面地理中心（3D 投影法）
 - **路径距离**：多点路径距离计算
 - **径向密度分析**：同心圆区域分布统计
 - **平均最近邻距离**：空间分布分析
-- **空间自相关**：Moran's I 全局聚集度检验（含 z 值与 p 值）
 - **热点分析**：Getis-Ord Gi* 热点/冷点检测
 - **LISA**：Local Moran's I 局部聚类类型（HH/LL/HL/LH）
-- **分页支持**：大数据集的分页查询
+- **空间范围查询**：便利的 `find_bbox(min_lat, max_lat, min_lng, max_lng)` 直接调用
 
 ### 数据导入/导出
 
@@ -62,6 +67,8 @@
 
 | 方法 | 优化前 | 优化后 | 提升 |
 |------|--------|--------|------|
+| `find_in_ring` | O(n) 全扫描 + 每个 haversine | O(k) 用 bbox 候选集 + 精确过滤 | **10-100x** |
+| `nearest_neighbors_range` | O(n) 全计算 + 排序 | O(log n) R-tree KNN | **100x+** |
 | `find_neighbors` | O(n log n) 全扫描 | O(log n) R-tree 最近邻 | 1000x+ |
 | `find_sorted_by_distance` | O(n log n) 全扫描 | O(log n) R-tree 最近邻 | 1000x+ |
 | `find_nearest_pairs` | O(n² log n²) 全对排序 | O(n log k) R-tree 分批 | 100x+ |
@@ -69,6 +76,18 @@
 | `compute_bbox` | O(n) 每次 | O(1) 缓存 | 多次调用显著 |
 | `voronoi` | O(n³) 每次 | O(n³) 缓存 | 2x+ |
 | `voronoi_neighbors` | O(n³·\|a\|·\|b\|) | O(n³·(\|a\|+\|b\|)) | 邻居查询显著 |
+
+**Benchmark 实测**（10k 随机中国地址，单位：us）：
+
+| 操作 | 1k | 5k | 10k | 扩展趋势 |
+|------|-----|-----|------|---------|
+| 构建 DB | 10,512 | 74,260 | 256,551 | ~O(n) R-tree 插入 |
+| BBox 查询 | **63** | **110** | **169** | O(log n) ✓ |
+| KNN (k=5) | **56** | **92** | **93** | O(log n) ✓ |
+| Within 100km | 209 | 350 | 509 | 亚线性 ✓ |
+| K-Means (k=3) | 4,072 | 15,526 | 32,657 | O(n·iters·k) |
+
+运行命令：`moon run cmd benchmark [N]`（默认 N=1000）
 
 **缓存策略**：
 - `Index` 层：`compute_bbox` 和 `to_array` 结果在 `insert`/`remove` 时失效
@@ -177,7 +196,19 @@ moon run cmd polygon <lat1>,<lng1> <lat2>,<lng2> ... 多边形操作
 moon run cmd geohash-neighbors <hash> [precision] Geohash 邻域
 moon run cmd radial-density <lat> <lng> <km> <rings> 径向密度
 moon run cmd to-geojson-bbox [path] 带 BBox 的 GeoJSON
- moon run cmd voronoi                     Voronoi 图（泰森多边形）
+moon run cmd distance-histogram [bucket_size_km]  距离直方图
+moon run cmd coord-histogram lat|lng [bucket_size] 坐标直方图
+moon run cmd distance-summary                  距离统计摘要
+moon run cmd kmeans <k> [max_iter]            K-Means 聚类
+moon run cmd elbow [max_k]                     Elbow 方法选 k
+moon run cmd centroid-all                      全局质心 + 地理中心
+moon run cmd geographic-center                 球面地理中心
+moon run cmd bbox-query <min_lat> <max_lat> <min_lng> <max_lng>  边界框查询
+moon run cmd moran-i                           Moran's I 空间自相关
+moon run cmd sde                               标准差椭圆
+moon run cmd tsp <start_id>                    TSP 最近邻路由
+moon run cmd benchmark [N]                     性能基准测试（默认 1000）
+moon run cmd voronoi                     Voronoi 图（泰森多边形）
  moon run cmd voronoi-cell <id>           单个条目的 Voronoi 多边形
  moon run cmd voronoi-neighbors <id>      条目的 Voronoi 邻居
  moon run cmd delaunay                    Delaunay 三角剖分
@@ -419,16 +450,17 @@ let db = @gen.gen_db(500)
 moon test
 ```
 
-测试覆盖：
+测试覆盖（**274 个测试**）：
 - 类型构造与序列化
 - 地理距离与 BBox 运算
+- **K-Means / SDE / Moran's I / TSP** 高级算法
 - Geohash 编解码与邻域查询
 - WGS84 ↔ GCJ-02 坐标转换
 - 凸包计算与多边形面积
 - DBSCAN 密度聚类
 - 径向密度分析
 - 地址解析（中文、英文、多格式）
-- 空间索引与名称索引
+- 空间索引（R-tree + grid）与名称索引
 - 数据库 CRUD 操作
 - 标签查询与聚合
 - 地理统计与分布

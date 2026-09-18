@@ -2868,7 +2868,6 @@ pub fn GeoDB::find_in_ring(
   inner_radius_km : Double,
   outer_radius_km : Double,
 ) -> Array[(@types.GeoEntry, Double)] {
-  let results : Array[(@types.GeoEntry, Double)] = []
   let mut inner = inner_radius_km
   let mut outer = outer_radius_km
   if inner > outer {
@@ -2876,21 +2875,16 @@ pub fn GeoDB::find_in_ring(
     inner = outer
     outer = tmp
   }
-  for e in self.all() {
-    let d = @geo.haversine(center, e.location)
-    if d >= inner && d <= outer {
+  // Fast path: use index range query to get candidates within outer radius,
+  // then filter out those inside inner radius. Avoids scanning all entries.
+  let candidates = self.index.find_within_distance(center, outer)
+  let results : Array[(@types.GeoEntry, Double)] = []
+  for (e, d) in candidates {
+    if d >= inner {
       results.push((e, d))
     }
   }
-  results.sort_by(fn(a, b) {
-    if a.1 < b.1 {
-      -1
-    } else if a.1 > b.1 {
-      1
-    } else {
-      0
-    }
-  })
+  // candidates already sorted ascending, results preserve that order.
   results
 }
 
@@ -3061,38 +3055,34 @@ pub fn GeoDB::nearest_neighbors_range(
   match self.get(id) {
     None => None
     Some(target) => {
-      let all = self.all()
-      if all.length() < 2 {
+      let n = self.index.size()
+      if n < 2 {
         return None
       }
-      let pairs : Array[Double] = []
-      for e in all {
-        if e.id == id {
-          continue
+      // Use R-tree to get k+1 nearest (the +1 accounts for target itself).
+      let take = if n - 1 < k { n - 1 } else { k }
+      let raw = self.index.query_nearest(target.location, take + 1)
+      let dists : Array[Double] = []
+      for (e, d) in raw {
+        if e.id != id {
+          dists.push(d)
         }
-        pairs.push(@geo.haversine(target.location, e.location))
       }
-      if pairs.length() == 0 {
+      if dists.length() == 0 {
         return None
       }
-      pairs.sort_by(fn(a, b) { if a < b { -1 } else if a > b { 1 } else { 0 } })
-      let n = if pairs.length() < k { pairs.length() } else { k }
-      let taken : Array[Double] = []
-      let mut i = 0
-      while i < n {
-        taken.push(pairs[i])
-        i = i + 1
-      }
+      // query_nearest returns ascending order, already sorted.
+      let n_taken = dists.length()
       let mut total = 0.0
-      for d in taken {
+      for d in dists {
         total = total + d
       }
-      let median = if n % 2 == 1 {
-        taken[n / 2]
+      let median = if n_taken % 2 == 1 {
+        dists[n_taken / 2]
       } else {
-        (taken[n / 2 - 1] + taken[n / 2]) / 2.0
+        (dists[n_taken / 2 - 1] + dists[n_taken / 2]) / 2.0
       }
-      Some((n, taken[0], taken[n - 1], total / n.to_double(), median))
+      Some((n_taken, dists[0], dists[n_taken - 1], total / n_taken.to_double(), median))
     }
   }
 }

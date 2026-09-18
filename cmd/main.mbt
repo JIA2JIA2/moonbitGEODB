@@ -995,6 +995,16 @@ fn main {
     return
   }
 
+  if cmd == "benchmark" {
+    let n = if args.length() >= 3 {
+      try { @string.parse_int(args.get(2).unwrap()) } catch { _ => 1000 }
+    } else {
+      1000
+    }
+    run_benchmark(n)
+    return
+  }
+
   if cmd == "voronoi" {
     run_voronoi()
     return
@@ -1946,6 +1956,56 @@ fn build_sample_db() -> @db.GeoDB {
       "guangzhou001", "广州塔", 23.1066, 113.3239, "广州市海珠区阅江西路222号",
     ),
   )
+  ignore(
+    db.insert_raw(
+      "shenzhen001", "深圳平安金融中心", 22.5431, 114.0579, "深圳市福田区福华三路",
+    ),
+  )
+  ignore(
+    db.insert_raw(
+      "hangzhou001", "西湖", 30.2590, 120.1348, "浙江省杭州市西湖区",
+    ),
+  )
+  ignore(
+    db.insert_raw(
+      "chengdu001", "宽窄巷子", 30.6700, 104.0590, "四川省成都市青羊区金河路口",
+    ),
+  )
+  ignore(
+    db.insert_raw(
+      "wuhan001", "黄鹤楼", 30.5450, 114.3023, "湖北省武汉市武昌区蛇山西坡",
+    ),
+  )
+  ignore(
+    db.insert_raw(
+      "xian001", "大雁塔", 34.2238, 108.9650, "陕西省西安市雁塔区大慈恩寺内",
+    ),
+  )
+  ignore(
+    db.insert_raw(
+      "nanjing001", "中山陵", 32.0586, 118.8501, "江苏省南京市玄武区紫金山南麓",
+    ),
+  )
+  ignore(
+    db.insert_raw(
+      "chongqing001", "解放碑", 29.5580, 106.5781, "重庆市渝中区解放碑步行街",
+    ),
+  )
+  ignore(
+    db.insert_raw(
+      "tianjin001", "天津之眼", 39.1436, 117.0097, "天津市河北区三岔河口永乐桥",
+    ),
+  )
+  ignore(
+    db.insert_raw(
+      "qingdao001", "青岛栈桥", 36.0588, 120.3168, "山东省青岛市市南区太平路12号",
+    ),
+  )
+  ignore(
+    db.insert_raw(
+      "kunming001", "滇池", 24.8800, 102.8300, "云南省昆明市西山区",
+    ),
+  )
   db
 }
 
@@ -2751,6 +2811,50 @@ fn run_tsp(start_id : String) -> Unit {
     }
   }
 }
+
+// ---- Benchmark ----
+
+///| Simple benchmark: builds a DB of N random entries and times several
+///| core queries so we can see the index working at scale.
+fn run_benchmark(n : Int) -> Unit {
+  let n = if n < 10 { 100 } else { n }
+  println("=== Benchmark (N=" + n.to_string() + ") ===")
+  // Build
+  let t0 = @bench.monotonic_clock_start()
+  let db = @gen.gen_db(n)
+  let t_build = @bench.monotonic_clock_end(t0)
+  println("  Build DB:       " + t_build.to_string() + " us")
+  println("  Entries:        " + db.size().to_string())
+
+  // BBox query (over Beijing area)
+  let t1 = @bench.monotonic_clock_start()
+  let _bbox_res = db.find_bbox(39.0, 40.0, 116.0, 117.0)
+  let t_bbox = @bench.monotonic_clock_end(t1)
+  println("  BBox query:     " + t_bbox.to_string() + " us")
+
+  // KNN
+  let t2 = @bench.monotonic_clock_start()
+  let _nn = db.find_nearest(@types.GeoPoint::make(39.9, 116.4), 5)
+  let t_nn = @bench.monotonic_clock_end(t2)
+  println("  KNN query (k=5): " + t_nn.to_string() + " us")
+
+  // Within radius
+  let t3 = @bench.monotonic_clock_start()
+  let _within = db.find_within_distance(@types.GeoPoint::make(39.9, 116.4), 100.0)
+  let t_within = @bench.monotonic_clock_end(t3)
+  println("  Within 100km:   " + t_within.to_string() + " us")
+
+  // K-Means (k=3)
+  let t4 = @bench.monotonic_clock_start()
+  let _km = db.kmeans(3)
+  let t_km = @bench.monotonic_clock_end(t4)
+  println("  K-Means (k=3):  " + t_km.to_string() + " us")
+
+  println("  ---")
+  let us_per_entry = t_build / n.to_double()
+  println("  Build per entry: " + us_per_entry.to_string() + " us")
+}
+
 // ---- Spatial autocorrelation / hotspot analysis ----
 
 ///|
