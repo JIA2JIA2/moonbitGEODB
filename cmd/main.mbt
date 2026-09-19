@@ -157,27 +157,29 @@ fn build_usage() -> String {
     "  moon run cmd delaunay                    Delaunay triangulation of all entries\n"
   let s65 = s64 +
     "  moon run cmd delaunay-edges              Delaunay edges (unique) of all entries\n"
-  let s66 = s65 + "\n"
-  let s59 = s58 + "Examples:\n"
-  let s60 = s59 + "  moon run cmd\n"
-  let s61 = s60 + "  moon run cmd \"北京市海淀区颐和园路5号\"\n"
-  let s62 = s61 + "  moon run cmd search \"颐和园\"\n"
-  let s63 = s62 + "  moon run cmd fuzzy \"Yuan\" 2\n"
-  let s64 = s63 + "  moon run cmd tag \"poi\"\n"
-  let s65 = s64 + "  moon run cmd province \"北京市\"\n"
-  let s66 = s65 + "  moon run cmd stats\n"
-  let s67 = s66 + "  moon run cmd export output.csv\n"
-  let s68 = s67 + "  moon run cmd seed 500\n"
-  let s69 = s68 + "  moon run cmd save geo.db\n"
-  let s70 = s69 + "  moon run cmd to-json out.json\n"
-  let s71 = s70 + "  moon run cmd cluster 5.0\n"
-  let s72 = s71 + "  moon run cmd ring-query 39.9 116.4 1.0 5.0\n"
-  let s73 = s72 + "  moon run cmd distance-histogram 39.9 116.4 50.0 10\n"
-  let s74 = s73 + "  moon run cmd nn-range yhy001 5\n"
-  let s75 = s74 + "  moon run cmd morans-i-lat\n"
-  let s76 = s75 + "  moon run cmd hotspot-lat\n"
-  let s77 = s76 + "  moon run cmd lisa-lat\n"
-  s77
+  let s66 = s65 +
+    "  moon run cmd kriging <lat> <lng> [k]     Kriging interpolation at query point\n"
+  let s67 = s66 + "\n"
+  let s68 = s67 + "Examples:\n"
+  let s69 = s68 + "  moon run cmd\n"
+  let s70 = s69 + "  moon run cmd \"北京市海淀区颐和园路5号\"\n"
+  let s71 = s70 + "  moon run cmd search \"颐和园\"\n"
+  let s72 = s71 + "  moon run cmd fuzzy \"Yuan\" 2\n"
+  let s73 = s72 + "  moon run cmd tag \"poi\"\n"
+  let s74 = s73 + "  moon run cmd province \"北京市\"\n"
+  let s75 = s74 + "  moon run cmd stats\n"
+  let s76 = s75 + "  moon run cmd export output.csv\n"
+  let s77 = s76 + "  moon run cmd seed 500\n"
+  let s78 = s77 + "  moon run cmd save geo.db\n"
+  let s79 = s78 + "  moon run cmd to-json out.json\n"
+  let s80 = s79 + "  moon run cmd cluster 5.0\n"
+  let s81 = s80 + "  moon run cmd ring-query 39.9 116.4 1.0 5.0\n"
+  let s82 = s81 + "  moon run cmd distance-histogram 39.9 116.4 50.0 10\n"
+  let s83 = s82 + "  moon run cmd nn-range yhy001 5\n"
+  let s84 = s83 + "  moon run cmd morans-i-lat\n"
+  let s85 = s84 + "  moon run cmd hotspot-lat\n"
+  let s86 = s85 + "  moon run cmd lisa-lat\n"
+  s86
 }
 
 ///|
@@ -1098,6 +1100,11 @@ fn main {
 
   if cmd == "delaunay-edges" {
     run_delaunay_edges()
+    return
+  }
+
+  if cmd == "kriging" {
+    run_kriging()
     return
   }
 
@@ -3230,5 +3237,50 @@ fn run_delaunay_edges() -> Unit {
   }
   if edges.length() > shown {
     println("  ... and " + (edges.length() - shown).to_string() + " more")
+  }
+}
+///|
+fn run_kriging() -> Unit {
+  let db = build_sample_db()
+  println("=== Kriging Interpolation ===")
+  let entries = db.all()
+  if entries.length() < 2 {
+    println("  Need at least 2 entries for kriging")
+    return
+  }
+  let args = @env.args()
+  let lat_str = if args.length() > 2 { args.get(2).unwrap_or("39.9") } else { "39.9" }
+  let lng_str = if args.length() > 3 { args.get(3).unwrap_or("116.4") } else { "116.4" }
+  let k_str = if args.length() > 4 { args.get(4).unwrap_or("12") } else { "12" }
+  let lat = try { @string.parse_double(lat_str) } catch { _ => 39.9 }
+  let lng = try { @string.parse_double(lng_str) } catch { _ => 116.4 }
+  let k = try { @string.parse_int(k_str) } catch { _ => 12 }
+  let query = @types.GeoPoint::make(lat, lng)
+  println("  Query point: (" + lat.to_string() + ", " + lng.to_string() + ")")
+  println("  Using k=" + k.to_string() + " nearest neighbors")
+  // Build points and values
+  let pts : Array[@types.GeoPoint] = []
+  let vals : Array[Double] = []
+  for e in entries {
+    pts.push(e.location)
+    // Use latitude as the value to interpolate (for demo purposes)
+    vals.push(e.location.lat)
+  }
+  // Compute empirical variogram
+  let bins = @geo.empirical_variogram(pts, vals, max_lag_km=None, num_lags=10)
+  if bins.length() < 2 {
+    println("  Not enough variogram bins")
+    return
+  }
+  // Fit variogram model
+  let fitted = @geo.fit_variogram(bins)
+  println("  Fitted variogram: nugget=" + fitted.nugget.to_string() +
+          ", sill=" + fitted.sill.to_string() +
+          ", range=" + fitted.range.to_string() + " km")
+  // Kriging prediction
+  let pred = @geo.ordinary_kriging_knn(pts, vals, query, fitted, k~)
+  match pred {
+    None => println("  Prediction: None (insufficient data)")
+    Some(v) => println("  Prediction: " + v.to_string())
   }
 }

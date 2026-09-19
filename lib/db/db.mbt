@@ -3791,3 +3791,52 @@ pub fn GeoDB::concave_hull(self : GeoDB, alpha : Double) -> Array[@types.GeoPoin
   }
   @geo.concave_hull(pts, alpha)
 }
+// ---- Kriging interpolation ----
+
+///|
+/// 普通克里金插值（Ordinary Kriging）。
+///
+/// 在查询点 q 处，用所有已知点和变异函数模型进行插值。
+/// 返回预测值，或 None（当无法计算时）。
+/// - `value_fn`: 从 GeoEntry 中提取待插值的数值
+/// - `variogram`: 拟合的变异函数模型
+pub fn GeoDB::kriging_predict(
+  self : GeoDB,
+  query : @types.GeoPoint,
+  value_fn : (@types.GeoEntry) -> Double,
+  variogram : @geo.FittedVariogram,
+) -> Double? {
+  let entries = self.all()
+  let pts : Array[@types.GeoPoint] = []
+  let vals : Array[Double] = []
+  for e in entries {
+    pts.push(e.location)
+    vals.push(value_fn(e))
+  }
+  @geo.ordinary_kriging(pts, vals, query, variogram)
+}
+
+///|
+/// 普通克里金插值（k 近邻版本）。
+///
+/// 仅使用距离查询点最近的 k 个已知点进行插值。
+/// 适合大数据集，避免构建大型方程组。
+/// - `value_fn`: 从 GeoEntry 中提取待插值的数值
+/// - `variogram`: 拟合的变异函数模型
+/// - `k`: 近邻数量（默认 12）
+pub fn GeoDB::kriging_predict_knn(
+  self : GeoDB,
+  query : @types.GeoPoint,
+  value_fn : (@types.GeoEntry) -> Double,
+  variogram : @geo.FittedVariogram,
+  k? : Int = 12,
+) -> Double? {
+  let entries = self.all()
+  let pts : Array[@types.GeoPoint] = []
+  let vals : Array[Double] = []
+  for e in entries {
+    pts.push(e.location)
+    vals.push(value_fn(e))
+  }
+  @geo.ordinary_kriging_knn(pts, vals, query, variogram, k~)
+}
