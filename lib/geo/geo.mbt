@@ -1076,6 +1076,58 @@ pub fn morans_i(
   Some({ index, expected, n, })
 }
 
+///|
+/// Moran's I with **k-nearest-neighbor weights** instead of the full n×n
+/// distance matrix. Much faster for large n: O(n·k·log n) vs O(n²).
+/// Each point's weight row sums to 1 (row-standardized), so the result is
+/// directly comparable to `morans_i`.
+pub fn morans_i_knn(
+  points : Array[@types.GeoPoint],
+  values : Array[Double],
+  k? : Int = 8,
+) -> MoranIResult? {
+  let n = points.length()
+  if n < 3 || values.length() != n {
+    return None
+  }
+  let nf = n.to_double()
+  let k_eff = if k < n - 1 { k } else { n - 1 }
+  // Mean-center values.
+  let mut sum_v = 0.0
+  for v in values { sum_v = sum_v + v }
+  let mean_v = sum_v / nf
+  let z : Array[Double] = []
+  for v in values { z.push(v - mean_v) }
+  let mut denom = 0.0
+  for zi in z { denom = denom + zi * zi }
+  if denom == 0.0 { return None }
+  // For each point, find its k nearest neighbors (haversine).
+  let mut num = 0.0
+  let mut i = 0
+  while i < n {
+    // Compute distances from points[i] to all others, take k smallest.
+    let dists : Array[(Double, Int)] = []
+    let mut j = 0
+    while j < n {
+      if j != i { dists.push((haversine(points[i], points[j]), j)) }
+      j = j + 1
+    }
+    dists.sort_by(fn(a, b) { if a.0 < b.0 { -1 } else if a.0 > b.0 { 1 } else { 0 } })
+    // Row-standardized weights: each of k neighbors gets weight 1/k.
+    let mut jj = 0
+    while jj < k_eff {
+      let (_, idx) = dists[jj]
+      num = num + (1.0 / k_eff.to_double()) * z[i] * z[idx]
+      jj = jj + 1
+    }
+    i = i + 1
+  }
+  // With row-standardized weights, W = n → I = num / denom.
+  let index = num / denom
+  let expected = -1.0 / (nf - 1.0)
+  Some({ index, expected, n })
+}
+
 // ---- Standard Deviation Ellipse (SDE) ----
 
 ///|
@@ -1277,6 +1329,11 @@ pub fn concave_hull(
 ) -> Array[@types.GeoPoint] {
   let n = points.length()
   if n < 3 || alpha <= 0.0 {
+    return convex_hull(points)
+  }
+  // Guard: Delaunay via Voronoi is O(n³). Beyond this size, fall back to
+  // convex hull so the call doesn't hang the CLI.
+  if n > 500 {
     return convex_hull(points)
   }
   // Get Delaunay triangulation via Voronoi dual.

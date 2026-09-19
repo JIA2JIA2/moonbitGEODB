@@ -272,9 +272,7 @@ pub fn gen_batch(n : Int) -> Array[@types.GeoEntry] {
 /// Build a DB pre-seeded with N random Chinese addresses.
 pub fn gen_db(n : Int) -> @db.GeoDB {
   let db = @db.GeoDB::in_memory()
-  for e in gen_batch(n) {
-    db.insert(e)
-  }
+  db.bulk_insert(gen_batch(n))
   db
 }
 

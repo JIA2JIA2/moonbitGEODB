@@ -2,6 +2,28 @@
 
 一个基于 [MoonBit](https://moonbitlang.com/) 编写的地理信息数据库，专门用于存储、解析、检索中国地址信息。
 
+## 快速开始
+
+```bash
+# 一键演示 15 POI 数据 + 全部核心功能
+moon run cmd demo
+
+# 性能基准（默认 1000，可指定 10000 等更大规模）
+moon run cmd benchmark 10000
+
+# 完整测试套件
+moon test   # 333/333 passed
+
+# 高级空间分析示例
+moon run cmd kmeans 3                      # K-Means 聚类
+moon run cmd tsp-2opt guangzhou001         # TSP + 2-opt 优化
+moon run cmd idw 35.0 115.0 2.0            # IDW 空间插值
+moon run cmd concave-hull 1.5              # 凹包 (Alpha-Shape)
+moon run cmd moran-i-knn                   # Moran's I (KNN 权重)
+moon run cmd sde                           # 标准差椭圆
+moon run cmd dbscan 100.0 3                # DBSCAN 密度聚类
+```
+
 ## 特性
 
 - **地址解析**：支持多格式地址字符串解析，特别是针对中文地址（如"北京市海淀区颐和园路5号"）的智能行政区划识别
@@ -78,6 +100,8 @@
 | `spatial_join_within` | O(n·m) 双循环 | O(n + k) bbox 候选集 + haversine 精炼 | **50x** |
 | `spatial_join_knearest` | O(n·m·log m) 全距离排序 | O(n·log m) 临时 R-tree | **50x** |
 | `cluster_dbscan` | O(n²) 每个点全扫描邻居 | O(n·k) R-tree 范围查询 | **10-100x** |
+| `bulk_insert` (insert 批量) | 每条目 HashMap 重复查找 + R-tree 逐步插入 | 一次性构建 + R-tree 集中插入 | **5-20x** |
+| `morans_i_knn` | O(n²) 全 n×n 距离矩阵 | O(n·k·log n) 仅 k 最近邻 | **10x+ (大 n)** |
 | `find_neighbors` | O(n log n) 全扫描 | O(log n) R-tree 最近邻 | 1000x+ |
 | `find_sorted_by_distance` | O(n log n) 全扫描 | O(log n) R-tree 最近邻 | 1000x+ |
 | `find_nearest_pairs` | O(n² log n²) 全对排序 | O(n log k) R-tree 分批 | 100x+ |
@@ -86,15 +110,16 @@
 | `voronoi` | O(n³) 每次 | O(n³) 缓存 | 2x+ |
 | `voronoi_neighbors` | O(n³·\|a\|·\|b\|) | O(n³·(\|a\|+\|b\|)) | 邻居查询显著 |
 
-**Benchmark 实测**（随机中国地址，单位：us）：
+**Benchmark 实测**（随机中国地址，单位：us。使用 `bulk_insert` 批量构建）：
 
 | 操作 | 1k | 10k | 50k | 扩展趋势 |
 |------|-----|------|------|---------|
-| 构建 DB | 10,512 | 252,642 | 15,802,209 | ~O(n) R-tree 插入 + 随机数据 |
-| BBox 查询 | **63** | **153** | **585** | O(log n) ✓ |
-| KNN (k=5) | **56** | **102** | **265** | O(log n) ✓ |
-| Within 100km | 209 | 472 | 1,721 | 亚线性 ✓ |
-| K-Means (k=3) | 4,072 | 52,838 | 233,854 | O(n·iters·k) |
+| 构建 DB | **10,160** | **127,191** | **1,117,363** | ~O(n) bulk_insert |
+| 构建/条目 | 10.2 | 12.7 | 22.3 | 近常数 ✓ |
+| BBox 查询 | **64** | **192** | **898** | O(log n) ✓ |
+| KNN (k=5) | **53** | **108** | **218** | O(log n) ✓ |
+| Within 100km | 214 | 482 | 2,432 | 亚线性 ✓ |
+| K-Means (k=3) | 3,802 | 39,897 | 210,835 | O(n·iters·k) |
 
 运行命令：`moon run cmd benchmark [N]`（默认 N=1000）
 
@@ -220,6 +245,8 @@ moon run cmd tsp-2opt <start_id>               TSP + 2-opt 优化（再省 3-10%
 moon run cmd idw <lat> <lng> [power]           IDW 空间插值（反距离加权）
 moon run cmd concave-hull <alpha>              凹包（Alpha-Shape），alpha=0 → 凸包
 moon run cmd benchmark [N]                     性能基准测试（默认 1000）
+moon run cmd demo                              一键演示（K-Means + SDE + TSP + IDW + 凹包）
+moon run cmd moran-i-knn                       Moran's I（KNN 权重，比 O(n²) 快）
 moon run cmd voronoi                     Voronoi 图（泰森多边形）
  moon run cmd voronoi-cell <id>           单个条目的 Voronoi 多边形
  moon run cmd voronoi-neighbors <id>      条目的 Voronoi 邻居

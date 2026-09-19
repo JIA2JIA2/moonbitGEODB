@@ -1038,6 +1038,16 @@ fn main {
     return
   }
 
+  if cmd == "moran-i-knn" {
+    run_moran_i_knn()
+    return
+  }
+
+  if cmd == "demo" {
+    run_demo()
+    return
+  }
+
   if cmd == "voronoi" {
     run_voronoi()
     return
@@ -1126,40 +1136,7 @@ fn run_demo() -> Unit {
   println("=== moonbitGEODB Demo ===")
   println("")
 
-  let db = @db.GeoDB::in_memory()
-
-  // Store: 北京市海淀区颐和园路5号
-  let entry1 = db.insert_raw(
-    "yhy001", "颐和园", 39.9999, 116.2755, "北京市海淀区颐和园路5号",
-  )
-  println("[STORED] id=" + entry1.id + ", name=" + entry1.name)
-  println(
-    "         location: (" +
-    entry1.location.lat.to_string() +
-    ", " +
-    entry1.location.lng.to_string() +
-    ")",
-  )
-  println("         address:  " + entry1.address.to_line())
-  println("")
-
-  // Store additional entries for search demo
-  ignore(
-    db.insert_raw(
-      "taman001", "天安门广场", 39.9055, 116.3972, "北京市东城区东长安街",
-    ),
-  )
-  ignore(
-    db.insert_raw(
-      "gugong001", "故宫博物院", 39.9163, 116.3972, "北京市东城区景山前街4号",
-    ),
-  )
-  ignore(
-    db.insert_raw(
-      "shanghai001", "东方明珠塔", 31.2397, 121.4997, "上海市浦东新区陆家嘴世纪大道1号",
-    ),
-  )
-
+  let db = build_sample_db()
   println("Database size: " + db.size().to_string())
   println("")
 
@@ -1179,14 +1156,6 @@ fn run_demo() -> Unit {
   }
   println("")
 
-  // Retrieve: by name (contains)
-  println("--- Search by keyword '北京' ---")
-  let results2 = db.find_name_contains("北京")
-  for e in results2 {
-    print_entry(e)
-  }
-  println("")
-
   // Retrieve: nearby
   println("--- Nearby 颐和园 (5km radius) ---")
   let nearby = db.find_nearby(
@@ -1196,32 +1165,62 @@ fn run_demo() -> Unit {
   )
   for pair in nearby {
     println(
-      "  " +
-      pair.0.id +
-      " (" +
-      pair.0.name +
-      ") - " +
-      pair.1.to_string() +
-      " km",
+      "  " + pair.0.id + " (" + pair.0.name + ") - " + pair.1.to_string() + " km",
     )
   }
   println("")
 
-  // Tag-based query demo
-  println("--- Tag query: 'poi' ---")
-  let tagged = db.find_by_tag("poi")
-  if tagged.length() == 0 {
-    println("  (no entries with 'poi' tag in demo data)")
-  } else {
-    for e in tagged {
-      println("  " + e.id + " - " + e.name)
+  // K-Means + SDE
+  println("--- K-Means (k=3) ---")
+  let clusters = db.kmeans(3)
+  let mut ci = 0
+  for cl in clusters {
+    ci = ci + 1
+    println("  Cluster " + ci.to_string() + ": " + cl.members.length().to_string() + " pts")
+    for mid in cl.members { println("    - " + mid.name) }
+  }
+  println("")
+
+  println("--- Standard Deviation Ellipse ---")
+  match db.std_dev_ellipse() {
+    None => println("  (Need >= 3 points)")
+    Some(sde) => {
+      let msg = "  Center (" + sde.center.lat.to_string() + ", " +
+        sde.center.lng.to_string() + ")  Semi-major " +
+        sde.semi_major_km.to_string() + " km"
+      println(msg)
     }
   }
   println("")
 
-  // Stats demo
-  println("--- Geographic Stats ---")
-  println(db.summary())
+  // TSP + 2-opt
+  println("--- TSP NN + 2-opt (from guangzhou001) ---")
+  match db.tsp_nearest("guangzhou001") {
+    None => println("  (start id not found)")
+    Some((_, nn_tot)) => {
+      match db.tsp_2opt("guangzhou001") {
+        None => ()
+        Some((_, opt_tot)) => {
+          println("  NN: " + nn_tot.to_string() + " km  2opt: " + opt_tot.to_string() + " km")
+          println("  Saved " + (nn_tot - opt_tot).to_string() + " km")
+        }
+      }
+    }
+  }
+  println("")
+
+  // IDW
+  println("--- IDW interpolation at (35N, 115E) ---")
+  match db.idw_predict(@types.GeoPoint::make(35.0, 115.0), fn(e) { e.location.lng }) {
+    None => println("  (empty DB)")
+    Some(v) => println("  Predicted lng: " + v.to_string())
+  }
+  println("")
+
+  // Concave hull
+  println("--- Concave Hull (alpha=1.5) ---")
+  let hull = db.concave_hull(1.5)
+  println("  Hull vertices: " + hull.length().to_string())
   println("")
 
   // Parse-only demonstration
@@ -1231,25 +1230,19 @@ fn run_demo() -> Unit {
   ) catch {
     _ => @types.Address::empty()
   }
-  println("  Country:     " + addr.country)
-  println("  Province:    " + addr.province)
-  println("  City:        " + addr.city)
-  println("  District:    " + addr.district)
-  println("  Street:      " + addr.street)
-  println("  Detail:      " + addr.detail)
-  println("  Postal Code: " + addr.postal_code)
+  println("  Province: " + addr.province)
+  println("  City:     " + addr.city)
+  println("  District: " + addr.district)
+  println("  Street:   " + addr.street)
   println("")
 
-  println("Demo complete. Try custom queries:")
-  println("  moon run cmd \"上海市浦东新区陆家嘴环路1000号\"")
-  println("  moon run cmd search \"故宫\"")
-  println("  moon run cmd fuzzy \"Yuan\" 2")
-  println("  moon run cmd tag \"poi\"")
-  println("  moon run cmd province \"北京市\"")
-  println("  moon run cmd stats")
-  println("  moon run cmd export output.csv")
-  println("  moon run cmd seed 500")
-  println("  moon run cmd save geo.db")
+  println("Demo complete. Try:")
+  println("  moon run cmd benchmark")
+  println("  moon run cmd tsp-2opt guangzhou001")
+  println("  moon run cmd kmeans 3")
+  println("  moon run cmd idw 35.0 115.0 2.0")
+  println("  moon run cmd concave-hull 1.5")
+  println("  moon run cmd moran-i-knn")
 }
 
 ///|
@@ -2961,6 +2954,20 @@ fn run_concave_hull(alpha_str : String) -> Unit {
 fn find_nearest_dist(db : @db.GeoDB, q : @types.GeoPoint) -> Double {
   let arr = db.find_nearest(q, 1)
   if arr.length() > 0 { arr[0].1 } else { 0.0 }
+}
+
+///| Moran's I with KNN weights.
+fn run_moran_i_knn() -> Unit {
+  let db = build_sample_db()
+  println("=== Moran's I (KNN weights, k=8) ===")
+  match db.morans_i_knn_on_lat(k=8) {
+    None => println("  No result (too few points)")
+    Some(r) => {
+      println("  I (latitude): " + r.index.to_string())
+      let label = if r.index > 0.1 { "clustered" } else if r.index < -0.1 { "dispersed" } else { "random" }
+      println("  Pattern:     " + label)
+    }
+  }
 }
 
 // ---- Benchmark ----

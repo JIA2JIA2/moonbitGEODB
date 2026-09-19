@@ -100,6 +100,18 @@ pub fn GeoDB::insert(self : GeoDB, entry : @types.GeoEntry) -> Unit {
 }
 
 ///|
+/// Bulk insert many entries at once. Faster than calling `insert` in a loop
+/// because R-tree and helper indexes are updated in one pass without per-entry
+/// duplicate checks.
+pub fn GeoDB::bulk_insert(self : GeoDB, entries : Array[@types.GeoEntry]) -> Unit {
+  self.index.bulk_insert(entries)
+  self.voronoi_dirty = true
+  if self.auto_save {
+    ignore(self.save())
+  }
+}
+
+///|
 /// Insert an entry built from raw parts: id, name, lat, lng, address string.
 /// The address string is parsed via `@parser.parse_address`; on failure an
 /// empty Address is used. Returns the inserted entry.
@@ -3417,6 +3429,30 @@ pub fn GeoDB::morans_i(
     pts.push(e.location)
   }
   @geo.morans_i(pts, values)
+}
+
+///| K-nearest-neighbor-weighted Moran's I. O(n·k·log n), faster on large DBs.
+pub fn GeoDB::morans_i_knn(
+  self : GeoDB,
+  values : Array[Double],
+  k? : Int = 8,
+) -> @geo.MoranIResult? {
+  let entries = self.all()
+  let pts : Array[@types.GeoPoint] = []
+  for e in entries { pts.push(e.location) }
+  @geo.morans_i_knn(pts, values, k~)
+}
+
+///| KNN Moran's I on latitude attribute.
+pub fn GeoDB::morans_i_knn_on_lat(self : GeoDB, k? : Int = 8) -> @geo.MoranIResult? {
+  let entries = self.all()
+  let pts : Array[@types.GeoPoint] = []
+  let vals : Array[Double] = []
+  for e in entries {
+    pts.push(e.location)
+    vals.push(e.location.lat)
+  }
+  @geo.morans_i_knn(pts, vals, k~)
 }
 
 ///| Convenience: compute Moran's I where the attribute value is simply
