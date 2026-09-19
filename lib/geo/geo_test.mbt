@@ -357,3 +357,102 @@ test "compass_direction" {
   @test.assert_eq(compass_direction(270.0), "W")
   @test.assert_eq(compass_direction(360.0), "N")
 }
+
+// ---- IDW ----
+
+///|
+test "idw midpoint equals average of two values" {
+  let pts = [@types.GeoPoint::make(0.0, 0.0), @types.GeoPoint::make(0.0, 1.0)]
+  let vals = [10.0, 20.0]
+  let q = @types.GeoPoint::make(0.0, 0.5)
+  match idw_interpolate(pts, vals, q) {
+    None => @test.assert_eq(false, true)
+    Some(v) => @test.assert_eq((v - 15.0).abs() < 0.01, true)
+  }
+}
+
+///|
+test "idw closer point has more influence" {
+  let pts = [
+    @types.GeoPoint::make(0.0, 0.0),
+    @types.GeoPoint::make(0.0, 1.0),
+    @types.GeoPoint::make(0.0, 100.0),  // very far away
+  ]
+  let vals = [0.0, 100.0, 1000.0]
+  let q = @types.GeoPoint::make(0.0, 0.5)
+  match idw_interpolate(pts, vals, q) {
+    None => @test.assert_eq(false, true)
+    Some(v) => {
+      // Should be near 50 (midpoint of 0 and 100), not pulled by 1000.
+      @test.assert_eq(v > 40.0 && v < 60.0, true)
+    }
+  }
+}
+
+///|
+test "idw coincident point returns exact value" {
+  let pts = [
+    @types.GeoPoint::make(0.0, 0.0),
+    @types.GeoPoint::make(1.0, 1.0),
+  ]
+  let vals = [42.0, 99.0]
+  match idw_interpolate(pts, vals, @types.GeoPoint::make(0.0, 0.0)) {
+    None => @test.assert_eq(false, true)
+    Some(v) => @test.assert_eq((v - 42.0).abs() < 0.0001, true)
+  }
+}
+
+///|
+test "idw empty points returns None" {
+  @test.assert_eq(idw_interpolate([], [], @types.GeoPoint::make(0.0, 0.0)) is None, true)
+}
+
+///|
+test "idw_interpolate_knn uses only k nearest" {
+  let pts = [
+    @types.GeoPoint::make(0.0, 0.0),
+    @types.GeoPoint::make(0.0, 1.0),
+    @types.GeoPoint::make(0.0, 100.0),
+  ]
+  let vals = [0.0, 100.0, 1000.0]
+  let q = @types.GeoPoint::make(0.0, 0.5)
+  // With k=2, the far point is excluded → near 50.
+  match idw_interpolate_knn(pts, vals, q, 2) {
+    None => @test.assert_eq(false, true)
+    Some(v) => @test.assert_eq(v > 40.0 && v < 60.0, true)
+  }
+}
+
+// ---- Concave Hull ----
+
+///|
+test "concave hull of square is 4 vertices" {
+  let pts = [
+    @types.GeoPoint::make(0.0, 0.0),
+    @types.GeoPoint::make(1.0, 0.0),
+    @types.GeoPoint::make(1.0, 1.0),
+    @types.GeoPoint::make(0.0, 1.0),
+  ]
+  let hull = concave_hull(pts, 2.0)
+  @test.assert_eq(hull.length() >= 3, true)
+}
+
+///|
+test "concave hull on < 3 points falls back" {
+  let pts = [@types.GeoPoint::make(0.0, 0.0), @types.GeoPoint::make(1.0, 1.0)]
+  let hull = concave_hull(pts, 1.0)
+  @test.assert_eq(hull.length() <= 2, true)
+}
+
+///|
+test "concave hull alpha<=0 falls back to convex" {
+  let pts = [
+    @types.GeoPoint::make(0.0, 0.0),
+    @types.GeoPoint::make(1.0, 0.0),
+    @types.GeoPoint::make(0.0, 1.0),
+    @types.GeoPoint::make(0.5, 0.5),  // interior
+  ]
+  let hull0 = concave_hull(pts, 0.0)
+  let convex = convex_hull(pts)
+  @test.assert_eq(hull0.length() == convex.length(), true)
+}

@@ -2434,6 +2434,16 @@ pub fn GeoDB::cluster_dbscan(
 ) -> Array[Array[String]] {
   let entries = self.all()
   let n = entries.length()
+  if n == 0 {
+    return []
+  }
+  // Build id → index map once for O(1) reverse lookup from R-tree results.
+  let id_to_idx : @hashmap.HashMap[String, Int] = @hashmap.HashMap([])
+  let mut mi = 0
+  while mi < n {
+    id_to_idx[entries[mi].id] = mi
+    mi = mi + 1
+  }
   let visited : Array[Bool] = []
   let clustered : Array[Bool] = []
   let mut i = 0
@@ -2447,7 +2457,7 @@ pub fn GeoDB::cluster_dbscan(
   while i < n {
     if !visited[i] {
       visited[i] = true
-      let neighbors = dbscan_range_query(entries, i, eps_km)
+      let neighbors = dbscan_range_query_idx(self, entries[i].location, eps_km, id_to_idx)
       if neighbors.length() >= min_points - 1 {
         // Expand cluster.
         let cluster : Array[String] = [entries[i].id]
@@ -2456,7 +2466,7 @@ pub fn GeoDB::cluster_dbscan(
           let j = neighbors[seed]
           if !visited[j] {
             visited[j] = true
-            let j_neighbors = dbscan_range_query(entries, j, eps_km)
+            let j_neighbors = dbscan_range_query_idx(self, entries[j].location, eps_km, id_to_idx)
             if j_neighbors.length() >= min_points - 1 {
               // Merge j_neighbors into neighbors list.
               for k in j_neighbors {
@@ -2619,23 +2629,21 @@ pub fn GeoDB::to_geojson_with_bbox(self : GeoDB) -> String {
 }
 
 ///|
-fn dbscan_range_query(
-  entries : Array[@types.GeoEntry],
-  idx : Int,
+///| R-tree-backed range query for DBSCAN. Returns indices of entries
+/// within `eps_km` of the center point (excluding the center itself).
+fn dbscan_range_query_idx(
+  db : GeoDB,
+  center : @types.GeoPoint,
   eps_km : Double,
+  id_to_idx : @hashmap.HashMap[String, Int],
 ) -> Array[Int] {
   let results : Array[Int] = []
-  let center = entries[idx].location
-  let n = entries.length()
-  let mut i = 0
-  while i < n {
-    if i != idx {
-      let d = @geo.haversine(center, entries[i].location)
-      if d <= eps_km {
-        results.push(i)
-      }
+  let pairs = db.find_within_distance(center, eps_km)
+  for (e, _) in pairs {
+    match id_to_idx.get(e.id) {
+      Some(idx) => results.push(idx)
+      None => ()
     }
-    i = i + 1
   }
   results
 }
@@ -3690,10 +3698,11 @@ pub fn GeoDB::tsp_2opt(
         improved = false
         t = t + 1
         let mut i = 0
-        // No return-to-start here (open tour), so i goes up to n-3.
+        // No return-to-start here (open tour), so both i and j must leave
+        // room for j+1 to stay in bounds.
         while i < n - 2 {
           let mut j = i + 2
-          while j < n {
+          while j < n - 1 {
             // Try reversing ids[i+1 .. j].
             let d_before = dist_between(i, i + 1) + dist_between(j, j + 1)
             let d_after = dist_between(i, j) + dist_between(i + 1, j + 1)

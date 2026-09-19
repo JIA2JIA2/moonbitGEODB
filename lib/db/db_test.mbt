@@ -2758,3 +2758,75 @@ test "GeoDB::nearest_neighbors_range still works after R-tree opt" {
     }
   }
 }
+
+// ---- tsp_2opt test ----
+
+///|
+test "GeoDB::tsp_2opt produces route no worse than NN" {
+  let db = GeoDB::in_memory()
+  db.insert(make_entry("a", "A", 0.0, 0.0))
+  db.insert(make_entry("b", "B", 0.0, 0.1))
+  db.insert(make_entry("c", "C", 10.0, 10.0))
+  db.insert(make_entry("d", "D", 10.1, 10.0))
+  match db.tsp_2opt("a") {
+    None => @test.assert_eq(false, true)
+    Some((route, total)) => {
+      @test.assert_eq(route.length(), 4)
+      // Verify no worse than NN.
+      match db.tsp_nearest("a") {
+        Some((_, nn_total)) => @test.assert_eq(total <= nn_total + 0.001, true)
+        None => ()
+      }
+    }
+  }
+}
+
+///|
+test "GeoDB::tsp_2opt with missing start returns None" {
+  let db = GeoDB::in_memory()
+  db.insert(make_entry("a", "A", 0.0, 0.0))
+  @test.assert_eq(db.tsp_2opt("missing") is None, true)
+}
+
+// ---- IDW tests ----
+
+///|
+test "GeoDB::idw_predict basic" {
+  let db = GeoDB::in_memory()
+  db.insert(make_entry("a", "A", 0.0, 0.0))
+  db.insert(make_entry("b", "B", 0.0, 1.0))
+  let q = @types.GeoPoint::make(0.0, 0.5)
+  match db.idw_predict(q, fn(e) { e.location.lng }) {
+    None => @test.assert_eq(false, true)
+    Some(v) => @test.assert_eq((v - 0.5).abs() < 0.01, true)
+  }
+}
+
+///|
+test "GeoDB::idw_predict_knn restricts to k nearest" {
+  let db = GeoDB::in_memory()
+  db.insert(make_entry("a", "A", 0.0, 0.0))
+  db.insert(make_entry("b", "B", 0.0, 1.0))
+  db.insert(make_entry("c", "C", 0.0, 100.0))
+  let q = @types.GeoPoint::make(0.0, 0.5)
+  match db.idw_predict_knn(q, 2, fn(e) { e.location.lng }) {
+    None => @test.assert_eq(false, true)
+    Some(v) => {
+      // Within ~50 km from 0.5 is near 0.5, not influenced by point c at lng=100.
+      @test.assert_eq((v - 0.5).abs() < 0.1, true)
+    }
+  }
+}
+
+// ---- Concave hull test ----
+
+///|
+test "GeoDB::concave_hull basic" {
+  let db = GeoDB::in_memory()
+  db.insert(make_entry("a", "A", 0.0, 0.0))
+  db.insert(make_entry("b", "B", 1.0, 0.0))
+  db.insert(make_entry("c", "C", 1.0, 1.0))
+  db.insert(make_entry("d", "D", 0.0, 1.0))
+  let hull = db.concave_hull(2.0)
+  @test.assert_eq(hull.length() >= 3, true)
+}

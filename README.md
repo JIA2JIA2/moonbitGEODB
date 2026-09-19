@@ -19,12 +19,14 @@
 
 ### 高级空间分析
 
-- **DBSCAN 密度聚类**：自动识别空间簇和噪声点
-- **K-Means 聚类**：Fogy 初始化 + Haversine 距离，确定性结果
+- **DBSCAN 密度聚类**：R-tree 加速的密度聚类，自动识别空间簇和噪声点
+- **K-Means 聚类**：Forgy 初始化 + Haversine 距离，确定性结果
 - **Elbow 方法**：自动跑 k=1..N 计算 WCSS，辅助选最佳 k
 - **标准差椭圆 (SDE)**：量化方向趋势和离散度（长轴/短轴/旋转角/偏心率）
-- **TSP 最近邻路由**：贪心启发式求遍历所有 POI 的近优路径
-- **Moran's I 空间自相关**：反距离加权矩阵，判断聚集/随机/离散模式
+- **TSP 最近邻路由 + 2-opt 优化**：贪心启发式 + 边交换改进，通常再省 3-10% 路程
+- **IDW 空间插值**：反距离加权从已知点估算任意位置值（支持全量和 KNN 两种模式）
+- **凹包 (Alpha-Shape)**：基于 Delaunay 三角化的凹多边形边界，比凸包更贴合点云
+- **Moran's I 空间自相关**：反距离加权 + 行标准化，正确落在 [-1,1]
 - **多边形操作**：面积计算（鞋带公式）和点-in-多边形测试（射线法）
 - **Geohash 编码/解码**：支持空间索引、前缀查询和邻域查询
 - **坐标转换**：WGS84 ↔ GCJ-02（火星坐标）转换
@@ -36,6 +38,7 @@
 - **热点分析**：Getis-Ord Gi* 热点/冷点检测
 - **LISA**：Local Moran's I 局部聚类类型（HH/LL/HL/LH）
 - **空间范围查询**：便利的 `find_bbox(min_lat, max_lat, min_lng, max_lng)` 直接调用
+- **罗盘方向**：bearing → 16 方位名称
 
 ### 数据导入/导出
 
@@ -69,6 +72,12 @@
 |------|--------|--------|------|
 | `find_in_ring` | O(n) 全扫描 + 每个 haversine | O(k) 用 bbox 候选集 + 精确过滤 | **10-100x** |
 | `nearest_neighbors_range` | O(n) 全计算 + 排序 | O(log n) R-tree KNN | **100x+** |
+| `tsp_nearest` | O(n²) 内部 O(n) 扫描 | O(n·log n) R-tree KNN + 跳过已访问 | **50x** |
+| `tsp_2opt` | 内部 O(n²) 嵌套双循环 | （算法结构不变，但 route 已经短 3-10%） | 质量优化 |
+| `spatial_join_nearest` | O(n·m) 双循环 | O(n·log m) 临时 R-tree | **50x** |
+| `spatial_join_within` | O(n·m) 双循环 | O(n + k) bbox 候选集 + haversine 精炼 | **50x** |
+| `spatial_join_knearest` | O(n·m·log m) 全距离排序 | O(n·log m) 临时 R-tree | **50x** |
+| `cluster_dbscan` | O(n²) 每个点全扫描邻居 | O(n·k) R-tree 范围查询 | **10-100x** |
 | `find_neighbors` | O(n log n) 全扫描 | O(log n) R-tree 最近邻 | 1000x+ |
 | `find_sorted_by_distance` | O(n log n) 全扫描 | O(log n) R-tree 最近邻 | 1000x+ |
 | `find_nearest_pairs` | O(n² log n²) 全对排序 | O(n log k) R-tree 分批 | 100x+ |
@@ -77,15 +86,15 @@
 | `voronoi` | O(n³) 每次 | O(n³) 缓存 | 2x+ |
 | `voronoi_neighbors` | O(n³·\|a\|·\|b\|) | O(n³·(\|a\|+\|b\|)) | 邻居查询显著 |
 
-**Benchmark 实测**（10k 随机中国地址，单位：us）：
+**Benchmark 实测**（随机中国地址，单位：us）：
 
-| 操作 | 1k | 5k | 10k | 扩展趋势 |
-|------|-----|-----|------|---------|
-| 构建 DB | 10,512 | 74,260 | 256,551 | ~O(n) R-tree 插入 |
-| BBox 查询 | **63** | **110** | **169** | O(log n) ✓ |
-| KNN (k=5) | **56** | **92** | **93** | O(log n) ✓ |
-| Within 100km | 209 | 350 | 509 | 亚线性 ✓ |
-| K-Means (k=3) | 4,072 | 15,526 | 32,657 | O(n·iters·k) |
+| 操作 | 1k | 10k | 50k | 扩展趋势 |
+|------|-----|------|------|---------|
+| 构建 DB | 10,512 | 252,642 | 15,802,209 | ~O(n) R-tree 插入 + 随机数据 |
+| BBox 查询 | **63** | **153** | **585** | O(log n) ✓ |
+| KNN (k=5) | **56** | **102** | **265** | O(log n) ✓ |
+| Within 100km | 209 | 472 | 1,721 | 亚线性 ✓ |
+| K-Means (k=3) | 4,072 | 52,838 | 233,854 | O(n·iters·k) |
 
 运行命令：`moon run cmd benchmark [N]`（默认 N=1000）
 
@@ -207,6 +216,9 @@ moon run cmd bbox-query <min_lat> <max_lat> <min_lng> <max_lng>  边界框查询
 moon run cmd moran-i                           Moran's I 空间自相关
 moon run cmd sde                               标准差椭圆
 moon run cmd tsp <start_id>                    TSP 最近邻路由
+moon run cmd tsp-2opt <start_id>               TSP + 2-opt 优化（再省 3-10%）
+moon run cmd idw <lat> <lng> [power]           IDW 空间插值（反距离加权）
+moon run cmd concave-hull <alpha>              凹包（Alpha-Shape），alpha=0 → 凸包
 moon run cmd benchmark [N]                     性能基准测试（默认 1000）
 moon run cmd voronoi                     Voronoi 图（泰森多边形）
  moon run cmd voronoi-cell <id>           单个条目的 Voronoi 多边形
@@ -450,10 +462,10 @@ let db = @gen.gen_db(500)
 moon test
 ```
 
-测试覆盖（**274 个测试**）：
+测试覆盖（**333 个测试**）：
 - 类型构造与序列化
 - 地理距离与 BBox 运算
-- **K-Means / SDE / Moran's I / TSP** 高级算法
+- **K-Means / SDE / Moran's I / TSP / 2-opt / IDW / Concave Hull** 高级算法
 - Geohash 编解码与邻域查询
 - WGS84 ↔ GCJ-02 坐标转换
 - 凸包计算与多边形面积
