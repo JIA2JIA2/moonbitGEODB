@@ -1223,6 +1223,33 @@ fn run_demo() -> Unit {
   println("  Hull vertices: " + hull.length().to_string())
   println("")
 
+  // Kriging interpolation（普通克里金）
+  println("--- Kriging Interpolation (35N, 115E) ---")
+  let krig_entries = db.all()
+  let krig_pts : Array[@types.GeoPoint] = []
+  let krig_vals : Array[Double] = []
+  for e in krig_entries {
+    krig_pts.push(e.location)
+    krig_vals.push(e.location.lng)
+  }
+  let krig_bins = @geo.empirical_variogram(krig_pts, krig_vals, max_lag_km=None, num_lags=10)
+  let krig_fit = @geo.fit_variogram(krig_bins)
+  println(
+    "  Variogram: range=" + krig_fit.range.to_string() +
+    " km, sill=" + krig_fit.sill.to_string(),
+  )
+  match @geo.ordinary_kriging_knn(
+    krig_pts,
+    krig_vals,
+    @types.GeoPoint::make(35.0, 115.0),
+    krig_fit,
+    k=12,
+  ) {
+    None => println("  Prediction: (insufficient data)")
+    Some(v) => println("  Predicted lng: " + v.to_string() + "°E")
+  }
+  println("")
+
   // Parse-only demonstration
   println("--- Parse-only: '广州市天河区珠江新城华夏路16号' ---")
   let addr = @parser.parse_address(
@@ -1241,6 +1268,7 @@ fn run_demo() -> Unit {
   println("  moon run cmd tsp-2opt guangzhou001")
   println("  moon run cmd kmeans 3")
   println("  moon run cmd idw 35.0 115.0 2.0")
+  println("  moon run cmd kriging 35.0 115.0 12")
   println("  moon run cmd concave-hull 1.5")
   println("  moon run cmd moran-i-knn")
 }
@@ -1312,7 +1340,7 @@ fn run_seed(n : Int) -> Unit {
   println("")
 
   // Save to file.
-  let out_path = "geo_seeded.db"
+  let out_path = "testdata/geo_seeded.db"
   match db.save_to(out_path) {
     Err(e) => println("Error saving to " + out_path + ": " + e)
     Ok(_) =>
@@ -3025,6 +3053,26 @@ fn run_benchmark(n : Int) -> Unit {
   let _mi = db.morans_i_knn_on_lat(k=8)
   let t_mi = @bench.monotonic_clock_end(t7)
   println("  Moran's I KNN:   " + t_mi.to_string() + " us")
+
+  // Kriging: empirical variogram + model fit + KNN interpolation
+  let t8 = @bench.monotonic_clock_start()
+  let kpts : Array[@types.GeoPoint] = []
+  let kvals : Array[Double] = []
+  for e in db.all() {
+    kpts.push(e.location)
+    kvals.push(e.location.lat)
+  }
+  let kbins = @geo.empirical_variogram(kpts, kvals, max_lag_km=None, num_lags=10)
+  let kfit = @geo.fit_variogram(kbins)
+  let _kpred = @geo.ordinary_kriging_knn(
+    kpts,
+    kvals,
+    @types.GeoPoint::make(35.0, 115.0),
+    kfit,
+    k=12,
+  )
+  let t_kriging = @bench.monotonic_clock_end(t8)
+  println("  Kriging KNN:     " + t_kriging.to_string() + " us")
 
   println("  ---")
   let us_per_entry = t_build / n.to_double()

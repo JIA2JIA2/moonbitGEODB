@@ -190,3 +190,24 @@ test "ordinary_kriging - mismatched lengths" {
   let pred = ordinary_kriging(pts, vals, kp(0.0, 0.5), fitted)
   @test.assert_eq(pred, None)
 }
+///|
+/// 测试经验变异函数采样：大 n 时用 max_pairs 上限避免 O(n²)。
+test "empirical_variogram - max_pairs sampling" {
+  let n = 200
+  let pts : Array[@types.GeoPoint] = []
+  let vals : Array[Double] = []
+  let mut i = 0
+  while i < n {
+    pts.push(kp((i % 20).to_double() * 0.1, (i / 20).to_double() * 0.1))
+    vals.push(i.to_double())
+    i = i + 1
+  }
+  // 强制采样（max_pairs 很小）。
+  let bins = empirical_variogram(pts, vals, max_lag_km=None, num_lags=5, max_pairs=500)
+  @test.assert_eq(bins.length() >= 1, true)
+  let mut total_pairs = 0
+  for b in bins {
+    total_pairs = total_pairs + b.num_pairs
+  }
+  @test.assert_eq(total_pairs <= 500, true)
+}

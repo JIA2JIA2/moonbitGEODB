@@ -55,40 +55,55 @@ pub(all) struct LagBin {
 /// 对于每对点 (i, j)，半方差 γ(h) = 0.5 * (z_i - z_j)^2，
 /// 按距离 h 分入 lag_bin 中。
 ///
-/// - max_lag_km: 最大滞后距离（默认取点集最大距离）
+/// - max_lag_km: 最大滞后距离（默认取点集包围盒对角线距离，O(n) 估算）
 /// - num_lags: 滞后数量（默认 10）
+/// - max_pairs: 参与计算的点对数量上限（默认 20000）。
+///   当总点对数超过该值时会随机采样，避免 O(n²) 全量计算；
+///   大 n 时可将复杂度从 O(n²) 降到 O(max_pairs)。
 /// - 返回按 lag_center 排序的 LagBin 数组
 pub fn empirical_variogram(
   points : Array[@types.GeoPoint],
   values : Array[Double],
   max_lag_km? : Double? = None,
   num_lags? : Int = 10,
+  max_pairs? : Int = 20000,
 ) -> Array[LagBin] {
   let n = points.length()
   if n < 2 || values.length() != n {
     return []
   }
   let num_lag = if num_lags > 0 { num_lags } else { 10 }
-  // 计算最大距离
-  let mut max_d = 0.0
-  let mut i = 0
-  while i < n {
-    let mut j = i + 1
-    while j < n {
-      let d = haversine(points[i], points[j])
-      if d > max_d {
-        max_d = d
-      }
-      j = j + 1
-    }
-    i = i + 1
-  }
-  if max_d == 0.0 {
-    return []
-  }
+  // 用 O(n) 包围盒对角线估算默认 max_lag，避免 O(n²) 全量求最大距离。
   let max_lag = match max_lag_km {
     Some(m) => m
-    None => max_d
+    None => {
+      let p0 = points[0]
+      let mut min_lat = p0.lat
+      let mut max_lat = p0.lat
+      let mut min_lng = p0.lng
+      let mut max_lng = p0.lng
+      let mut i = 1
+      while i < n {
+        let p = points[i]
+        if p.lat < min_lat {
+          min_lat = p.lat
+        }
+        if p.lat > max_lat {
+          max_lat = p.lat
+        }
+        if p.lng < min_lng {
+          min_lng = p.lng
+        }
+        if p.lng > max_lng {
+          max_lng = p.lng
+        }
+        i = i + 1
+      }
+      haversine(
+        @types.GeoPoint::make(min_lat, min_lng),
+        @types.GeoPoint::make(max_lat, max_lng),
+      )
+    }
   }
   let lag_width = max_lag / num_lag.to_double()
   if lag_width <= 0.0 {
@@ -103,21 +118,41 @@ pub fn empirical_variogram(
     count.push(0)
     k = k + 1
   }
-  let mut i2 = 0
-  while i2 < n {
-    let mut j2 = i2 + 1
-    while j2 < n {
-      let d = haversine(points[i2], points[j2])
-      let bin_raw = (d / lag_width).to_int()
-      let bin = if bin_raw >= num_lag { num_lag - 1 } else { bin_raw }
-      if bin >= 0 && bin < num_lag {
-        let gamma = 0.5 * (values[i2] - values[j2]) * (values[i2] - values[j2])
-        sum_gamma[bin] = sum_gamma[bin] + gamma
-        count[bin] = count[bin] + 1
-      }
-      j2 = j2 + 1
+  // 内联的 (i, j) 点对累积逻辑
+  fn accumulate_pair(dist : Double, dz : Double) -> Unit {
+    let bin_raw = (dist / lag_width).to_int()
+    let bin = if bin_raw >= num_lag { num_lag - 1 } else { bin_raw }
+    if bin >= 0 && bin < num_lag {
+      sum_gamma[bin] = sum_gamma[bin] + 0.5 * dz * dz
+      count[bin] = count[bin] + 1
     }
-    i2 = i2 + 1
+  }
+  let total_pairs = n * (n - 1) / 2
+  if total_pairs <= max_pairs {
+    // 全量计算所有点对。
+    let mut i = 0
+    while i < n {
+      let mut j = i + 1
+      while j < n {
+        let d = haversine(points[i], points[j])
+        accumulate_pair(d, values[i] - values[j])
+        j = j + 1
+      }
+      i = i + 1
+    }
+  } else {
+    // 随机采样不超过 max_pairs 对（大 n 时从 O(n²) 降到 O(max_pairs)）。
+    let rand = @random.Rand::new()
+    let mut sampled = 0
+    while sampled < max_pairs {
+      let i = rand.int(limit=n)
+      let j = rand.int(limit=n)
+      if i != j {
+        let d = haversine(points[i], points[j])
+        accumulate_pair(d, values[i] - values[j])
+        sampled = sampled + 1
+      }
+    }
   }
   // 构建结果
   let out : Array[LagBin] = []

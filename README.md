@@ -12,12 +12,13 @@ moon run cmd demo
 moon run cmd benchmark 10000
 
 # 完整测试套件
-moon test   # 333/333 passed
+moon test   # 336/336 passed
 
 # 高级空间分析示例
 moon run cmd kmeans 3                      # K-Means 聚类
 moon run cmd tsp-2opt guangzhou001         # TSP + 2-opt 优化
 moon run cmd idw 35.0 115.0 2.0            # IDW 空间插值
+moon run cmd kriging 35.0 115.0 12         # Kriging 克里金插值
 moon run cmd concave-hull 1.5              # 凹包 (Alpha-Shape)
 moon run cmd moran-i-knn                   # Moran's I (KNN 权重)
 moon run cmd sde                           # 标准差椭圆
@@ -47,6 +48,7 @@ moon run cmd dbscan 100.0 3                # DBSCAN 密度聚类
 - **标准差椭圆 (SDE)**：量化方向趋势和离散度（长轴/短轴/旋转角/偏心率）
 - **TSP 最近邻路由 + 2-opt 优化**：贪心启发式 + 边交换改进，通常再省 3-10% 路程
 - **IDW 空间插值**：反距离加权从已知点估算任意位置值（支持全量和 KNN 两种模式）
+- **Kriging 克里金插值**：基于变异函数建模的最优无偏空间插值（球状/指数/高斯模型 + 普通克里金 + KNN 加速）
 - **凹包 (Alpha-Shape)**：基于 Delaunay 三角化的凹多边形边界，比凸包更贴合点云
 - **Moran's I 空间自相关**：反距离加权 + 行标准化，正确落在 [-1,1]
 - **多边形操作**：面积计算（鞋带公式）和点-in-多边形测试（射线法）
@@ -113,17 +115,18 @@ moon run cmd dbscan 100.0 3                # DBSCAN 密度聚类
 
 **Benchmark 实测**（随机中国地址，单位：us。使用 `bulk_insert` 批量构建）：
 
-| 操作 | 1k | 10k | 50k | 扩展趋势 | 实现 |
-|------|-----|------|------|---------|------|
-| **构建 DB** | **9,814** | **125,096** | **1,036,793** | ~O(n) ✓ | bulk_insert + dual-grid |
-| 构建/条目 | 9.8 μs | 12.5 μs | 20.7 μs | 近常数 ✓ | |
-| BBox 查询 | **12** | **222** | **1,317** | O(log n) ✓ | adaptive fine/coarse/R-tree |
-| KNN (k=5) | **62** | **116** | **229** | O(log n) ✓ | R-tree best-first |
-| Within 100km | 23 | 238 | 1,594 | 亚线性 ✓ | unsorted bbox → haversine |
-| K-Means (k=3) | 3,645 | 45,543 | 232,277 | O(n·iters·k) | Forgy 初始化 |
-| **DBSCAN (eps=50km)** | 13,797 | 1,204,204 | 43,103,919 | O(n·k) 扩张 | coarse-grid + merged[] + unsorted |
-| TSP 2-opt | 162,479 | 205,495 | 1,396,182 | O(n·log n + n²·rounds) | R-tree KNN + 2-opt |
-| **Moran's I KNN** | 24,983 | 571,832 | 6,247,435 | **O(n·k·log n) ✓** | 真 R-tree KNN + 行标准化 |
+| 操作 | 1k | 10k | 扩展趋势 | 实现 |
+|------|-----|------|---------|------|
+| **构建 DB** | **10,264** | **124,555** | ~O(n) ✓ | bulk_insert + dual-grid |
+| 构建/条目 | 10.3 μs | 12.5 μs | 近常数 ✓ | |
+| BBox 查询 | **12** | **127** | O(log n) ✓ | adaptive fine/coarse/R-tree |
+| KNN (k=5) | **58** | **110** | O(log n) ✓ | R-tree best-first |
+| Within 100km | 21 | 162 | 亚线性 ✓ | unsorted bbox → haversine |
+| K-Means (k=3) | 3,677 | 88,826 | O(n·iters·k) | Forgy 初始化 |
+| **DBSCAN (eps=50km)** | 10,453 | 925,967 | O(n·k) 扩张 | coarse-grid + merged[] + unsorted |
+| TSP 2-opt | 496,275 | 59,908 | O(n·log n + n²·rounds) | R-tree KNN + 2-opt |
+| **Moran's I KNN** | 23,455 | 599,857 | **O(n·k·log n) ✓** | 真 R-tree KNN + 行标准化 |
+| **Kriging KNN** | **8,177** | **23,079** | O(max_pairs) 采样 | 变异函数 + 普通克里金 |
 
 运行命令：`moon run cmd benchmark [N]`（默认 N=1000）
 
@@ -262,7 +265,9 @@ moon run cmd hotspot-lat                   Getis-Ord Gi* 热点/冷点（纬度�
 moon run cmd hotspot-lng                   Getis-Ord Gi* 热点/冷点（经度）
 moon run cmd lisa-lat                      局部 Moran's I LISA（纬度）
 moon run cmd lisa-lng                      局部 Moran's I LISA（经度）
+moon run cmd kriging <lat> <lng> [k]       Kriging 克里金插值
 moon run cmd clear                 清空所有条目
+moon run cmd help                  显示帮助
 moon run cmd help                  显示帮助
 ```
 
@@ -466,7 +471,7 @@ let entries = @gen.gen_batch(100)
 let db = @gen.gen_db(500)
 
 // 也可以通过 CLI 生成并持久化
-// moon run cmd seed 500  # 自动保存到 geo_seeded.db
+// moon run cmd seed 500  # 自动保存到 testdata/geo_seeded.db
 ```
 
 ## 持久化设计
@@ -493,10 +498,10 @@ let db = @gen.gen_db(500)
 moon test
 ```
 
-测试覆盖（**333 个测试**）：
+测试覆盖（**336 个测试**）：
 - 类型构造与序列化
 - 地理距离与 BBox 运算
-- **K-Means / SDE / Moran's I / TSP / 2-opt / IDW / Concave Hull** 高级算法
+- **K-Means / SDE / Moran's I / TSP / 2-opt / IDW / Concave Hull / Kriging** 高级算法
 - Geohash 编解码与邻域查询
 - WGS84 ↔ GCJ-02 坐标转换
 - 凸包计算与多边形面积
@@ -509,6 +514,20 @@ moon test
 - 地理统计与分布
 - 持久化与恢复
 - 随机地址生成器
+- 变异函数建模与普通克里金插值
+
+## 测试数据
+
+内置随机地址生成器覆盖 **60 个中国主要城市**（含直辖市、省会、地级市），每个城市配备真实行政区划（区/县），可生成多样化的测试数据：
+
+| 类别 | 数量 | 示例 |
+|------|------|------|
+| 城市 | 60 | 北京、上海、广州、深圳、成都、武汉、西安、杭州、南京、重庆、天津、青岛、郑州、长沙、昆明、厦门、珠海、洛阳、保定、西宁、桂林、三亚、包头、徐州、南通、盐城、扬州、泰州、潍坊、临沂、济宁、德州等 |
+| 行政区划 | 每城市 6-10 个 | 海淀区、朝阳区、天河区、锦江区、武侯区等 |
+| 地标/POI 名称 | 100+ | 颐和园、故宫、西湖、兵马俑、鼓浪屿、泰山、张家界等 |
+| 街道名称 | 50+ | 中山路、人民路、解放路、幸福路等 |
+
+运行 `moon run cmd seed 1000` 可快速生成 1000 条随机中国地址用于测试。
 
 ## 许可证
 
