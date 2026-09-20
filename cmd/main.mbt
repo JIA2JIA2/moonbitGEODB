@@ -3008,11 +3008,11 @@ fn run_benchmark(n : Int) -> Unit {
   let t_km = @bench.monotonic_clock_end(t4)
   println("  K-Means (k=3):  " + t_km.to_string() + " us")
 
-  // DBSCAN (eps=200km, min_points=5) — balanced radius with real neighbors
+  // DBSCAN (eps=50km, min_points=5) — realistic urban clustering scale
   let t5 = @bench.monotonic_clock_start()
-  let _dbscan = db.cluster_dbscan(200.0, 5)
+  let _dbscan = db.cluster_dbscan(50.0, 5)
   let t_dbscan = @bench.monotonic_clock_end(t5)
-  println("  DBSCAN (eps200): " + t_dbscan.to_string() + " us")
+  println("  DBSCAN (eps50):  " + t_dbscan.to_string() + " us")
 
   // TSP 2-opt from first entry
   let t6 = @bench.monotonic_clock_start()

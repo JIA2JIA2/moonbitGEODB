@@ -12,16 +12,23 @@
 ///
 /// The index also owns the canonical entry map (id -> GeoEntry) so that
 /// queries can return full records without an extra hop.
+///|
+/// Coarse grid cell size: 0.5° (~55 km). Used for large-range queries
+/// that would otherwise scan hundreds of fine-grid (0.1°) cells.
+pub let coarse_cell_size : Double = 0.5
+
 pub(all) struct Index {
   entries : @hashmap.HashMap[String, @types.GeoEntry]
-  grid : @hashmap.HashMap[Int, Array[String]] // Int key = cell_idx = lat_idx * lng_cells + lng_idx
+  grid : @hashmap.HashMap[Int, Array[String]] // fine grid, cell_size=0.1°
   lng_cells : Int // 360 / cell_size
+  coarse_grid : @hashmap.HashMap[Int, Array[String]] // coarse grid, cell_size=0.5°
+  coarse_lng_cells : Int // 360 / coarse_cell_size
   by_name : @hashmap.HashMap[String, Array[String]]
   by_tag : @hashmap.HashMap[String, Array[String]]
   by_province : @hashmap.HashMap[String, Array[String]]
   by_city : @hashmap.HashMap[String, Array[String]]
   by_district : @hashmap.HashMap[String, Array[String]]
-  cell_size : Double // degrees
+  cell_size : Double // degrees (fine grid size)
   rtree : RTree // R-tree for sub-linear KNN / range queries
   mut cached_bbox : @types.BBox? // cached combined bbox
   mut cached_entries : Array[@types.GeoEntry]? // cached entries snapshot
@@ -35,10 +42,13 @@ pub let default_cell_size : Double = 0.1
 /// Create an empty index with a given grid cell size in degrees.
 pub fn Index::new(cell_size? : Double = default_cell_size) -> Index {
   let lng_cells = math_floor(360.0 / cell_size)
+  let coarse_lng_cells = math_floor(360.0 / coarse_cell_size)
   {
     entries: @hashmap.HashMap([]),
     grid: @hashmap.HashMap([]),
     lng_cells,
+    coarse_grid: @hashmap.HashMap([]),
+    coarse_lng_cells,
     by_name: @hashmap.HashMap([]),
     by_tag: @hashmap.HashMap([]),
     by_province: @hashmap.HashMap([]),
@@ -85,10 +95,16 @@ pub fn Index::insert(self : Index, entry : @types.GeoEntry) -> Unit {
     ignore(self.remove(entry.id))
   }
   self.entries[entry.id] = entry
-  // Spatial grid — Int key avoids string building entirely.
+  // Fine spatial grid.
   let idx = cell_idx(entry.location.lat, entry.location.lng, self.cell_size, self.lng_cells)
   match self.grid.get(idx) {
     None => self.grid[idx] = [entry.id]
+    Some(arr) => arr.push(entry.id)
+  }
+  // Coarse spatial grid for large-range queries.
+  let cidx = cell_idx(entry.location.lat, entry.location.lng, coarse_cell_size, self.coarse_lng_cells)
+  match self.coarse_grid.get(cidx) {
+    None => self.coarse_grid[cidx] = [entry.id]
     Some(arr) => arr.push(entry.id)
   }
   // Name index (lowercased for case-insensitive lookup).
@@ -147,10 +163,16 @@ pub fn Index::bulk_insert(self : Index, entries : Array[@types.GeoEntry]) -> Uni
   // Phase 1: HashMap of entries + all non-spatial indexes in one pass.
   for entry in entries {
     self.entries[entry.id] = entry
-    // Spatial grid — Int key, no string allocation.
+    // Fine spatial grid.
     let idx = cell_idx(entry.location.lat, entry.location.lng, self.cell_size, self.lng_cells)
     match self.grid.get(idx) {
       None => self.grid[idx] = [entry.id]
+      Some(arr) => arr.push(entry.id)
+    }
+    // Coarse spatial grid for large-range queries.
+    let cidx = cell_idx(entry.location.lat, entry.location.lng, coarse_cell_size, self.coarse_lng_cells)
+    match self.coarse_grid.get(cidx) {
+      None => self.coarse_grid[cidx] = [entry.id]
       Some(arr) => arr.push(entry.id)
     }
     // Name.
@@ -215,7 +237,7 @@ pub fn Index::remove(self : Index, id : String) -> @types.GeoEntry? {
     None => None
     Some(entry) => {
       ignore(self.entries.remove(id))
-      // Drop from grid cell.
+      // Drop from fine grid cell.
       let idx = cell_idx(entry.location.lat, entry.location.lng, self.cell_size, self.lng_cells)
       match self.grid.get(idx) {
         Some(arr) => {
@@ -224,6 +246,19 @@ pub fn Index::remove(self : Index, id : String) -> @types.GeoEntry? {
             ignore(self.grid.remove(idx))
           } else {
             self.grid[idx] = filtered
+          }
+        }
+        None => ()
+      }
+      // Drop from coarse grid cell.
+      let cidx = cell_idx(entry.location.lat, entry.location.lng, coarse_cell_size, self.coarse_lng_cells)
+      match self.coarse_grid.get(cidx) {
+        Some(arr) => {
+          let filtered = arr.iter().filter(fn(x) { x != id }).collect()
+          if filtered.length() == 0 {
+            ignore(self.coarse_grid.remove(cidx))
+          } else {
+            self.coarse_grid[cidx] = filtered
           }
         }
         None => ()
@@ -332,10 +367,18 @@ pub fn Index::query_bbox(
   self : Index,
   bbox : @types.BBox,
 ) -> Array[@types.GeoEntry] {
-  let dlat_cells = math_floor((bbox.max_lat - bbox.min_lat) / self.cell_size + 1.0)
-  let dlng_cells = math_floor((bbox.max_lng - bbox.min_lng) / self.cell_size + 1.0)
-  let cell_count = dlat_cells * dlng_cells
-  if cell_count <= 500 {
+  // Choose the grid that covers the bbox in the fewest cells.
+  let fine_dlat = math_floor((bbox.max_lat - bbox.min_lat) / self.cell_size + 1.0)
+  let fine_dlng = math_floor((bbox.max_lng - bbox.min_lng) / self.cell_size + 1.0)
+  let fine_cells = fine_dlat * fine_dlng
+  let coarse_dlat = math_floor((bbox.max_lat - bbox.min_lat) / coarse_cell_size + 1.0)
+  let coarse_dlng = math_floor((bbox.max_lng - bbox.min_lng) / coarse_cell_size + 1.0)
+  let coarse_cells = coarse_dlat * coarse_dlng
+  if coarse_cells <= fine_cells && coarse_cells <= 500 {
+    // Coarse grid path — fewer cells to scan.
+    return self.query_bbox_grid_coarse(bbox)
+  }
+  if fine_cells <= 500 {
     return self.query_bbox_grid(bbox)
   }
   let ids = self.rtree.search(bbox)
@@ -352,7 +395,7 @@ pub fn Index::query_bbox(
   result
 }
 
-///| Grid-based bbox scan. Skip empty cells fast for small bboxes.
+///| Grid-based bbox scan (fine 0.1° cells). Skip empty cells fast.
 fn Index::query_bbox_grid(
   self : Index,
   bbox : @types.BBox,
@@ -368,6 +411,42 @@ fn Index::query_bbox_grid(
     let mut lng = min_lng_idx
     while lng <= max_lng_idx {
       match self.grid.get(base + lng) {
+        Some(ids) =>
+          for id in ids {
+            match self.entries.get(id) {
+              Some(e) =>
+                if @geo.bbox_contains(bbox, e.location) {
+                  result.push(e)
+                }
+              None => ()
+            }
+          }
+        None => ()
+      }
+      lng = lng + 1
+    }
+    lat = lat + 1
+  }
+  result
+}
+
+///| Coarse-grid bbox scan (0.5° cells). Used when the bbox would otherwise
+/// cover hundreds of fine cells (typical for DBSCAN range queries).
+fn Index::query_bbox_grid_coarse(
+  self : Index,
+  bbox : @types.BBox,
+) -> Array[@types.GeoEntry] {
+  let result : Array[@types.GeoEntry] = []
+  let min_lat_idx = math_floor((bbox.min_lat + 90.0) / coarse_cell_size)
+  let max_lat_idx = math_floor((bbox.max_lat + 90.0) / coarse_cell_size)
+  let min_lng_idx = math_floor((bbox.min_lng + 180.0) / coarse_cell_size)
+  let max_lng_idx = math_floor((bbox.max_lng + 180.0) / coarse_cell_size)
+  let mut lat = min_lat_idx
+  while lat <= max_lat_idx {
+    let base = lat * self.coarse_lng_cells
+    let mut lng = min_lng_idx
+    while lng <= max_lng_idx {
+      match self.coarse_grid.get(base + lng) {
         Some(ids) =>
           for id in ids {
             match self.entries.get(id) {
