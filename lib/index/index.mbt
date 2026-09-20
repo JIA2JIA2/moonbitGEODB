@@ -14,7 +14,8 @@
 /// queries can return full records without an extra hop.
 pub(all) struct Index {
   entries : @hashmap.HashMap[String, @types.GeoEntry]
-  grid : @hashmap.HashMap[String, Array[String]]
+  grid : @hashmap.HashMap[Int, Array[String]] // Int key = cell_idx = lat_idx * lng_cells + lng_idx
+  lng_cells : Int // 360 / cell_size
   by_name : @hashmap.HashMap[String, Array[String]]
   by_tag : @hashmap.HashMap[String, Array[String]]
   by_province : @hashmap.HashMap[String, Array[String]]
@@ -33,9 +34,11 @@ pub let default_cell_size : Double = 0.1
 ///|
 /// Create an empty index with a given grid cell size in degrees.
 pub fn Index::new(cell_size? : Double = default_cell_size) -> Index {
+  let lng_cells = math_floor(360.0 / cell_size)
   {
     entries: @hashmap.HashMap([]),
     grid: @hashmap.HashMap([]),
+    lng_cells,
     by_name: @hashmap.HashMap([]),
     by_tag: @hashmap.HashMap([]),
     by_province: @hashmap.HashMap([]),
@@ -66,11 +69,12 @@ fn math_floor(x : Double) -> Int {
 }
 
 ///|
-/// Compute the grid cell key for a geographic point.
-fn cell_key(lat : Double, lng : Double, cell_size : Double) -> String {
+/// Compute the grid cell **integer index** for a geographic point.
+/// cell_idx = lat_idx * lng_cells + lng_idx, fully avoids string building.
+fn cell_idx(lat : Double, lng : Double, cell_size : Double, lng_cells : Int) -> Int {
   let lat_idx = math_floor((lat + 90.0) / cell_size)
   let lng_idx = math_floor((lng + 180.0) / cell_size)
-  "\{lat_idx},\{lng_idx}"
+  lat_idx * lng_cells + lng_idx
 }
 
 ///|
@@ -81,10 +85,10 @@ pub fn Index::insert(self : Index, entry : @types.GeoEntry) -> Unit {
     ignore(self.remove(entry.id))
   }
   self.entries[entry.id] = entry
-  // Spatial grid.
-  let key = cell_key(entry.location.lat, entry.location.lng, self.cell_size)
-  match self.grid.get(key) {
-    None => self.grid[key] = [entry.id]
+  // Spatial grid — Int key avoids string building entirely.
+  let idx = cell_idx(entry.location.lat, entry.location.lng, self.cell_size, self.lng_cells)
+  match self.grid.get(idx) {
+    None => self.grid[idx] = [entry.id]
     Some(arr) => arr.push(entry.id)
   }
   // Name index (lowercased for case-insensitive lookup).
@@ -143,10 +147,10 @@ pub fn Index::bulk_insert(self : Index, entries : Array[@types.GeoEntry]) -> Uni
   // Phase 1: HashMap of entries + all non-spatial indexes in one pass.
   for entry in entries {
     self.entries[entry.id] = entry
-    // Spatial grid.
-    let key = cell_key(entry.location.lat, entry.location.lng, self.cell_size)
-    match self.grid.get(key) {
-      None => self.grid[key] = [entry.id]
+    // Spatial grid — Int key, no string allocation.
+    let idx = cell_idx(entry.location.lat, entry.location.lng, self.cell_size, self.lng_cells)
+    match self.grid.get(idx) {
+      None => self.grid[idx] = [entry.id]
       Some(arr) => arr.push(entry.id)
     }
     // Name.
@@ -212,14 +216,14 @@ pub fn Index::remove(self : Index, id : String) -> @types.GeoEntry? {
     Some(entry) => {
       ignore(self.entries.remove(id))
       // Drop from grid cell.
-      let key = cell_key(entry.location.lat, entry.location.lng, self.cell_size)
-      match self.grid.get(key) {
+      let idx = cell_idx(entry.location.lat, entry.location.lng, self.cell_size, self.lng_cells)
+      match self.grid.get(idx) {
         Some(arr) => {
           let filtered = arr.iter().filter(fn(x) { x != id }).collect()
           if filtered.length() == 0 {
-            ignore(self.grid.remove(key))
+            ignore(self.grid.remove(idx))
           } else {
-            self.grid[key] = filtered
+            self.grid[idx] = filtered
           }
         }
         None => ()
@@ -360,10 +364,10 @@ fn Index::query_bbox_grid(
   let max_lng_idx = math_floor((bbox.max_lng + 180.0) / self.cell_size)
   let mut lat = min_lat_idx
   while lat <= max_lat_idx {
+    let base = lat * self.lng_cells
     let mut lng = min_lng_idx
     while lng <= max_lng_idx {
-      let key = "\{lat},\{lng}"
-      match self.grid.get(key) {
+      match self.grid.get(base + lng) {
         Some(ids) =>
           for id in ids {
             match self.entries.get(id) {

@@ -99,7 +99,8 @@ moon run cmd dbscan 100.0 3                # DBSCAN 密度聚类
 | `spatial_join_nearest` | O(n·m) 双循环 | O(n·log m) 临时 R-tree | **50x** |
 | `spatial_join_within` | O(n·m) 双循环 | O(n + k) bbox 候选集 + haversine 精炼 | **50x** |
 | `spatial_join_knearest` | O(n·m·log m) 全距离排序 | O(n·log m) 临时 R-tree | **50x** |
-| `cluster_dbscan` | O(n²) 每个点全扫描邻居 | O(n·k) R-tree 范围查询 | **10-100x** |
+| `cluster_dbscan` | O(n²) 每个点全扫描邻居 | O(n·k) R-tree 范围查询 + `HashMap[Int]` grid | **10-100x** |
+| **grid 层** | `HashMap[String]` 每次插值 `"\{lat},\{lng}"` | `HashMap[Int]` `lat*lng_cells+lng` 直接索引 | **5-10x** (DBSCAN/range) |
 | `bulk_insert` (insert 批量) | 每条目 HashMap 重复查找 + R-tree 逐步插入 | 一次性构建 + R-tree 集中插入 | **5-20x** |
 | `morans_i_knn` | O(n²) 全 n×n 距离矩阵 | O(n·k·log n) 仅 k 最近邻 | **10x+ (大 n)** |
 | `find_neighbors` | O(n log n) 全扫描 | O(log n) R-tree 最近邻 | 1000x+ |
@@ -114,15 +115,15 @@ moon run cmd dbscan 100.0 3                # DBSCAN 密度聚类
 
 | 操作 | 1k | 10k | 50k | 扩展趋势 | 实现 |
 |------|-----|------|------|---------|------|
-| **构建 DB** | **10,072** | **128,573** | **1,092,653** | ~O(n) ✓ | bulk_insert |
-| 构建/条目 | 10.1 μs | 12.9 μs | 21.9 μs | 近常数 ✓ | |
-| BBox 查询 | **62** | **182** | **821** | O(log n) ✓ | adaptive grid/R-tree |
-| KNN (k=5) | **49** | **76** | **134** | O(log n) ✓ | R-tree best-first |
-| Within 100km | 209 | 535 | 2,075 | 亚线性 ✓ | unsorted bbox → haversine |
-| K-Means (k=3) | 4,517 | 55,032 | 89,737 | O(n·iters·k) | Forgy 初始化 |
-| TSP 2-opt | 177,743 | 166,961 | 1,735,334 | O(n·log n + n²·rounds) | R-tree KNN + 2-opt |
-| DBSCAN (eps=100) | 195,047 | 3,222,523 | 59,930,541 | ~O(n·k) 扩张 | R-tree range + merged flag |
-| **Moran's I KNN** | 21,880 | 502,971 | 4,689,987 | **O(n·k·log n) ✓** | 真 R-tree KNN + 行标准化 |
+| **构建 DB** | **9,671** | **121,276** | **1,138,188** | ~O(n) ✓ | bulk_insert + HashMap[Int] grid |
+| 构建/条目 | 9.7 μs | 12.1 μs | 22.8 μs | 近常数 ✓ | |
+| BBox 查询 | **11** | **112** | **751** | O(log n) ✓ | adaptive grid/R-tree |
+| KNN (k=5) | **45** | **74** | **297** | O(log n) ✓ | R-tree best-first |
+| Within 100km | 33 | 324 | 1,881 | 亚线性 ✓ | unsorted bbox → haversine |
+| K-Means (k=3) | 7,150 | 38,551 | 196,753 | O(n·iters·k) | Forgy 初始化 |
+| **DBSCAN (eps=200km)** | 29,049 | 3,450,266 | 117,984,041 | O(n·k) 扩张 | HashMap[Int] + merged[] + unsorted |
+| TSP 2-opt | 62,708 | 308,685 | 1,972,264 | O(n·log n + n²·rounds) | R-tree KNN + 2-opt |
+| **Moran's I KNN** | 22,133 | 446,180 | 6,658,572 | **O(n·k·log n) ✓** | 真 R-tree KNN + 行标准化 |
 
 运行命令：`moon run cmd benchmark [N]`（默认 N=1000）
 
