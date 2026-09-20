@@ -322,8 +322,34 @@ pub fn Index::iter(self : Index) -> Iter[@types.GeoEntry] {
 
 ///|
 /// Range query: return all entries whose location lies inside `bbox`.
-/// Uses the grid to limit the scan to overlapping cells.
+/// **Adaptive**: picks grid for small bboxes (skip empty cells fast),
+/// R-tree for large bboxes (O(log n + k) traversal). Threshold = 64 cells.
 pub fn Index::query_bbox(
+  self : Index,
+  bbox : @types.BBox,
+) -> Array[@types.GeoEntry] {
+  let dlat_cells = math_floor((bbox.max_lat - bbox.min_lat) / self.cell_size + 1.0)
+  let dlng_cells = math_floor((bbox.max_lng - bbox.min_lng) / self.cell_size + 1.0)
+  let cell_count = dlat_cells * dlng_cells
+  if cell_count <= 500 {
+    return self.query_bbox_grid(bbox)
+  }
+  let ids = self.rtree.search(bbox)
+  let result : Array[@types.GeoEntry] = []
+  for id in ids {
+    match self.entries.get(id) {
+      Some(e) =>
+        if @geo.bbox_contains(bbox, e.location) {
+          result.push(e)
+        }
+      None => ()
+    }
+  }
+  result
+}
+
+///| Grid-based bbox scan. Skip empty cells fast for small bboxes.
+fn Index::query_bbox_grid(
   self : Index,
   bbox : @types.BBox,
 ) -> Array[@types.GeoEntry] {
@@ -779,6 +805,31 @@ pub fn Index::find_within_distance(
   point : @types.GeoPoint,
   max_km : Double,
 ) -> Array[(@types.GeoEntry, Double)] {
+  let results = self.find_within_distance_unsorted(point, max_km)
+  results.sort_by(fn(a, b) {
+    if a.1 < b.1 {
+      -1
+    } else if a.1 > b.1 {
+      1
+    } else {
+      0
+    }
+  })
+  results
+}
+
+///| Like `find_within_distance` but skips the final sort.
+/// Callers that don't need sorted results (e.g. DBSCAN range queries)
+/// should prefer this for significant O(k·log k) savings per call.
+///
+/// Uses bbox_around → adaptive grid/R-tree search → haversine refine.
+/// The grid path wins for sparse data (skips empty cells); R-tree wins
+/// for dense data. See `Index::query_bbox` for the choice logic.
+pub fn Index::find_within_distance_unsorted(
+  self : Index,
+  point : @types.GeoPoint,
+  max_km : Double,
+) -> Array[(@types.GeoEntry, Double)] {
   let bbox = @geo.bbox_around(point, max_km)
   let candidates = self.query_bbox(bbox)
   let pairs : Array[(@types.GeoEntry, Double)] = []
@@ -788,15 +839,6 @@ pub fn Index::find_within_distance(
       pairs.push((e, d))
     }
   }
-  pairs.sort_by(fn(a, b) {
-    if a.1 < b.1 {
-      -1
-    } else if a.1 > b.1 {
-      1
-    } else {
-      0
-    }
-  })
   pairs
 }
 

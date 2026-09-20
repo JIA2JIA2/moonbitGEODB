@@ -2446,9 +2446,7 @@ pub fn GeoDB::cluster_dbscan(
 ) -> Array[Array[String]] {
   let entries = self.all()
   let n = entries.length()
-  if n == 0 {
-    return []
-  }
+  if n == 0 { return [] }
   // Build id → index map once for O(1) reverse lookup from R-tree results.
   let id_to_idx : @hashmap.HashMap[String, Int] = @hashmap.HashMap([])
   let mut mi = 0
@@ -2458,10 +2456,12 @@ pub fn GeoDB::cluster_dbscan(
   }
   let visited : Array[Bool] = []
   let clustered : Array[Bool] = []
+  let merged : Array[Bool] = []
   let mut i = 0
   while i < n {
     visited.push(false)
     clustered.push(false)
+    merged.push(false)
     i = i + 1
   }
   let clusters : Array[Array[String]] = []
@@ -2471,25 +2471,19 @@ pub fn GeoDB::cluster_dbscan(
       visited[i] = true
       let neighbors = dbscan_range_query_idx(self, entries[i].location, eps_km, id_to_idx)
       if neighbors.length() >= min_points - 1 {
-        // Expand cluster.
-        let cluster : Array[String] = [entries[i].id]
+        // Expand cluster. Use merged[] so inner loop is O(1) membership check,
+        // avoiding the previous O(k²) merge.
         let mut seed = 0
         while seed < neighbors.length() {
           let j = neighbors[seed]
+          // DBSCAN standard optimization: skip range query for already-visited points.
           if !visited[j] {
             visited[j] = true
             let j_neighbors = dbscan_range_query_idx(self, entries[j].location, eps_km, id_to_idx)
             if j_neighbors.length() >= min_points - 1 {
-              // Merge j_neighbors into neighbors list.
               for k in j_neighbors {
-                let mut found = false
-                for existing in neighbors {
-                  if existing == k {
-                    found = true
-                    break
-                  }
-                }
-                if !found {
+                if !merged[k] && k != i {
+                  merged[k] = true
                   neighbors.push(k)
                 }
               }
@@ -2497,13 +2491,15 @@ pub fn GeoDB::cluster_dbscan(
           }
           if !clustered[j] {
             clustered[j] = true
-            cluster.push(entries[j].id)
           }
           seed = seed + 1
         }
-        if !clustered[i] {
-          clustered[i] = true
-          cluster.push(entries[i].id)
+        // Build cluster from merged flag array.
+        let cluster : Array[String] = [entries[i].id]
+        clustered[i] = true
+        for ni in neighbors {
+          clustered[ni] = true
+          cluster.push(entries[ni].id)
         }
         clusters.push(cluster)
       }
@@ -2650,7 +2646,8 @@ fn dbscan_range_query_idx(
   id_to_idx : @hashmap.HashMap[String, Int],
 ) -> Array[Int] {
   let results : Array[Int] = []
-  let pairs = db.find_within_distance(center, eps_km)
+  // Skip the sort — DBSCAN only needs the set of neighbors, no order.
+  let pairs = db.index.find_within_distance_unsorted(center, eps_km)
   for (e, _) in pairs {
     match id_to_idx.get(e.id) {
       Some(idx) => results.push(idx)
@@ -3431,28 +3428,64 @@ pub fn GeoDB::morans_i(
   @geo.morans_i(pts, values)
 }
 
-///| K-nearest-neighbor-weighted Moran's I. O(n·k·log n), faster on large DBs.
+///| K-nearest-neighbor-weighted Moran's I.
+/// Uses R-tree KNN lookups — true O(n·k·log n), much faster than the
+/// O(n²) full-matrix version on large datasets. Weights are row-standardized
+/// (1/k per neighbor) so the I value is directly comparable to `morans_i`.
 pub fn GeoDB::morans_i_knn(
   self : GeoDB,
   values : Array[Double],
   k? : Int = 8,
 ) -> @geo.MoranIResult? {
   let entries = self.all()
-  let pts : Array[@types.GeoPoint] = []
-  for e in entries { pts.push(e.location) }
-  @geo.morans_i_knn(pts, values, k~)
+  let n = entries.length()
+  if n < 3 || values.length() != n { return None }
+  let nf = n.to_double()
+  let k_eff = if k < n - 1 { k } else { n - 1 }
+  // Build id → index map so we can map KNN results back to rows.
+  let id_to_idx : @hashmap.HashMap[String, Int] = @hashmap.HashMap([])
+  let mut i = 0
+  while i < n { id_to_idx[entries[i].id] = i; i = i + 1 }
+  // Mean-center values.
+  let mut sum_v = 0.0
+  for v in values { sum_v = sum_v + v }
+  let mean_v = sum_v / nf
+  let z : Array[Double] = []
+  for v in values { z.push(v - mean_v) }
+  let mut denom = 0.0
+  for zi in z { denom = denom + zi * zi }
+  if denom == 0.0 { return None }
+  // For each entry, query R-tree KNN in O(k·log n).
+  let mut num = 0.0
+  i = 0
+  while i < n {
+    // ask k+1 so we can skip self (always returned first).
+    let knn = self.index.query_nearest(entries[i].location, k_eff + 1)
+    let mut cnt = 0
+    for (e, _d) in knn {
+      if cnt >= k_eff { break }
+      if e.id == entries[i].id { continue }
+      match id_to_idx.get(e.id) {
+        None => ()
+        Some(j) => {
+          num = num + (1.0 / k_eff.to_double()) * z[i] * z[j]
+          cnt = cnt + 1
+        }
+      }
+    }
+    i = i + 1
+  }
+  let index = num / denom
+  let expected = -1.0 / (nf - 1.0)
+  Some({ index, expected, n })
 }
 
-///| KNN Moran's I on latitude attribute.
+///| KNN Moran's I on latitude attribute. True O(n·k·log n).
 pub fn GeoDB::morans_i_knn_on_lat(self : GeoDB, k? : Int = 8) -> @geo.MoranIResult? {
   let entries = self.all()
-  let pts : Array[@types.GeoPoint] = []
   let vals : Array[Double] = []
-  for e in entries {
-    pts.push(e.location)
-    vals.push(e.location.lat)
-  }
-  @geo.morans_i_knn(pts, vals, k~)
+  for e in entries { vals.push(e.location.lat) }
+  self.morans_i_knn(vals, k~)
 }
 
 ///| Convenience: compute Moran's I where the attribute value is simply

@@ -3008,6 +3008,24 @@ fn run_benchmark(n : Int) -> Unit {
   let t_km = @bench.monotonic_clock_end(t4)
   println("  K-Means (k=3):  " + t_km.to_string() + " us")
 
+  // DBSCAN (eps=100km, min_points=3)
+  let t5 = @bench.monotonic_clock_start()
+  let _dbscan = db.cluster_dbscan(100.0, 3)
+  let t_dbscan = @bench.monotonic_clock_end(t5)
+  println("  DBSCAN (eps100): " + t_dbscan.to_string() + " us")
+
+  // TSP 2-opt from first entry
+  let t6 = @bench.monotonic_clock_start()
+  let _tsp = db.tsp_2opt(db.all()[0].id)
+  let t_tsp = @bench.monotonic_clock_end(t6)
+  println("  TSP 2-opt:       " + t_tsp.to_string() + " us")
+
+  // Moran's I KNN on latitude
+  let t7 = @bench.monotonic_clock_start()
+  let _mi = db.morans_i_knn_on_lat(k=8)
+  let t_mi = @bench.monotonic_clock_end(t7)
+  println("  Moran's I KNN:   " + t_mi.to_string() + " us")
+
   println("  ---")
   let us_per_entry = t_build / n.to_double()
   println("  Build per entry: " + us_per_entry.to_string() + " us")
