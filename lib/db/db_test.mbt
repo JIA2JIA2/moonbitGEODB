@@ -2366,6 +2366,109 @@ test "GeoDB::cluster_dbscan groups close points together" {
 }
 
 ///|
+/// Build 3 known clusters of 8 points each, packed inside ~10 km
+/// (±0.05° box), centered on Beijing / Shanghai / Guangzhou.
+/// Cities are 1000+ km apart so no cross-cluster neighbors exist.
+fn build_three_cluster_db() -> GeoDB {
+  let db = GeoDB::in_memory()
+  let centers : Array[(String, Double, Double)] = [
+    ("bj", 39.9, 116.4),
+    ("sh", 31.2, 121.5),
+    ("gz", 23.1, 113.3),
+  ]
+  let offsets : Array[(Double, Double)] = [
+    (0.00, 0.00), (0.02, 0.01), (-0.02, 0.02), (0.01, -0.03),
+    (-0.03, -0.01), (0.03, 0.03), (-0.01, 0.04), (0.04, -0.02),
+  ]
+  for (prefix, clat, clng) in centers {
+    let mut i = 0
+    while i < 8 {
+      let (dlat, dlng) = offsets[i]
+      db.insert(
+        make_entry_with_addr(
+          prefix + i.to_string(),
+          prefix + i.to_string(),
+          clat + dlat,
+          clng + dlng,
+          "",
+          "",
+          "",
+          [],
+        ),
+      )
+      i = i + 1
+    }
+  }
+  db
+}
+
+///|
+test "GeoDB::cluster_dbscan finds exactly 3 known clusters" {
+  let db = build_three_cluster_db()
+  @test.assert_eq(db.size(), 24)
+  let clusters = db.cluster_dbscan(50.0, 5)
+  @test.assert_eq(clusters.length(), 3)
+  // Every cluster must have exactly 8 members sharing a city prefix.
+  for c in clusters {
+    @test.assert_eq(c.length(), 8)
+    let prefix = c[0].substring(start=0, end=2)
+    for id in c {
+      @test.assert_eq(id.substring(start=0, end=2), prefix)
+    }
+  }
+}
+
+///|
+test "GeoDB::cluster_dbscan marks isolated points as noise (no false clusters)" {
+  let db = build_three_cluster_db()
+  // Two far-away isolated points, >50 km from anything.
+  db.insert(make_entry_with_addr("n1", "N1", 45.0, 90.0, "", "", "", []))
+  db.insert(make_entry_with_addr("n2", "N2", 28.0, 100.0, "", "", "", []))
+  let clusters = db.cluster_dbscan(50.0, 5)
+  @test.assert_eq(clusters.length(), 3)
+  // Noise points must not appear in any cluster.
+  for c in clusters {
+    for id in c {
+      @test.assert_eq(id != "n1" && id != "n2", true)
+    }
+  }
+}
+
+///|
+test "GeoDB::kmeans separates the 3 known clusters" {
+  let db = build_three_cluster_db()
+  let result = db.kmeans(3)
+  @test.assert_eq(result.length(), 3)
+  // Map each entry id to its cluster index.
+  let cluster_of : @hashmap.HashMap[String, Int] = @hashmap.HashMap([])
+  let mut ci = 0
+  for cl in result {
+    for e in cl.members {
+      cluster_of[e.id] = ci
+    }
+    ci = ci + 1
+  }
+  // All 8 points of each city must share one cluster index.
+  for prefix in ["bj", "sh", "gz"] {
+    let mut expected : Int = -1
+    let mut i = 0
+    while i < 8 {
+      let id = prefix + i.to_string()
+      match cluster_of.get(id) {
+        Some(idx) =>
+          if expected < 0 {
+            expected = idx
+          } else {
+            @test.assert_eq(idx, expected)
+          }
+        None => @test.fail("missing " + id)
+      }
+      i = i + 1
+    }
+  }
+}
+
+///|
 test "GeoDB::radial_density counts entries by ring" {
   let db = GeoDB::in_memory()
   let center = @types.GeoPoint::make(0.0, 0.0)

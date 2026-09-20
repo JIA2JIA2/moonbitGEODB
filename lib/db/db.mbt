@@ -2456,12 +2456,10 @@ pub fn GeoDB::cluster_dbscan(
   }
   let visited : Array[Bool] = []
   let clustered : Array[Bool] = []
-  let merged : Array[Bool] = []
   let mut i = 0
   while i < n {
     visited.push(false)
     clustered.push(false)
-    merged.push(false)
     i = i + 1
   }
   let clusters : Array[Array[String]] = []
@@ -2469,37 +2467,41 @@ pub fn GeoDB::cluster_dbscan(
   while i < n {
     if !visited[i] {
       visited[i] = true
-      let neighbors = dbscan_range_query_idx(self, entries[i].location, eps_km, id_to_idx)
-      if neighbors.length() >= min_points - 1 {
-        // Expand cluster. Use merged[] so inner loop is O(1) membership check,
-        // avoiding the previous O(k²) merge.
+      let raw_neighbors = dbscan_range_query_idx(self, entries[i].location, eps_km, id_to_idx)
+      if raw_neighbors.length() >= min_points - 1 {
+        // Core point — expand cluster. clustered[] doubles as the global
+        // "already assigned to a cluster" guard AND the per-cluster queue
+        // dedup set, so initial neighbors and expansion-added points can
+        // never be enqueued twice or stolen from an earlier cluster.
+        clustered[i] = true
+        let queue : Array[Int] = []
+        for k in raw_neighbors {
+          if !clustered[k] {
+            clustered[k] = true
+            queue.push(k)
+          }
+        }
         let mut seed = 0
-        while seed < neighbors.length() {
-          let j = neighbors[seed]
-          // DBSCAN standard optimization: skip range query for already-visited points.
+        while seed < queue.length() {
+          let j = queue[seed]
+          // DBSCAN standard optimization: skip range query for visited points.
           if !visited[j] {
             visited[j] = true
             let j_neighbors = dbscan_range_query_idx(self, entries[j].location, eps_km, id_to_idx)
             if j_neighbors.length() >= min_points - 1 {
               for k in j_neighbors {
-                if !merged[k] && k != i {
-                  merged[k] = true
-                  neighbors.push(k)
+                if !clustered[k] {
+                  clustered[k] = true
+                  queue.push(k)
                 }
               }
             }
           }
-          if !clustered[j] {
-            clustered[j] = true
-          }
           seed = seed + 1
         }
-        // Build cluster from merged flag array.
         let cluster : Array[String] = [entries[i].id]
-        clustered[i] = true
-        for ni in neighbors {
-          clustered[ni] = true
-          cluster.push(entries[ni].id)
+        for k in queue {
+          cluster.push(entries[k].id)
         }
         clusters.push(cluster)
       }
@@ -3754,11 +3756,30 @@ pub fn GeoDB::tsp_2opt(
       if n < 4 {
         return Some((route, total))
       }
-      // Helper: haversine between route indices i and j.
-      let dist_between = fn(i : Int, j : Int) -> Double {
-        let ei = id_to_entry.get(ids[i]).unwrap()
-        let ej = id_to_entry.get(ids[j]).unwrap()
-        @geo.haversine(ei.location, ej.location)
+      // Route-ordered coordinate arrays: O(1) access with no HashMap lookup
+      // in the hot O(n²) inner loop.
+      let plat : Array[Double] = []
+      let plng : Array[Double] = []
+      for id in ids {
+        let e = id_to_entry.get(id).unwrap()
+        plat.push(e.location.lat)
+        plng.push(e.location.lng)
+      }
+      let direct_dist = fn(i : Int, j : Int) -> Double {
+        @geo.haversine(
+          @types.GeoPoint::make(plat[i], plng[i]),
+          @types.GeoPoint::make(plat[j], plng[j]),
+        )
+      }
+      // Adjacent edge lengths, refreshed once per round (O(n) haversines,
+      // negligible vs the O(n²) sweep) and patched on every accepted swap.
+      // This makes d_before a pure array read: 2 fewer haversine calls per
+      // candidate (half the trig work) compared to recomputing 4 distances.
+      let edge : Array[Double] = []
+      let mut e = 0
+      while e < n - 1 {
+        edge.push(direct_dist(e, e + 1))
+        e = e + 1
       }
       // 2-opt main loop.
       let mut improved = true
@@ -3773,8 +3794,8 @@ pub fn GeoDB::tsp_2opt(
           let mut j = i + 2
           while j < n - 1 {
             // Try reversing ids[i+1 .. j].
-            let d_before = dist_between(i, i + 1) + dist_between(j, j + 1)
-            let d_after = dist_between(i, j) + dist_between(i + 1, j + 1)
+            let d_before = edge[i] + edge[j]
+            let d_after = direct_dist(i, j) + direct_dist(i + 1, j + 1)
             if d_after < d_before - 0.000001 {
               // Reverse the sub-path.
               let mut lo = i + 1
@@ -3783,9 +3804,30 @@ pub fn GeoDB::tsp_2opt(
                 let tmp = ids[lo]
                 ids[lo] = ids[hi]
                 ids[hi] = tmp
+                // Keep coordinate arrays in route order as well.
+                let tlat = plat[lo]
+                plat[lo] = plat[hi]
+                plat[hi] = tlat
+                let tlng = plng[lo]
+                plng[lo] = plng[hi]
+                plng[hi] = tlng
                 lo = lo + 1
                 hi = hi - 1
               }
+              // Inner edge lengths are permuted (reversed), not changed:
+              // new_edge[i+1+j-k] = old_edge[k] for k in [i+1, j-1].
+              let mut elo = i + 1
+              let mut ehi = j - 1
+              while elo < ehi {
+                let te = edge[elo]
+                edge[elo] = edge[ehi]
+                edge[ehi] = te
+                elo = elo + 1
+                ehi = ehi - 1
+              }
+              // Patch the two boundary edges.
+              edge[i] = direct_dist(i, i + 1)
+              edge[j] = direct_dist(j, j + 1)
               improved = true
             }
             j = j + 1

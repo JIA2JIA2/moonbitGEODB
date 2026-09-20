@@ -12,7 +12,7 @@ moon run cmd demo
 moon run cmd benchmark 10000
 
 # 完整测试套件
-moon test   # 336/336 passed
+moon test   # 339/339 passed
 
 # 高级空间分析示例
 moon run cmd kmeans 3                      # K-Means 聚类
@@ -22,7 +22,7 @@ moon run cmd kriging 35.0 115.0 12         # Kriging 克里金插值
 moon run cmd concave-hull 1.5              # 凹包 (Alpha-Shape)
 moon run cmd moran-i-knn                   # Moran's I (KNN 权重)
 moon run cmd sde                           # 标准差椭圆
-moon run cmd dbscan 100.0 3                # DBSCAN 密度聚类
+moon run cmd dbscan 50.0 3                 # DBSCAN 密度聚类（61 POI → 13 城市簇）
 ```
 
 ## 特性
@@ -97,7 +97,8 @@ moon run cmd dbscan 100.0 3                # DBSCAN 密度聚类
 | `find_in_ring` | O(n) 全扫描 + 每个 haversine | O(k) 用 bbox 候选集 + 精确过滤 | **10-100x** |
 | `nearest_neighbors_range` | O(n) 全计算 + 排序 | O(log n) R-tree KNN | **100x+** |
 | `tsp_nearest` | O(n²) 内部 O(n) 扫描 | O(n·log n) R-tree KNN + 跳过已访问 | **50x** |
-| `tsp_2opt` | 内部 O(n²) 嵌套双循环 | （算法结构不变，但 route 已经短 3-10%） | 质量优化 |
+| `tsp_2opt` | 内部 O(n²) 嵌套双循环 + 每候选 4 次 HashMap+haversine | 路线坐标/edge 邻接数组，d_before 零三角函数、零 HashMap | **10-30x** |
+| `cluster_dbscan` (正确性) | 初始邻居未入去重集合 → 同一点重复入队、簇膨胀、额外扩张 | `clustered[]` 统一归属/去重，初始邻居先标记再入队 | 正确性 + **1.7x** 速度 |
 | `spatial_join_nearest` | O(n·m) 双循环 | O(n·log m) 临时 R-tree | **50x** |
 | `spatial_join_within` | O(n·m) 双循环 | O(n + k) bbox 候选集 + haversine 精炼 | **50x** |
 | `spatial_join_knearest` | O(n·m·log m) 全距离排序 | O(n·log m) 临时 R-tree | **50x** |
@@ -115,18 +116,18 @@ moon run cmd dbscan 100.0 3                # DBSCAN 密度聚类
 
 **Benchmark 实测**（随机中国地址，单位：us。使用 `bulk_insert` 批量构建）：
 
-| 操作 | 1k | 10k | 扩展趋势 | 实现 |
-|------|-----|------|---------|------|
-| **构建 DB** | **10,264** | **125,640** | ~O(n) ✓ | bulk_insert + dual-grid |
-| 构建/条目 | 10.3 μs | 12.6 μs | 近常数 ✓ | |
-| BBox 查询 | **12** | **62** | O(log n) ✓ | adaptive fine/coarse/R-tree |
-| KNN (k=5) | **58** | **80** | O(log n) ✓ | R-tree best-first |
-| Within 100km | 21 | 71 | 亚线性 ✓ | unsorted bbox → haversine |
-| K-Means (k=3) | 3,677 | 131,472 | O(n·iters·k) | Forgy 初始化 |
-| **DBSCAN (eps=50km)** | 10,453 | 582,612 | O(n·k) 扩张 | coarse-grid + merged[] + unsorted |
-| TSP 2-opt | 496,275 | 155,524 | O(n·log n + n²·rounds) | R-tree KNN + 2-opt |
-| **Moran's I KNN** | 23,455 | 511,178 | **O(n·k·log n) ✓** | 真 R-tree KNN + 行标准化 |
-| **Kriging KNN** | **8,177** | **21,330** | O(max_pairs) 采样 | 变异函数 + 普通克里金 |
+| 操作 | 1k | 10k | 50k | 扩展趋势 | 实现 |
+|------|-----|------|------|---------|------|
+| **构建 DB** | **10,021** | **126,445** | **1,158,282** | ~O(n) ✓ | bulk_insert + dual-grid |
+| 构建/条目 | 10.0 μs | 12.6 μs | 23.2 μs | 近常数 ✓ | |
+| BBox 查询 | **6** | **72** | **404** | O(log n) ✓ | adaptive fine/coarse/R-tree |
+| KNN (k=5) | **43** | **80** | **413** | O(log n) ✓ | R-tree best-first |
+| Within 100km | 9 | 75 | 448 | 亚线性 ✓ | unsorted bbox → haversine |
+| K-Means (k=3) | 4,380 | 67,420 | 825,604 | O(n·iters·k) | Forgy 初始化 |
+| **DBSCAN (eps=50km)** | 7,372 | 573,868 | 18,532,979 | O(n·k) 扩张 | clustered[] 去重队列 |
+| TSP 2-opt | **49,548** | **32,834** | **295,680** | O(n²·rounds)，实测亚线性 | edge 数组 + 0 HashMap |
+| **Moran's I KNN** | 27,748 | 508,039 | 7,930,059 | **O(n·k·log n) ✓** | 真 R-tree KNN + 行标准化 |
+| **Kriging (k=12)** | 8,184 | 20,752 | 104,254 | O(n·log n + k²) | R-tree KNN + 变异函数 |
 
 运行命令：`moon run cmd benchmark [N]`（默认 N=1000）
 
@@ -498,7 +499,7 @@ let db = @gen.gen_db(500)
 moon test
 ```
 
-测试覆盖（**336 个测试**）：
+测试覆盖（**339 个测试**）：
 - 类型构造与序列化
 - 地理距离与 BBox 运算
 - **K-Means / SDE / Moran's I / TSP / 2-opt / IDW / Concave Hull / Kriging** 高级算法
@@ -518,7 +519,31 @@ moon test
 
 ## 测试数据
 
-内置随机地址生成器覆盖 **112 个中国主要城市**（含直辖市、省会、地级市），每个城市配备真实行政区划（区/县），可生成多样化的测试数据：
+### 1. 内置精选演示数据集（61 个真实 POI）
+
+`moon run cmd demo` 使用 `build_sample_db()` 内置 **61 个真实中国地标 POI**，按 14 个城市分组，天然具有城市级聚类结构，可直接验证 K-Means / DBSCAN / TSP / Moran's I：
+
+| 城市 | POI 数 | 代表地标 |
+|------|--------|----------|
+| 北京 | 11 | 故宫、天安门、天坛、颐和园、八达岭、鸟巢、水立方、798 |
+| 上海 | 8 | 东方明珠、外滩、豫园、南京路、迪士尼、上海中心 |
+| 广州 | 5 | 广州塔、陈家祠、越秀公园、白云山、沙面 |
+| 深圳 | 5 | 平安金融中心、世界之窗、欢乐谷、莲花山、大梅沙 |
+| 成都 | 5 | 宽窄巷子、锦里、武侯祠、熊猫基地、都江堰 |
+| 重庆 | 5 | 解放碑、洪崖洞、南山、磁器口、武隆 |
+| 杭州 | 4 | 西湖、灵隐寺、西溪湿地、千岛湖 |
+| 南京 | 3 | 中山陵、夫子庙、南京博物院 |
+| 武汉 | 3 | 黄鹤楼、东湖、武汉大学 |
+| 西安 | 3 | 大雁塔、兵马俑、西安城墙 |
+| 天津 | 3 | 天津之眼、古文化街、五大道 |
+| 青岛 | 3 | 栈桥、崂山、八大关 |
+| 昆明 | 3 | 滇池、翠湖、西山 |
+
+每条数据都包含 **id（城市前缀-地标拼音）、中文名、精确经纬度、完整中文地址**（精确到省/市/区/街道/门牌号）。
+
+### 2. 随机地址生成器（112 城）
+
+内置随机地址生成器覆盖 **112 个中国主要城市**（含直辖市、省会、地级市），每个城市配备真实行政区划（区/县），可生成大规模性能测试数据：
 
 | 类别 | 数量 | 示例 |
 |------|------|------|

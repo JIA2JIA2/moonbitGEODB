@@ -175,11 +175,12 @@ fn build_usage() -> String {
   let s80 = s79 + "  moon run cmd cluster 5.0\n"
   let s81 = s80 + "  moon run cmd ring-query 39.9 116.4 1.0 5.0\n"
   let s82 = s81 + "  moon run cmd distance-histogram 39.9 116.4 50.0 10\n"
-  let s83 = s82 + "  moon run cmd nn-range yhy001 5\n"
+  let s83 = s82 + "  moon run cmd nn-range bj-yiheyuan 5\n"
   let s84 = s83 + "  moon run cmd morans-i-lat\n"
   let s85 = s84 + "  moon run cmd hotspot-lat\n"
   let s86 = s85 + "  moon run cmd lisa-lat\n"
-  s86
+  let s87 = s86 + "  moon run cmd dbscan 50.0 3\n"
+  s87
 }
 
 ///|
@@ -612,6 +613,25 @@ fn main {
       1.0
     }
     run_cluster(cell_size)
+    return
+  }
+
+  if cmd == "dbscan" {
+    let eps = if args.length() > 2 {
+      @string.parse_double(args.get(2).unwrap()) catch {
+        _ => 50.0
+      }
+    } else {
+      50.0
+    }
+    let min_points = if args.length() > 3 {
+      @string.parse_int(args.get(3).unwrap()) catch {
+        _ => 3
+      }
+    } else {
+      3
+    }
+    run_dbscan(eps, min_points)
     return
   }
 
@@ -1142,7 +1162,7 @@ fn run_demo() -> Unit {
 
   // Retrieve: by id
   println("--- Retrieve by ID ---")
-  match db.get("yhy001") {
+  match db.get("bj-yiheyuan") {
     Some(e) => print_entry(e)
     None => println("(not found)")
   }
@@ -1193,12 +1213,12 @@ fn run_demo() -> Unit {
   }
   println("")
 
-  // TSP + 2-opt
-  println("--- TSP NN + 2-opt (from guangzhou001) ---")
-  match db.tsp_nearest("guangzhou001") {
+  // TSP + 2-opt — start from Beijing for a realistic long-distance tour
+  println("--- TSP NN + 2-opt (from bj-gugong, " + db.size().to_string() + " POIs) ---")
+  match db.tsp_nearest("bj-gugong") {
     None => println("  (start id not found)")
     Some((_, nn_tot)) => {
-      match db.tsp_2opt("guangzhou001") {
+      match db.tsp_2opt("bj-gugong") {
         None => ()
         Some((_, opt_tot)) => {
           println("  NN: " + nn_tot.to_string() + " km  2opt: " + opt_tot.to_string() + " km")
@@ -1265,7 +1285,7 @@ fn run_demo() -> Unit {
 
   println("Demo complete. Try:")
   println("  moon run cmd benchmark")
-  println("  moon run cmd tsp-2opt guangzhou001")
+  println("  moon run cmd tsp-2opt bj-gugong")
   println("  moon run cmd kmeans 3")
   println("  moon run cmd idw 35.0 115.0 2.0")
   println("  moon run cmd kriging 35.0 115.0 12")
@@ -1990,81 +2010,92 @@ fn run_info(path : String) -> Unit {
 ///|
 fn build_sample_db() -> @db.GeoDB {
   let db = @db.GeoDB::in_memory()
-  ignore(
-    db.insert_raw(
-      "yhy001", "颐和园", 39.9999, 116.2755, "北京市海淀区颐和园路5号",
-    ),
-  )
-  ignore(
-    db.insert_raw(
-      "taman001", "天安门广场", 39.9055, 116.3972, "北京市东城区东长安街",
-    ),
-  )
-  ignore(
-    db.insert_raw(
-      "gugong001", "故宫博物院", 39.9163, 116.3972, "北京市东城区景山前街4号",
-    ),
-  )
-  ignore(
-    db.insert_raw(
-      "shanghai001", "东方明珠塔", 31.2397, 121.4997, "上海市浦东新区陆家嘴世纪大道1号",
-    ),
-  )
-  ignore(
-    db.insert_raw(
-      "guangzhou001", "广州塔", 23.1066, 113.3239, "广州市海珠区阅江西路222号",
-    ),
-  )
-  ignore(
-    db.insert_raw(
-      "shenzhen001", "深圳平安金融中心", 22.5431, 114.0579, "深圳市福田区福华三路",
-    ),
-  )
-  ignore(
-    db.insert_raw(
-      "hangzhou001", "西湖", 30.2590, 120.1348, "浙江省杭州市西湖区",
-    ),
-  )
-  ignore(
-    db.insert_raw(
-      "chengdu001", "宽窄巷子", 30.6700, 104.0590, "四川省成都市青羊区金河路口",
-    ),
-  )
-  ignore(
-    db.insert_raw(
-      "wuhan001", "黄鹤楼", 30.5450, 114.3023, "湖北省武汉市武昌区蛇山西坡",
-    ),
-  )
-  ignore(
-    db.insert_raw(
-      "xian001", "大雁塔", 34.2238, 108.9650, "陕西省西安市雁塔区大慈恩寺内",
-    ),
-  )
-  ignore(
-    db.insert_raw(
-      "nanjing001", "中山陵", 32.0586, 118.8501, "江苏省南京市玄武区紫金山南麓",
-    ),
-  )
-  ignore(
-    db.insert_raw(
-      "chongqing001", "解放碑", 29.5580, 106.5781, "重庆市渝中区解放碑步行街",
-    ),
-  )
-  ignore(
-    db.insert_raw(
-      "tianjin001", "天津之眼", 39.1436, 117.0097, "天津市河北区三岔河口永乐桥",
-    ),
-  )
-  ignore(
-    db.insert_raw(
-      "qingdao001", "青岛栈桥", 36.0588, 120.3168, "山东省青岛市市南区太平路12号",
-    ),
-  )
-  ignore(
-    db.insert_raw(
-      "kunming001", "滇池", 24.8800, 102.8300, "云南省昆明市西山区",
-    ),
-  )
+  // === 北京 (中心 39.9, 116.4) ===
+  ignore(db.insert_raw("bj-gugong", "故宫博物院", 39.9163, 116.3972, "北京市东城区景山前街4号"))
+  ignore(db.insert_raw("bj-tiananmen", "天安门广场", 39.9055, 116.3972, "北京市东城区东长安街"))
+  ignore(db.insert_raw("bj-tiantan", "天坛公园", 39.8822, 116.4066, "北京市东城区天坛东里"))
+  ignore(db.insert_raw("bj-yiheyuan", "颐和园", 39.9999, 116.2755, "北京市海淀区颐和园路5号"))
+  ignore(db.insert_raw("bj-bada", "八达岭长城", 40.3587, 116.0214, "北京市延庆区G6京藏高速"))
+  ignore(db.insert_raw("bj-niuchao", "国家体育场(鸟巢)", 39.9927, 116.3964, "北京市朝阳区国家体育场南路"))
+  ignore(db.insert_raw("bj-shuilih", "国家游泳中心(水立方)", 39.9929, 116.3969, "北京市朝阳区国家体育场北路"))
+  ignore(db.insert_raw("bj-museum", "中国国家博物馆", 39.9047, 116.4031, "北京市东城区东长安街16号"))
+  ignore(db.insert_raw("bj-wangfujing", "王府井步行街", 39.9148, 116.4108, "北京市东城区王府井大街"))
+  ignore(db.insert_raw("bj-sanlitun", "三里屯", 39.9378, 116.4559, "北京市朝阳区三里屯路"))
+  ignore(db.insert_raw("bj-798", "798艺术区", 39.9846, 116.5032, "北京市朝阳区酒仙桥路4号"))
+
+  // === 上海 (中心 31.2, 121.5) ===
+  ignore(db.insert_raw("sh-lijiazui", "东方明珠塔", 31.2397, 121.4997, "上海市浦东新区陆家嘴世纪大道1号"))
+  ignore(db.insert_raw("sh-waitan", "外滩", 31.2397, 121.4905, "上海市黄浦区中山东一路"))
+  ignore(db.insert_raw("sh-yuyuan", "豫园", 31.2267, 121.4902, "上海市黄浦区福佑路168号"))
+  ignore(db.insert_raw("sh-nanjing", "南京路步行街", 31.2356, 121.4814, "上海市黄浦区南京东路"))
+  ignore(db.insert_raw("sh-disney", "上海迪士尼乐园", 31.1440, 121.6570, "上海市浦东新区川沙新镇黄赵路310号"))
+  ignore(db.insert_raw("sh-museum", "上海博物馆", 31.2301, 121.4758, "上海市黄浦区人民大道201号"))
+  ignore(db.insert_raw("sh-center", "上海中心大厦", 31.2354, 121.5016, "上海市浦东新区银城中路501号"))
+  ignore(db.insert_raw("sh-huangpu", "黄浦江游船码头", 31.2370, 121.4890, "上海市黄浦区中山东二路"))
+
+  // === 广州 (中心 23.1, 113.3) ===
+  ignore(db.insert_raw("gz-tower", "广州塔", 23.1066, 113.3239, "广州市海珠区阅江西路222号"))
+  ignore(db.insert_raw("gz-chenjiaci", "陈家祠", 23.1266, 113.2380, "广州市荔湾区中山七路恩龙里34号"))
+  ignore(db.insert_raw("gz-yuexiu", "越秀公园", 23.1321, 113.2566, "广州市越秀区解放北路988号"))
+  ignore(db.insert_raw("gz-baiyun", "白云山", 23.1887, 113.3198, "广州市白云区广园中路"))
+  ignore(db.insert_raw("gz-shamian", "沙面岛", 23.1057, 113.2382, "广州市荔湾区沙面大街"))
+
+  // === 深圳 (中心 22.5, 114.0) ===
+  ignore(db.insert_raw("sz-pingan", "深圳平安金融中心", 22.5431, 114.0579, "深圳市福田区福华三路"))
+  ignore(db.insert_raw("sz-shijie", "世界之窗", 22.5399, 113.9728, "深圳市南山区深南大道9037号"))
+  ignore(db.insert_raw("sz-huanlegu", "欢乐谷", 22.6147, 113.9747, "深圳市南山区侨城西街18号"))
+  ignore(db.insert_raw("sz-lianhua", "莲花山", 22.5424, 114.0582, "深圳市福田区莲花山路"))
+  ignore(db.insert_raw("sz-dameisha", "大梅沙海滨公园", 22.6087, 114.3328, "深圳市盐田区梅沙街道"))
+
+  // === 成都 (中心 30.7, 104.1) ===
+  ignore(db.insert_raw("cd-kuanzhai", "宽窄巷子", 30.6700, 104.0590, "四川省成都市青羊区金河路口"))
+  ignore(db.insert_raw("cd-jinli", "锦里古街", 30.6449, 104.0247, "四川省成都市武侯区武侯祠大街231号"))
+  ignore(db.insert_raw("cd-wuhou", "武侯祠", 30.6319, 104.0438, "四川省成都市武侯区武侯祠大街231号"))
+  ignore(db.insert_raw("cd-panda", "大熊猫繁育研究基地", 30.7330, 104.1480, "四川省成都市成华区熊猫大道1375号"))
+  ignore(db.insert_raw("cd-dujiangyan", "都江堰景区", 30.9918, 103.5764, "四川省成都市都江堰市青城山镇"))
+
+  // === 重庆 (中心 29.6, 106.5) ===
+  ignore(db.insert_raw("cq-jiefangbei", "解放碑步行街", 29.5580, 106.5781, "重庆市渝中区解放碑"))
+  ignore(db.insert_raw("cq-hongyadong", "洪崖洞", 29.5630, 106.5786, "重庆市渝中区嘉陵江滨江路88号"))
+  ignore(db.insert_raw("cq-nanshan", "南山一棵树观景台", 29.5501, 106.5828, "重庆市南岸区龙黄公路"))
+  ignore(db.insert_raw("cq-ciqikou", "磁器口古镇", 29.5885, 106.4303, "重庆市沙坪坝区磁器口古镇"))
+  ignore(db.insert_raw("cq-wulong", "武隆天生三桥", 29.4033, 107.7867, "重庆市武隆区天生三桥"))
+
+  // === 杭州 (中心 30.2, 120.1) ===
+  ignore(db.insert_raw("hz-xihu", "西湖", 30.2590, 120.1348, "浙江省杭州市西湖区"))
+  ignore(db.insert_raw("hz-lingyin", "灵隐寺", 30.2403, 120.0992, "浙江省杭州市西湖区灵隐路法云弄1号"))
+  ignore(db.insert_raw("hz-xixi", "西溪湿地", 30.2850, 120.0700, "浙江省杭州市西湖区天目山路518号"))
+  ignore(db.insert_raw("hz-qiandao", "千岛湖", 29.6088, 119.0215, "浙江省杭州市淳安县千岛湖镇"))
+
+  // === 南京 (中心 32.0, 118.8) ===
+  ignore(db.insert_raw("nj-zhongshan", "中山陵", 32.0586, 118.8501, "江苏省南京市玄武区紫金山南麓"))
+  ignore(db.insert_raw("nj-fuzimiao", "夫子庙", 32.0210, 118.7880, "江苏省南京市秦淮区夫子庙"))
+  ignore(db.insert_raw("nj-museum", "南京博物院", 32.0395, 118.8090, "江苏省南京市玄武区中山东路307号"))
+
+  // === 武汉 (中心 30.5, 114.3) ===
+  ignore(db.insert_raw("wh-huanghe", "黄鹤楼", 30.5450, 114.3023, "湖北省武汉市武昌区蛇山西坡"))
+  ignore(db.insert_raw("wh-donghu", "东湖风景区", 30.5520, 114.3570, "湖北省武汉市武昌区沿湖大道16号"))
+  ignore(db.insert_raw("wh-wuhan", "武汉大学", 30.5320, 114.3630, "湖北省武汉市武昌区珞珈山"))
+
+  // === 西安 (中心 34.2, 108.9) ===
+  ignore(db.insert_raw("xa-dayanta", "大雁塔", 34.2238, 108.9650, "陕西省西安市雁塔区大慈恩寺内"))
+  ignore(db.insert_raw("xa-bingmayong", "秦始皇兵马俑", 34.3848, 109.2786, "陕西省西安市临潼区秦陵北路"))
+  ignore(db.insert_raw("xa-chengqiang", "西安城墙", 34.2636, 108.9410, "陕西省西安市碑林区南大街"))
+
+  // === 天津 (中心 39.1, 117.2) ===
+  ignore(db.insert_raw("tj-eye", "天津之眼", 39.1436, 117.0097, "天津市河北区三岔河口永乐桥"))
+  ignore(db.insert_raw("tj-guwenhua", "古文化街", 39.1390, 117.1830, "天津市南开区古文化街"))
+  ignore(db.insert_raw("tj-wudadao", "五大道", 39.1030, 117.2150, "天津市和平区五大道"))
+
+  // === 青岛 (中心 36.0, 120.3) ===
+  ignore(db.insert_raw("qd-zhanqiao", "青岛栈桥", 36.0588, 120.3168, "山东省青岛市市南区太平路12号"))
+  ignore(db.insert_raw("qd-laoshan", "崂山", 36.2267, 120.4517, "山东省青岛市崂山区崂山路100号"))
+  ignore(db.insert_raw("qd-badaguan", "八大关", 36.0558, 120.3318, "山东省青岛市市南区山海关路"))
+
+  // === 昆明 (中心 25.0, 102.7) ===
+  ignore(db.insert_raw("km-dianchi", "滇池", 24.8800, 102.8300, "云南省昆明市西山区"))
+  ignore(db.insert_raw("km-cuihu", "翠湖", 25.0392, 102.7053, "云南省昆明市五华区翠湖南路"))
+  ignore(db.insert_raw("km-xishan", "西山", 24.8930, 102.6370, "云南省昆明市西山区西山森林公园"))
   db
 }
 
@@ -2198,6 +2229,39 @@ fn run_cluster(cell_size_km : Double) -> Unit {
     println("    Count:    " + count.to_string() + " entries")
     ci = ci + 1
   }
+}
+
+///|
+fn run_dbscan(eps_km : Double, min_points : Int) -> Unit {
+  println(
+    "=== DBSCAN (eps=" + eps_km.to_string() + "km, min_points=" +
+      min_points.to_string() + ") ===",
+  )
+  let db = build_sample_db()
+  let clusters = db.cluster_dbscan(eps_km, min_points)
+  let mut assigned = 0
+  let mut ci = 0
+  while ci < clusters.length() {
+    let cluster = clusters[ci]
+    assigned = assigned + cluster.length()
+    println("  Cluster #" + (ci + 1).to_string() + " (" + cluster.length().to_string() +
+      " POIs):")
+    // Show up to 8 member names per cluster.
+    let mut k = 0
+    while k < cluster.length() && k < 8 {
+      match db.get(cluster[k]) {
+        Some(e) => println("    - " + e.name)
+        None => ()
+      }
+      k = k + 1
+    }
+    if cluster.length() > 8 {
+      println("    ... 及另外 " + (cluster.length() - 8).to_string() + " 个")
+    }
+    ci = ci + 1
+  }
+  let noise = db.size() - assigned
+  println("  Clusters: " + clusters.length().to_string() + "  Noise: " + noise.to_string())
 }
 
 ///|
