@@ -1191,14 +1191,41 @@ fn run_demo() -> Unit {
   println("")
 
   // K-Means + SDE
-  println("--- K-Means (k=3) ---")
+  println("--- K-Means (k=3, macro regions) ---")
   let clusters = db.kmeans(3)
   let mut ci = 0
   for cl in clusters {
     ci = ci + 1
     println("  Cluster " + ci.to_string() + ": " + cl.members.length().to_string() + " pts")
-    for mid in cl.members { println("    - " + mid.name) }
+    // Cap the member listing at 5 so the demo stays readable.
+    let mut mi = 0
+    while mi < cl.members.length() && mi < 5 {
+      println("    - " + cl.members[mi].name)
+      mi = mi + 1
+    }
+    if cl.members.length() > 5 {
+      println("    ... 及另外 " + (cl.members.length() - 5).to_string() + " 个")
+    }
   }
+  println("")
+
+  // DBSCAN — density-based city clusters, no need to pick k up front.
+  println("--- DBSCAN (eps=50km, min_points=3, city-level clusters) ---")
+  let dbscan_clusters = db.cluster_dbscan(50.0, 3)
+  let mut di = 0
+  let mut assigned = 0
+  while di < dbscan_clusters.length() {
+    let members = dbscan_clusters[di]
+    assigned = assigned + members.length()
+    let line = "  Cluster #" + (di + 1).to_string() + ": " +
+      members.length().to_string() + " POIs"
+    println(line)
+    di = di + 1
+  }
+  println(
+    "  Total: " + dbscan_clusters.length().to_string() + " clusters, " +
+      (db.size() - assigned).to_string() + " noise (far suburbs)",
+  )
   println("")
 
   println("--- Standard Deviation Ellipse ---")
@@ -1285,6 +1312,7 @@ fn run_demo() -> Unit {
 
   println("Demo complete. Try:")
   println("  moon run cmd benchmark")
+  println("  moon run cmd dbscan 50.0 3")
   println("  moon run cmd tsp-2opt bj-gugong")
   println("  moon run cmd kmeans 3")
   println("  moon run cmd idw 35.0 115.0 2.0")
@@ -2239,20 +2267,27 @@ fn run_dbscan(eps_km : Double, min_points : Int) -> Unit {
   )
   let db = build_sample_db()
   let clusters = db.cluster_dbscan(eps_km, min_points)
-  let mut assigned = 0
+  let assigned : @hashmap.HashMap[String, Bool] = @hashmap.HashMap([])
+  let mut assigned_count = 0
   let mut ci = 0
   while ci < clusters.length() {
     let cluster = clusters[ci]
-    assigned = assigned + cluster.length()
+    assigned_count = assigned_count + cluster.length()
     println("  Cluster #" + (ci + 1).to_string() + " (" + cluster.length().to_string() +
       " POIs):")
     // Show up to 8 member names per cluster.
     let mut k = 0
     while k < cluster.length() && k < 8 {
+      assigned.set(cluster[k], true)
       match db.get(cluster[k]) {
         Some(e) => println("    - " + e.name)
         None => ()
       }
+      k = k + 1
+    }
+    // Mark members past the display cap too, so noise detection is exact.
+    while k < cluster.length() {
+      assigned.set(cluster[k], true)
       k = k + 1
     }
     if cluster.length() > 8 {
@@ -2260,8 +2295,17 @@ fn run_dbscan(eps_km : Double, min_points : Int) -> Unit {
     }
     ci = ci + 1
   }
-  let noise = db.size() - assigned
+  let noise = db.size() - assigned_count
   println("  Clusters: " + clusters.length().to_string() + "  Noise: " + noise.to_string())
+  if noise > 0 {
+    println("  Noise points:")
+    for e in db.all() {
+      if not(assigned.contains(e.id)) {
+        println("    - " + e.id + " (" + e.name + ")")
+      }
+    }
+    println("  (远郊点，距最近城市中心超过 " + eps_km.to_string() + " km)")
+  }
 }
 
 ///|

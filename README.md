@@ -5,7 +5,7 @@
 ## 快速开始
 
 ```bash
-# 一键演示 15 POI 数据 + 全部核心功能
+# 一键演示 61 POI（13 城市簇）+ 全部核心功能
 moon run cmd demo
 
 # 性能基准（默认 1000，可指定 10000 等更大规模）
@@ -15,15 +15,17 @@ moon run cmd benchmark 10000
 moon test   # 339/339 passed
 
 # 高级空间分析示例
-moon run cmd kmeans 3                      # K-Means 聚类
-moon run cmd tsp-2opt guangzhou001         # TSP + 2-opt 优化
+moon run cmd kmeans 3                      # K-Means 聚类（3 大宏观区域）
+moon run cmd dbscan 50.0 3                 # DBSCAN 密度聚类（自动识别 13 城市簇）
+moon run cmd tsp-2opt bj-gugong            # TSP + 2-opt 路线优化
 moon run cmd idw 35.0 115.0 2.0            # IDW 空间插值
 moon run cmd kriging 35.0 115.0 12         # Kriging 克里金插值
 moon run cmd concave-hull 1.5              # 凹包 (Alpha-Shape)
 moon run cmd moran-i-knn                   # Moran's I (KNN 权重)
 moon run cmd sde                           # 标准差椭圆
-moon run cmd dbscan 50.0 3                 # DBSCAN 密度聚类（61 POI → 13 城市簇）
 ```
+
+`demo` 命令在 61 POI 样本库上依次演示：按 ID/名称检索 → 附近查询 → K-Means 宏观分区 → **DBSCAN 城市簇识别（13 簇 + 3 远郊噪声点）** → 标准差椭圆 → TSP NN+2-opt（节省约 265 km）→ IDW/Kriging 插值 → 凹包 → 中文地址解析。
 
 ## 特性
 
@@ -233,7 +235,7 @@ moon run cmd duplicates [dist] [edit] 重复检测
 moon run cmd cluster [cell_size_km] 网格聚类
 moon run cmd matrix <id1> [id2 ...] 距离矩阵
 moon run cmd reverse-geocode <lat> <lng> 反向地理编码
-moon run cmd dbscan <eps_km> <min_points> DBSCAN 聚类
+moon run cmd dbscan [eps_km] [min_points] DBSCAN 聚类（默认 50km / 3 点）
 moon run cmd polygon <lat1>,<lng1> <lat2>,<lng2> ... 多边形操作
 moon run cmd geohash-neighbors <hash> [precision] Geohash 邻域
 moon run cmd radial-density <lat> <lng> <km> <rings> 径向密度
@@ -336,15 +338,18 @@ let db = @db.GeoDB::in_memory()
 
 // 插入条目（自动解析地址字符串）
 let entry = db.insert_raw(
-  "yhy001",
+  "bj-yiheyuan",
   "颐和园",
   39.9999,
   116.2755,
   "北京市海淀区颐和园路5号"
 )
 
+// 批量插入（比循环 insert 快 5-20 倍，50k 仅 ~1.1s）
+db.bulk_insert([entry1, entry2, entry3])
+
 // 按 ID 查找
-match db.get("yhy001") {
+match db.get("bj-yiheyuan") {
   Some(e) => println(e.name)
   None => println("not found")
 }
@@ -362,8 +367,8 @@ let nearby = db.find_nearby(
   limit=10
 )
 
-// DBSCAN 密度聚类
-let clusters = db.cluster_dbscan(1.0, 2)
+// DBSCAN 密度聚类（50km 邻域，至少 3 点成簇）
+let clusters = db.cluster_dbscan(50.0, 3)
 
 // Geohash 前缀查询
 let results = db.find_by_geohash_prefix("wx4g0d", precision=6)
@@ -375,7 +380,7 @@ let d = db.path_distance(["id1", "id2", "id3"])
 let page = db.page_all(limit=10, offset=0)
 
 // 地址标准化
-let ok = db.normalize_address("yhy001")
+let ok = db.normalize_address("bj-yiheyuan")
 
 // 保存到文件
 ignore(db.save_to("geo.db"))
@@ -521,7 +526,7 @@ moon test
 
 ### 1. 内置精选演示数据集（61 个真实 POI）
 
-`moon run cmd demo` 使用 `build_sample_db()` 内置 **61 个真实中国地标 POI**，按 14 个城市分组，天然具有城市级聚类结构，可直接验证 K-Means / DBSCAN / TSP / Moran's I：
+`moon run cmd demo` 使用 `build_sample_db()` 内置 **61 个真实中国地标 POI**，按 13 个城市分组，天然具有城市级聚类结构，可直接验证 K-Means / DBSCAN / TSP / Moran's I：
 
 | 城市 | POI 数 | 代表地标 |
 |------|--------|----------|
@@ -540,6 +545,22 @@ moon test
 | 昆明 | 3 | 滇池、翠湖、西山 |
 
 每条数据都包含 **id（城市前缀-地标拼音）、中文名、精确经纬度、完整中文地址**（精确到省/市/区/街道/门牌号）。
+
+无需指定簇数，DBSCAN 可自动还原城市结构（3 个噪声点为距市中心 >50km 的千岛湖、武隆天生三桥、都江堰）：
+
+```bash
+$ moon run cmd dbscan 50.0 3
+=== DBSCAN (eps=50km, min_points=3) ===
+  Cluster #1 (3 POIs):     # 武汉
+  Cluster #2 (11 POIs):    # 北京
+  ...
+  Cluster #13 (3 POIs):    # 昆明
+  Clusters: 13  Noise: 3   # 58 + 3 = 61，全部点都有归属判定
+  Noise points:
+    - hz-qiandao (千岛湖)
+    - cq-wulong (武隆天生三桥)
+    - cd-dujiangyan (都江堰景区)
+```
 
 ### 2. 随机地址生成器（210 城）
 
