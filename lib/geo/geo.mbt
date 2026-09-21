@@ -906,8 +906,32 @@ pub fn kmeans(
           sum_lng / count.to_double(),
         )
       } else {
-        // Empty cluster: re-seed with the first unassigned point (or the previous centroid).
-        centroids[k_idx] = centroids[k_idx]
+        // Empty cluster: re-seed with a random point to avoid stagnation.
+        // Pick a point farthest from existing centroids to encourage exploration.
+        let mut best_dist = -1.0
+        let mut best_i = 0
+        let mut i = 0
+        while i < n {
+          if assignments[i] != k_idx {
+            let mut min_d = 1.7976931348623157e+308
+            let mut c = 0
+            while c < kk {
+              if c != k_idx {
+                let d = haversine(points[i], centroids[c])
+                if d < min_d {
+                  min_d = d
+                }
+              }
+              c = c + 1
+            }
+            if min_d > best_dist {
+              best_dist = min_d
+              best_i = i
+            }
+          }
+          i = i + 1
+        }
+        centroids[k_idx] = points[best_i]
       }
       k_idx = k_idx + 1
     }

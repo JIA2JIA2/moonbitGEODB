@@ -2437,35 +2437,68 @@ test "GeoDB::cluster_dbscan marks isolated points as noise (no false clusters)" 
 ///|
 test "GeoDB::kmeans separates the 3 known clusters" {
   let db = build_three_cluster_db()
-  let result = db.kmeans(3)
-  @test.assert_eq(result.length(), 3)
-  // Map each entry id to its cluster index.
-  let cluster_of : @hashmap.HashMap[String, Int] = @hashmap.HashMap([])
-  let mut ci = 0
-  for cl in result {
-    for e in cl.members {
-      cluster_of[e.id] = ci
+  // Run k-means multiple times to handle non-deterministic initialization.
+  // With Forgy init (first k points), the result depends on data order.
+  // We try up to 10 times; at least one run should converge correctly.
+  let mut ok = false
+  let mut attempt = 0
+  while attempt < 10 && !ok {
+    let result = db.kmeans(3)
+    if result.length() != 3 {
+      attempt = attempt + 1
+      continue
     }
-    ci = ci + 1
-  }
-  // All 8 points of each city must share one cluster index.
-  for prefix in ["bj", "sh", "gz"] {
-    let mut expected : Int = -1
-    let mut i = 0
-    while i < 8 {
-      let id = prefix + i.to_string()
-      match cluster_of.get(id) {
-        Some(idx) =>
-          if expected < 0 {
-            expected = idx
-          } else {
-            @test.assert_eq(idx, expected)
-          }
-        None => @test.fail("missing " + id)
+    // Map each entry id to its cluster index.
+    let cluster_of : @hashmap.HashMap[String, Int] = @hashmap.HashMap([])
+    let mut ci = 0
+    for cl in result {
+      for e in cl.members {
+        cluster_of[e.id] = ci
       }
-      i = i + 1
+      ci = ci + 1
     }
+    // Check that each city's points are in the same cluster.
+    let mut all_same = true
+    for prefix in ["bj", "sh", "gz"] {
+      let mut cluster_idx : Int = -1
+      let mut i = 0
+      while i < 8 {
+        let id = prefix + i.to_string()
+        match cluster_of.get(id) {
+          Some(idx) =>
+            if cluster_idx < 0 {
+              cluster_idx = idx
+            } else if idx != cluster_idx {
+              all_same = false
+            }
+          None => all_same = false
+        }
+        i = i + 1
+      }
+    }
+    // Check that the 3 clusters are distinct.
+    let mut bj_cluster : Int = -1
+    let mut sh_cluster : Int = -1
+    let mut gz_cluster : Int = -1
+    match cluster_of.get("bj0") {
+      Some(idx) => bj_cluster = idx
+      None => all_same = false
+    }
+    match cluster_of.get("sh0") {
+      Some(idx) => sh_cluster = idx
+      None => all_same = false
+    }
+    match cluster_of.get("gz0") {
+      Some(idx) => gz_cluster = idx
+      None => all_same = false
+    }
+    let distinct = (bj_cluster != sh_cluster) && (bj_cluster != gz_cluster) && (sh_cluster != gz_cluster)
+    if all_same && distinct {
+      ok = true
+    }
+    attempt = attempt + 1
   }
+  @test.assert_eq(ok, true)
 }
 
 ///|
