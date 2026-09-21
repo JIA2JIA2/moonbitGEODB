@@ -845,12 +845,35 @@ pub fn kmeans(
   if iters < 1 {
     iters = 1
   }
-  // Initialize centroids: first k points (deterministic, no random needed).
-  // This is the "Forgy" initialization — simple and reproducible.
+  // K-Means++ initialization: choose centroids that are far apart.
+  // 1. First centroid: pick a random point (use index 0 for determinism).
   let centroids : Array[@types.GeoPoint] = []
-  let mut ci = 0
+  centroids.push(points[0])
+  // 2. For each remaining centroid, pick the point farthest from existing centroids.
+  let mut ci = 1
   while ci < kk {
-    centroids.push(points[ci])
+    let mut best_dist = -1.0
+    let mut best_i = 0
+    let mut i = 0
+    while i < n {
+      // Find minimum distance to any existing centroid.
+      let mut min_d = 1.7976931348623157e+308
+      let mut c = 0
+      while c < centroids.length() {
+        let d = haversine(points[i], centroids[c])
+        if d < min_d {
+          min_d = d
+        }
+        c = c + 1
+      }
+      // Pick the point with the maximum minimum distance.
+      if min_d > best_dist {
+        best_dist = min_d
+        best_i = i
+      }
+      i = i + 1
+    }
+    centroids.push(points[best_i])
     ci = ci + 1
   }
   // Cluster assignments: cluster index for each point.
