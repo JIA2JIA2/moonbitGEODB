@@ -597,13 +597,25 @@ $ moon run cmd dbscan 50.0 3
 | query 数量 | 20,000 |
 | 候选地址对 | ~96,400 |
 | **整体 Agreement** | **68.37%** |
-| **完全匹配 F1** | **21.19%** (Prec 20.8%, Rec 21.6%) |
-| **部分匹配 F1** | **55.55%** (Prec 58.2%, Rec 53.1%) |
-| **不匹配 F1** | **79.73%** (Prec 78.0%, Rec 81.2%) |
-| 吞吐量 | ~23,500 pairs/s |
+| **完全匹配 F1** | **22.11%** (Prec 21.2%, Rec 23.1%) |
+| **部分匹配 F1** | **55.67%** (Prec 58.2%, Rec 53.4%) |
+| **不匹配 F1** | **79.76%** (Prec 78.4%, Rec 81.2%) |
+| 吞吐量 | ~21,900 pairs/s |
 | 混淆矩阵 | 3×3 (Exact/Partial/None) |
 
 评测命令末尾自动输出三类典型错误样本 (gold=部分→None、gold=部分→完全、gold=不→完全) 供阈值调优参考。
+
+### 优化历程
+
+两轮优化将 Agreement 从 66.98% 提升到 68.37%（+1.39%，多判对 1,341 对）：
+
+**第一轮（阈值调优）**：加强 E1 上下文门控、E2 dice 0.15→0.35、P7 新增 house_conflict 分支、降低 P1b/P6/P7 dice 阈值。消除了 1,018 个 P→Exact 误报。
+
+**第二轮（结构改进）**：
+- `normalize_address_text` 新增 suffix 统一化：幢→栋、层→楼、弄→号、座→栋
+- `floor_ok` 严格化：query 有楼层/房间号而 candidate 没有时不再判 Exact（带逃逸阀 dice≥0.75∧main_hit∧house≥1.0）
+- POI 子串匹配增强 `feat_overlap`：跨 token 边界的 3+ chars core 匹配
+- Partial TP 从 14,485 升至 **17,022**（+17%），P→None 漏判减少 1,527
 
 ## 许可证
 

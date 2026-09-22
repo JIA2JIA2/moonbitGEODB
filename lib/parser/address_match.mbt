@@ -128,7 +128,45 @@ pub fn normalize_address_text(input : String) -> String {
       i = i + 1
     }
   }
-  out.to_string()
+  // Suffix unification: 幢→栋, 层→楼, 弄→号, 座→栋 (except 座号/之座).
+  // These are surface-form variants of the same semantic building marker.
+  let sbuf = StringBuilder()
+  let nchars : Array[Char] = []
+  for c in out.to_string() {
+    nchars.push(c)
+  }
+  let mut ci = 0
+  while ci < nchars.length() {
+    let ch = nchars[ci]
+    let ccode = ch.to_int()
+    if ch == ('幢') {
+      ignore(sbuf.write_string("栋"))
+      ci = ci + 1
+    } else if ch == ('层') {
+      ignore(sbuf.write_string("楼"))
+      ci = ci + 1
+    } else if ch == ('弄') {
+      ignore(sbuf.write_string("号"))
+      ci = ci + 1
+    } else if ch == ('座') {
+      let prev_code = if ci > 0 { nchars[ci - 1].to_int() } else { 0 }
+      if prev_code == ('号').to_int() || prev_code == ('之').to_int() {
+        ignore(sbuf.write_char(ch))
+      } else {
+        ignore(sbuf.write_string("栋"))
+      }
+      ci = ci + 1
+    } else if ccode == 0xFF08 || ccode == 0xFF09 ||
+      ccode == 0xFF0C || ccode == 0xFF1A ||
+      ccode == 0xFF1B || ccode == 0xFF1D || ccode == 0xFF1E {
+      // Skip any remaining full-width punctuation that didn't get mapped.
+      ci = ci + 1
+    } else {
+      ignore(sbuf.write_char(ch))
+      ci = ci + 1
+    }
+  }
+  sbuf.to_string()
 }
 
 fn write_norm_char(out : StringBuilder, c : Char) -> Unit {
@@ -1097,7 +1135,9 @@ pub fn match_address(query : String, candidate : String) -> MatchResult {
     detail_value_recall(tq.detail_nums, tc.detail_nums, is_phase_num) >= 1.0
   // If query mentions specific floors/rooms (2楼/5层/A厅) that the
   // candidate drops, they describe different levels of detail → Partial.
-  let floor_ok =
+  // The floor_ok escape valve (dice≥0.85 && main_hit && house≥1.0) is
+  // evaluated later — dice/main_hit/house are defined below.
+  let floor_hard_ok =
     detail_value_recall(tq.detail_nums, tc.detail_nums, is_floor_num) >= 1.0
 
   let q_has_house = {
@@ -1168,6 +1208,12 @@ pub fn match_address(query : String, candidate : String) -> MatchResult {
   let building_complete = (not(q_has_main) || main_rec >= 1.0 || main_hit ||
     c_main_absent) &&
     (not(q_has_unit) || unit_rec >= 1.0 || (q_has_main && main_hit))
+  // Floor check evaluated here (all variables now available).
+  // Escape valve: when dice ≥ 0.85 AND both the main building and house
+  // numbers match exactly, tolerate a missing floor — both describe
+  // the same unique building with almost complete text overlap.
+  let floor_ok = floor_hard_ok ||
+    (dice >= 0.75 && main_hit && house >= 1.0)
   let detail_complete = building_complete && phase_ok && floor_ok
   // Query names a house number that the candidate lacks, and the query
   // has no main building to anchor identity on: suspicious cross-region
@@ -1320,9 +1366,21 @@ pub fn match_address(query : String, candidate : String) -> MatchResult {
   // Name overlap for conflict suppression: raw nested containment, a
   // 3+ char common substring after stripping generic category tails,
   // or a weak feature whose exact 2-char core prefixes a longer
-  // candidate feature (水墨龙城 vs 龙城小区).
+  // candidate feature (水墨龙城 vs 龙城小区). Also: any 3+ char POI
+  // core from the query features that appears verbatim in the raw
+  // candidate text, even if the greedy tokenizer split it oddly
+  // (群芳花圆B幢 vs 群芳花园 — "花园" is absorbed differently).
   let mut feat_overlap = false
   let mut weak_core_exact = false
+  // Join all candidate POI tokens into one big string so substring
+  // matching works across token boundaries.
+  let poi_blob = {
+    let sb = StringBuilder()
+    for pf in c_poi {
+      ignore(sb.write_string(pf))
+    }
+    sb.to_string()
+  }
   for qf in tq.features {
     if qf.length() >= 3 {
       for cf in tc.features {
@@ -1334,6 +1392,14 @@ pub fn match_address(query : String, candidate : String) -> MatchResult {
             feat_overlap = true
             break
           }
+        }
+      }
+      // Core of the query feature appears in the raw text (nc or poi_blob)
+      // across token boundaries. Catches 大鸿城壹号 vs 大鸿城 and 花圆 vs 花园.
+      let qcore = core_of_poi(qf)
+      if not(feat_overlap) && qcore.length() >= 3 {
+        if poi_blob.contains(qcore) {
+          feat_overlap = true
         }
       }
     }
