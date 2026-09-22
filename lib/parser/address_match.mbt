@@ -339,8 +339,16 @@ let suffix_table : Array[(String, Int)] = [
   ("寺", cat_feature),
   ("园", cat_feature),
   ("山", cat_feature),
-  ("组", cat_admin),
-  ("队", cat_admin),
+  ("大队", cat_feature),
+  // Specific admin sub-village units (村民组/生产队 etc.) are matched
+  // as admin rather than POI features, but the single-char "队" / "组"
+  // are intentionally excluded: they cause too many false positives
+  // (东山大队 → core 东山大 gets misclassified as admin).
+  ("村民组", cat_admin),
+  ("生产队", cat_admin),
+  ("村民小组", cat_admin),
+  // ("组", cat_admin),
+  // ("队", cat_admin),
   ("州", cat_admin),
   ("盟", cat_admin),
 ]
@@ -1059,7 +1067,54 @@ fn lcs_len(a : String, b : String) -> Int {
   best
 }
 
-/// Leading digit run of a house-number token ("9-1号" -> "9", "99号" ->
+/// Character-bigram Jaccard similarity between two strings. Catches
+/// typo / abbreviation / suffix variants that exact token matching
+/// misses (花园 vs 花圆, 大鸿城壹号 vs 大鸿城). Single-char strings
+/// fall back to equality.
+fn bigram_jaccard(a : String, b : String) -> Double {
+  let ca : Array[Int] = []
+  for c in a {
+    ca.push(c.to_int())
+  }
+  let cb : Array[Int] = []
+  for c in b {
+    cb.push(c.to_int())
+  }
+  let la = ca.length()
+  let lb = cb.length()
+  if la == 0 || lb == 0 {
+    return 0.0
+  }
+  // Single-char: compare directly.
+  if la == 1 || lb == 1 {
+    return if a == b { 1.0 } else { 0.0 }
+  }
+  let n_bigrams_a = la - 1
+  let n_bigrams_b = lb - 1
+  // Collect bigrams as packed Int keys.
+  let ba : @hashmap.HashMap[Int, Bool] = @hashmap.HashMap([])
+  let bb : @hashmap.HashMap[Int, Bool] = @hashmap.HashMap([])
+  for i in 0..<n_bigrams_a {
+    let key = ca[i] * 65537 + ca[i + 1]
+    ba.set(key, true)
+  }
+  for i in 0..<n_bigrams_b {
+    let key = cb[i] * 65537 + cb[i + 1]
+    bb.set(key, true)
+  }
+  let mut inter = 0
+  for (k, _) in ba.iter() {
+    if bb.contains(k) {
+      inter = inter + 1
+    }
+  }
+  let union = ba.length() + bb.length() - inter
+  if union == 0 {
+    0.0
+  } else {
+    inter.to_double() / union.to_double()
+  }
+}
 /// "99"). A prefix relation (9号 vs 9-1号) means the same entrance with
 /// a sub-number, which is a partial (not none) signal.
 fn house_digit_prefix(tok : String) -> String {
@@ -1388,14 +1443,15 @@ pub fn match_address(query : String, candidate : String) -> MatchResult {
           let nested = qf.length() >= 4 && cf.length() >= 4 &&
             (cf.contains(qf) || qf.contains(cf))
           let core_hit = lcs_len(core_of_poi(qf), core_of_poi(cf)) >= 3
-          if nested || core_hit {
+          let fuzzy_core = bigram_jaccard(core_of_poi(qf), core_of_poi(cf)) >= 0.50
+          if nested || core_hit || fuzzy_core {
             feat_overlap = true
             break
           }
         }
       }
-      // Core of the query feature appears in the raw text (nc or poi_blob)
-      // across token boundaries. Catches 大鸿城壹号 vs 大鸿城 and 花圆 vs 花园.
+      // Core of the query feature appears verbatim in the candidate text
+      // across token boundaries. Catches 大鸿城壹号 vs 大鸿城.
       let qcore = core_of_poi(qf)
       if not(feat_overlap) && qcore.length() >= 3 {
         if poi_blob.contains(qcore) {
@@ -1564,6 +1620,11 @@ pub fn match_address(query : String, candidate : String) -> MatchResult {
       (weak_all && dice >= 0.40) ||
       (weak_all && dice >= 0.25 && not(house_missing)) ||
       (q_structured && not(house_missing) && distinctive))
+  // P2b partial POI overlap (feature ≥ 0.50) anchored by a shared admin
+  // division. Catches cases where one feature token matches but not all
+  // (东山大队 vs 东山 — feature recall 0.5 + admin hit).
+  let p2b = !exact && feature >= 0.33 && admin_hit &&
+    dice >= 0.18 && !veto && !house_conflict
   // P3 distinctive POI shared but the address core contradicts
   //    (different road / different explicit house number).
   let p3 = not(exact) && standalone_fwd && not(road_conflict) &&
@@ -1604,7 +1665,7 @@ pub fn match_address(query : String, candidate : String) -> MatchResult {
   let p9 = not(exact) && name_any_hit && q_structured && c_structured &&
     dice >= 0.15 && not(house_conflict) && not(veto)
   let partial =
-    p1 || p1b || p1c || p2 || p3 || p4 || p5 || p6 || p7 || p7d || p8 || p9
+    p1 || p1b || p1c || p2 || p2b || p3 || p4 || p5 || p6 || p7 || p7d || p8 || p9
 
   let level : MatchLevel = if exact {
     Exact
