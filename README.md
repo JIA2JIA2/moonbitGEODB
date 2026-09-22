@@ -120,16 +120,16 @@ moon run cmd sde                           # 标准差椭圆
 
 | 操作 | 1k | 10k | 扩展趋势 | 实现 |
 |------|-----|------|---------|------|
-| **构建 DB** | **10,021** | **135,632** | ~O(n) ✓ | bulk_insert + dual-grid |
-| 构建/条目 | 10.0 μs | 13.6 μs | 近常数 ✓ | |
-| BBox 查询 | **6** | **68** | O(log n) ✓ | adaptive fine/coarse/R-tree |
-| KNN (k=5) | **43** | **79** | O(log n) ✓ | R-tree best-first |
-| Within 100km | 9 | 56 | 亚线性 ✓ | unsorted bbox → haversine |
-| K-Means (k=3) | 4,380 | 128,948 | O(n·iters·k) | K-Means++ 初始化 |
-| **DBSCAN (eps=50km)** | 7,372 | 232,335 | O(n·k) 扩张 | clustered[] 去重队列 |
-| TSP 2-opt | **49,548** | **177,846** | O(n²·rounds)，实测亚线性 | edge 数组 + 0 HashMap |
-| **Moran's I KNN** | 27,748 | 512,770 | **O(n·k·log n) ✓** | 真 R-tree KNN + 行标准化 |
-| **Kriging (k=12)** | 8,184 | 21,726 | O(n·log n + k²) | R-tree KNN + 变异函数 |
+| **构建 DB** | **10,021** | **134,586** | ~O(n) ✓ | bulk_insert + dual-grid |
+| 构建/条目 | 10.0 μs | 13.5 μs | 近常数 ✓ | |
+| BBox 查询 | **6** | **42** | O(log n) ✓ | adaptive fine/coarse/R-tree |
+| KNN (k=5) | **43** | **84** | O(log n) ✓ | R-tree best-first |
+| Within 100km | 9 | 48 | 亚线性 ✓ | unsorted bbox → haversine |
+| K-Means (k=3) | 4,380 | 109,800 | O(n·iters·k) | K-Means++ 初始化 |
+| **DBSCAN (eps=50km)** | 7,372 | 237,038 | O(n·k) 扩张 | clustered[] 去重队列 |
+| TSP 2-opt | **49,548** | **406,937** | O(n²·rounds)，实测亚线性 | edge 数组 + 0 HashMap |
+| **Moran's I KNN** | 27,748 | 634,763 | **O(n·k·log n) ✓** | 真 R-tree KNN + 行标准化 |
+| **Kriging (k=12)** | 8,184 | 40,882 | O(n·log n + k²) | R-tree KNN + 变异函数 |
 
 运行命令：`moon run cmd benchmark [N]`（默认 N=1000）
 
