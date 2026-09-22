@@ -2406,6 +2406,12 @@ fn run_addr_eval(path : String, max_records : Int) -> Unit {
   let mut pairs = 0
 
   let mut agreement = 0
+  // Diagnostic: keep up to N samples for each major error category.
+  // Index convention: 0=Exact, 1=Partial, 2=None (same as addr_level_idx).
+  let diag_p2n : Array[String] = [] // gold=Partial, pred=None
+  let diag_p2e : Array[String] = [] // gold=Partial, pred=Exact
+  let diag_n2e : Array[String] = [] // gold=None, pred=Exact
+  let diag_cutoff = 40
   let t_match0 = @bench.monotonic_clock_start()
   for r in records {
     for c in r.candidates {
@@ -2417,6 +2423,27 @@ fn run_addr_eval(path : String, max_records : Int) -> Unit {
       pairs = pairs + 1
       if gi == pi {
         agreement = agreement + 1
+      }
+      // Collect worst-error diagnostics.
+      let q = r.query
+      let txt = c.text
+      let ds =
+        "  dice=" + format2(mr.dice) +
+          " feat=" + format2(mr.feature_recall) +
+          " road=" + format2(mr.road_recall) +
+          " num=" + format2(mr.num_recall)
+      let line = "    Q=" + q + "\n    C=" + txt + "\n    " + ds
+      // gold=Partial(1), pred=None(2)
+      if gi == 1 && pi == 2 && diag_p2n.length() < diag_cutoff {
+        diag_p2n.push(line)
+      }
+      // gold=Partial(1), pred=Exact(0)
+      if gi == 1 && pi == 0 && diag_p2e.length() < diag_cutoff {
+        diag_p2e.push(line)
+      }
+      // gold=None(2), pred=Exact(0)
+      if gi == 2 && pi == 0 && diag_n2e.length() < diag_cutoff {
+        diag_n2e.push(line)
       }
     }
   }
@@ -2482,6 +2509,40 @@ fn run_addr_eval(path : String, max_records : Int) -> Unit {
         (rec * 100.0).to_string() + "%   " + (f1 * 100.0).to_string() + "%",
     )
     k = k + 1
+  }
+
+  // ---- Diagnostic dumps ----
+  if diag_p2n.length() > 0 {
+    println("")
+    println("  === DIAG: gold=部分匹配 pred=不匹配 (first " + diag_p2n.length().to_string() + ") ===")
+    for s in diag_p2n {
+      println(s)
+    }
+  }
+  if diag_p2e.length() > 0 {
+    println("")
+    println("  === DIAG: gold=部分匹配 pred=完全匹配 (first " + diag_p2e.length().to_string() + ") ===")
+    for s in diag_p2e {
+      println(s)
+    }
+  }
+  if diag_n2e.length() > 0 {
+    println("")
+    println("  === DIAG: gold=不匹配 pred=完全匹配 (first " + diag_n2e.length().to_string() + ") ===")
+    for s in diag_n2e {
+      println(s)
+    }
+  }
+}
+
+/// Format a Double to 2 decimal places (no trailing zero trimming).
+fn format2(v : Double) -> String {
+  let s = v.to_string()
+  // Take up to 7 chars to avoid long floats like 0.30000000001234.
+  if s.length() <= 7 {
+    s
+  } else {
+    s[0:7].to_string()
   }
 }
 

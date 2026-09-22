@@ -881,6 +881,12 @@ fn is_phase_num(tok : String) -> Bool {
   tok.ends_with("期")
 }
 
+/// Floor / room suffixes (2层, 5楼, 1室, A厅...)
+fn is_floor_num(tok : String) -> Bool {
+  tok.ends_with("层") || tok.ends_with("楼") || tok.ends_with("室") ||
+    tok.ends_with("厅") || tok.ends_with("排")
+}
+
 /// Recall of building tokens (栋/幢/座/号楼/单元): a missing building on
 /// the candidate side means the address is less detailed (partial).
 fn building_recall(query : Array[String], candidate : Array[String]) -> Double {
@@ -1089,6 +1095,10 @@ pub fn match_address(query : String, candidate : String) -> MatchResult {
   let unit_rec = recall_filtered(tq.struct_nums, tc.struct_nums, is_unit_num)
   let phase_ok =
     detail_value_recall(tq.detail_nums, tc.detail_nums, is_phase_num) >= 1.0
+  // If query mentions specific floors/rooms (2楼/5层/A厅) that the
+  // candidate drops, they describe different levels of detail → Partial.
+  let floor_ok =
+    detail_value_recall(tq.detail_nums, tc.detail_nums, is_floor_num) >= 1.0
 
   let q_has_house = {
     let mut found = false
@@ -1158,7 +1168,7 @@ pub fn match_address(query : String, candidate : String) -> MatchResult {
   let building_complete = (not(q_has_main) || main_rec >= 1.0 || main_hit ||
     c_main_absent) &&
     (not(q_has_unit) || unit_rec >= 1.0 || (q_has_main && main_hit))
-  let detail_complete = building_complete && phase_ok
+  let detail_complete = building_complete && phase_ok && floor_ok
   // Query names a house number that the candidate lacks, and the query
   // has no main building to anchor identity on: suspicious cross-region
   // name coincidence (藤桥永宁村124号 vs 海宁市永宁村).
@@ -1419,12 +1429,15 @@ pub fn match_address(query : String, candidate : String) -> MatchResult {
   // Buildings/phases named in the query must be present; floors/rooms
   // and a missing 单元 (when the main building matches) are tolerated.
   // E1 distinctive standalone POI (>=7 chars, or >=6 with strong
-  //    suffix): unique enough on its own.
+  //    suffix): unique enough on its own. Now gated: needs either
+  //    very high dice (>=0.80) or some shared context (road/town/admin)
+  //    to prevent same-name POIs in distant cities (兴东 vs 沙河镇).
   let e1 = standalone_fwd && not(road_conflict) && not(house_conflict) &&
-    detail_complete && dice >= standalone_dice_threshold
+    detail_complete && dice >= standalone_dice_threshold &&
+    (dice >= 0.80 || context_ok)
   // E2 distinctive bare name fully shared (佳乐钢琴 / 龙凤呈祥).
   let e2 = name_all && not(road_conflict) && not(house_conflict) &&
-    detail_complete && dice >= 0.15
+    detail_complete && dice >= 0.35
   // E3 all POI features shared AND road corridor AND house number agree.
   let e3 = feat_all && not(road_conflict) && road_hit &&
     (not(q_has_house) || house >= 1.0 || not(c_has_house)) &&
@@ -1460,9 +1473,11 @@ pub fn match_address(query : String, candidate : String) -> MatchResult {
     (house >= 1.0 || house_prefix || (not(q_has_house) && not(c_has_house))) &&
     not(feat_conflict) && not(veto)
   // P1b road corridor fully shared, query carries no POI of its own
-  //    (白东线成家川...东邑村 vs 潞城区白东线).
+  //    (白东线成家川...东邑村 vs 潞城区白东线). Lowered dice from 0.25
+  //    to 0.20: when both describe no POI and the road is fully shared,
+  //    even light textual overlap signals the same corridor.
   let p1b = not(exact) && road_hit && junction_ok && not(q_has_feat) &&
-    not(house_conflict) && dice >= 0.25 && not(veto)
+    not(house_conflict) && dice >= 0.20 && not(veto)
   // P1c different POI at the exact same house number is a partial unless
   //    both are distinct residential communities.
   let p1c = not(exact) && road_hit && house >= 1.0 && dice >= 0.35 &&
@@ -1499,11 +1514,19 @@ pub fn match_address(query : String, candidate : String) -> MatchResult {
   let p5 = not(exact) && not(q_has_target) && town_hit
   // P6 shared admin division with strong overall text overlap
   //    (秦淮区高桥门199号 vs 秦淮区高桥门200号3幢).
-  let p6 = not(exact) && admin_hit && dice >= 0.44
+  let p6 = not(exact) && admin_hit && dice >= 0.35
   // P7 same road corridor with structure numbers on both sides and
   //    decent text overlap (neighbouring buildings on the same road).
+  //    Lowered dice threshold to catch road-corridor cases that barely
+  //    overlap textually (中山北路467号 vs 中山北路605-607号).
   let p7 = not(exact) && road_b >= 0.5 && q_structured && c_structured &&
-    dice >= 0.27 && not(feat_conflict)
+    dice >= 0.15 && not(feat_conflict)
+  // P7d same road corridor, structured numbers on both sides but
+  //    contradictory house numbers (different buildings on same road,
+  //    e.g. 中山北路467号 vs 中山北路348号小区). Overlap just needs
+  //    the road token present; features must not conflict.
+  let p7d = not(exact) && road_b >= 0.5 && q_structured && c_structured &&
+    house_conflict && dice >= 0.08 && not(feat_conflict) && not(veto)
   // P8 same POI core (3+ chars after stripping the category tail, or an
   //    exact weak core such as 龙城) with structured buildings on both
   //    sides and no contradictory house numbers.
@@ -1515,7 +1538,7 @@ pub fn match_address(query : String, candidate : String) -> MatchResult {
   let p9 = not(exact) && name_any_hit && q_structured && c_structured &&
     dice >= 0.15 && not(house_conflict) && not(veto)
   let partial =
-    p1 || p1b || p1c || p2 || p3 || p4 || p5 || p6 || p7 || p8 || p9
+    p1 || p1b || p1c || p2 || p3 || p4 || p5 || p6 || p7 || p7d || p8 || p9
 
   let level : MatchLevel = if exact {
     Exact
