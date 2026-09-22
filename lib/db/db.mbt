@@ -982,6 +982,55 @@ pub fn GeoDB::find_name_fuzzy(
   results
 }
 
+// ---- Semantic address matching ----
+
+///|
+/// Rank stored entries against a free-form address query using the
+/// three-level address matcher (exact / partial / none). Entries are
+/// compared on their name (which holds the raw address for corpus
+/// records); non-matching entries are dropped, then results are sorted
+/// by match level and score, strongest first.
+pub fn GeoDB::match_addresses(
+  self : GeoDB,
+  query : String,
+  limit? : Int = 10,
+) -> Array[(@types.GeoEntry, @parser.MatchResult)] {
+  let results : Array[(@types.GeoEntry, @parser.MatchResult)] = []
+  for e in self.all() {
+    let r = @parser.match_address(query, e.name)
+    match r.level {
+      None => ()
+      _ => results.push((e, r))
+    }
+  }
+  results.sort_by(fn(a, b) {
+    let ra = a.1.level.rank()
+    let rb = b.1.level.rank()
+    if ra > rb {
+      -1
+    } else if ra < rb {
+      1
+    } else if a.1.score > b.1.score {
+      -1
+    } else if a.1.score < b.1.score {
+      1
+    } else {
+      0
+    }
+  })
+  if results.length() <= limit {
+    results
+  } else {
+    let top : Array[(@types.GeoEntry, @parser.MatchResult)] = []
+    let mut i = 0
+    while i < limit {
+      top.push(results[i])
+      i = i + 1
+    }
+    top
+  }
+}
+
 // ---- Export ----
 
 ///|

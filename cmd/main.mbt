@@ -635,6 +635,45 @@ fn main {
     return
   }
 
+  if cmd == "addr-match" {
+    if args.length() < 4 {
+      println("Error: addr-match requires query and candidate text")
+      println("Usage: moon run cmd addr-match <query> <candidate>")
+      return
+    }
+    run_addr_match(args.get(2).unwrap(), args.get(3).unwrap())
+    return
+  }
+
+  if cmd == "addr-eval" {
+    let path = if args.length() > 2 {
+      args.get(2).unwrap()
+    } else {
+      "testdata/data.txt"
+    }
+    let max_records = if args.length() > 3 {
+      @string.parse_int(args.get(3).unwrap()) catch {
+        _ => 0
+      }
+    } else {
+      0
+    }
+    run_addr_eval(path, max_records)
+    return
+  }
+
+  if cmd == "corpus-db" {
+    let n = if args.length() > 2 {
+      @string.parse_int(args.get(2).unwrap()) catch {
+        _ => 1000
+      }
+    } else {
+      1000
+    }
+    run_corpus_db(n)
+    return
+  }
+
   if cmd == "matrix" {
     let ids : Array[String] = []
     let mut mi = 2
@@ -2305,6 +2344,204 @@ fn run_dbscan(eps_km : Double, min_points : Int) -> Unit {
       }
     }
     println("  (远郊点，距最近城市中心超过 " + eps_km.to_string() + " km)")
+  }
+}
+
+///|
+fn addr_level_name(l : @parser.MatchLevel) -> String {
+  match l {
+    @parser.MatchLevel::Exact => "完全匹配"
+    @parser.MatchLevel::Partial => "部分匹配"
+    @parser.MatchLevel::None => "不匹配"
+  }
+}
+
+///| Level -> confusion-matrix row index: Exact=0, Partial=1, None=2.
+fn addr_level_idx(l : @parser.MatchLevel) -> Int {
+  2 - l.rank()
+}
+
+///|
+fn run_addr_match(query : String, candidate : String) -> Unit {
+  println("=== Address match ===")
+  println("  query:     " + query)
+  println("  candidate: " + candidate)
+  let r = @parser.match_address(query, candidate)
+  println("  level: " + addr_level_name(r.level))
+  println(
+    "  score: " + r.score.to_string() + "  dice: " + r.dice.to_string() +
+      "  road: " + r.road_recall.to_string() + "  num: " + r.num_recall.to_string(),
+  )
+}
+
+///|
+/// Evaluate the three-level address matcher against the labelled JSONL
+/// corpus: prints parse/match timing, throughput, overall agreement and
+/// a 3x3 confusion matrix with per-class precision/recall/F1.
+fn run_addr_eval(path : String, max_records : Int) -> Unit {
+  println("=== Address matcher evaluation: " + path + " ===")
+  let content = match @persist.load_text(path) {
+    Ok(s) => s
+    Err(e) => {
+      println("Error: cannot read " + path + ": " + e)
+      return
+    }
+  }
+
+  let t_parse0 = @bench.monotonic_clock_start()
+  let records : Array[@parser.AddrMatchRecord] = []
+  for line in content.split("\n").collect() {
+    if max_records > 0 && records.length() >= max_records {
+      break
+    }
+    match @parser.parse_match_record(line.to_owned()) {
+      Some(r) => records.push(r)
+      None => ()
+    }
+  }
+  let t_parse = @bench.monotonic_clock_end(t_parse0)
+
+  // confusion[gold][pred], index order Exact=0, Partial=1, None=2.
+  let confusion : Array[Array[Int]] = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]
+  let mut pairs = 0
+
+  let mut agreement = 0
+  let t_match0 = @bench.monotonic_clock_start()
+  for r in records {
+    for c in r.candidates {
+      let mr = @parser.match_address(r.query, c.text)
+      let pred = mr.level
+      let gi = addr_level_idx(c.level)
+      let pi = addr_level_idx(pred)
+      confusion[gi][pi] = confusion[gi][pi] + 1
+      pairs = pairs + 1
+      if gi == pi {
+        agreement = agreement + 1
+      }
+    }
+  }
+  let t_match = @bench.monotonic_clock_end(t_match0)
+
+  println("  Records: " + records.length().to_string() + "  pairs: " + pairs.to_string())
+  println("  Parse: " + t_parse.to_string() + " us  Match: " + t_match.to_string() + " us")
+  if t_match > 0 {
+    let throughput = pairs.to_double() * 1000000.0 / t_match
+    println("  Throughput: " + throughput.to_string() + " pairs/s")
+  }
+  if pairs > 0 {
+    let pct = agreement.to_double() * 100.0 / pairs.to_double()
+    println("  Agreement: " + pct.to_string() + "% (" + agreement.to_string() + "/" +
+      pairs.to_string() + ")")
+  }
+  println("")
+  println("  Confusion matrix (rows = gold, cols = pred):")
+  println("                 完全匹配  部分匹配  不匹配")
+  let names = ["完全匹配", "部分匹配", "不匹配"]
+  let mut gi2 = 0
+  while gi2 < 3 {
+    let row = confusion[gi2]
+    println(
+      "  " + names[gi2] + "     " + row[0].to_string() + "       " +
+        row[1].to_string() + "       " + row[2].to_string(),
+    )
+    gi2 = gi2 + 1
+  }
+  println("")
+  println("  Per-class metrics:")
+  println("    level      precision  recall     f1")
+  let mut k = 0
+  while k < 3 {
+    let tp = confusion[k][k].to_double()
+    let mut fp = 0.0
+    let mut fn_ = 0.0
+    let mut a = 0
+    while a < 3 {
+      if a != k {
+        fp = fp + confusion[a][k].to_double()
+        fn_ = fn_ + confusion[k][a].to_double()
+      }
+      a = a + 1
+    }
+    let prec = if tp + fp > 0.0 {
+      tp / (tp + fp)
+    } else {
+      0.0
+    }
+    let rec = if tp + fn_ > 0.0 {
+      tp / (tp + fn_)
+    } else {
+      0.0
+    }
+    let f1 = if prec + rec > 0.0 {
+      2.0 * prec * rec / (prec + rec)
+    } else {
+      0.0
+    }
+    println(
+      "    " + names[k] + "   " + (prec * 100.0).to_string() + "%   " +
+        (rec * 100.0).to_string() + "%   " + (f1 * 100.0).to_string() + "%",
+    )
+    k = k + 1
+  }
+}
+
+///|
+/// Build a spatial database from the first N real-address corpus
+/// records, persist it to testdata/geo_corpus.db and report its
+/// spatial distribution plus a sample address retrieval.
+fn run_corpus_db(n : Int) -> Unit {
+  let path = "testdata/data.txt"
+  println("=== Corpus DB (first " + n.to_string() + " records of " + path + ") ===")
+  let content = match @persist.load_text(path) {
+    Ok(s) => s
+    Err(e) => {
+      println("Error: cannot read " + path + ": " + e)
+      return
+    }
+  }
+  let records : Array[@parser.AddrMatchRecord] = []
+  for line in content.split("\n").collect() {
+    if records.length() >= n {
+      break
+    }
+    match @parser.parse_match_record(line.to_owned()) {
+      Some(r) => records.push(r)
+      None => ()
+    }
+  }
+  let t0 = @bench.monotonic_clock_start()
+  let db = @gen.corpus_db(records)
+  let t_build = @bench.monotonic_clock_end(t0)
+  println("  Built " + db.size().to_string() + " entries in " + t_build.to_string() + " us")
+  match db.compute_bbox() {
+    Some((bbox, _)) =>
+      println(
+        "  BBox: (" + bbox.min_lat.to_string() + "," + bbox.min_lng.to_string() +
+          ") .. (" + bbox.max_lat.to_string() + "," + bbox.max_lng.to_string() + ")",
+      )
+    None => ()
+  }
+  let clusters = db.cluster_dbscan(50.0, 5)
+  let mut assigned = 0
+  for cl in clusters {
+    assigned = assigned + cl.length()
+  }
+  println(
+    "  DBSCAN eps=50km: " + clusters.length().to_string() + " city clusters, " +
+      (db.size() - assigned).to_string() + " noise",
+  )
+  match db.save_to("testdata/geo_corpus.db") {
+    Ok(_) => println("  Saved: testdata/geo_corpus.db")
+    Err(e) => println("  Save failed: " + e)
+  }
+  if records.length() > 0 {
+    println("")
+    println("  Sample retrieval for first query:")
+    println("    " + records[0].query)
+    let hits = db.match_addresses(records[0].query, limit=3)
+    for (e, mr) in hits {
+      println("    [" + addr_level_name(mr.level) + " " + mr.score.to_string() + "] " + e.id)
+    }
   }
 }
 

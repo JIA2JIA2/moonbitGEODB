@@ -70,7 +70,7 @@ fn clean(s : StringView) -> String {
     let first = t.get_char(0).unwrap()
     let last = t.get_char(n - 1).unwrap()
     if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
-      return t.get_view(start=1, end=n - 1).unwrap().to_owned()
+      return t.clamped_view(start=1, end=n - 1).to_owned()
     }
   }
   t
@@ -151,8 +151,9 @@ fn find_province_end(text : String) -> Int? {
     // Search from left to right for the first occurrence of this suffix.
     let mut i = 0
     while i <= n - slen {
-      let sub = text.get_view(start=i, end=i + slen).unwrap()
-      if sub.to_string() == s {
+      // clamped_view never fails — it snaps surrogate-split offsets inward.
+      let sub = text.clamped_view(start=i, end=i + slen)
+      if sub.equal_to_string(s) {
         // Must have at least one CJK char before the suffix (not just "市").
         if i > 0 {
           return Some(i + slen)
@@ -174,8 +175,8 @@ fn find_city_end(text : String, start : Int) -> Int? {
     let slen = s.length()
     let mut i = start
     while i <= n - slen {
-      let sub = text.get_view(start=i, end=i + slen).unwrap()
-      if sub.to_string() == s {
+      let sub = text.clamped_view(start=i, end=i + slen)
+      if sub.equal_to_string(s) {
         return Some(i + slen)
       }
       i = i + 1
@@ -194,8 +195,8 @@ fn find_district_end(text : String, start : Int) -> Int? {
     let slen = s.length()
     let mut i = start
     while i <= n - slen {
-      let sub = text.get_view(start=i, end=i + slen).unwrap()
-      if sub.to_string() == s {
+      let sub = text.clamped_view(start=i, end=i + slen)
+      if sub.equal_to_string(s) {
         return Some(i + slen)
       }
       i = i + 1
@@ -214,8 +215,8 @@ fn find_street_end(text : String, start : Int) -> Int? {
     let slen = s.length()
     let mut i = start
     while i <= n - slen {
-      let sub = text.get_view(start=i, end=i + slen).unwrap()
-      if sub.to_string() == s {
+      let sub = text.clamped_view(start=i, end=i + slen)
+      if sub.equal_to_string(s) {
         return Some(i + slen)
       }
       i = i + 1
@@ -246,7 +247,7 @@ pub fn parse_chinese_address(input : String) -> @types.Address {
   // ---- 1. Province-level ----
   let (prov_end, is_municipality) = match find_province_end(trimmed) {
     Some(idx) => {
-      let prov_text = trimmed.get_view(end=idx).unwrap().to_owned()
+      let prov_text = trimmed.clamped_view(end=idx).to_owned()
       // Check if this is a municipality (直辖市): the suffix is just 市
       // and it's a well-known municipality.
       let municipalities = ["北京市", "上海市", "天津市", "重庆市"]
@@ -259,7 +260,7 @@ pub fn parse_chinese_address(input : String) -> @types.Address {
   let mut cursor = 0
   match prov_end {
     Some(idx) => {
-      province = trimmed.get_view(end=idx).unwrap().to_owned()
+      province = trimmed.clamped_view(end=idx).to_owned()
       cursor = idx
     }
     None => ()
@@ -273,7 +274,7 @@ pub fn parse_chinese_address(input : String) -> @types.Address {
   } else {
     match find_city_end(trimmed, cursor) {
       Some(idx) => {
-        city = trimmed.get_view(start=cursor, end=idx).unwrap().to_owned()
+        city = trimmed.clamped_view(start=cursor, end=idx).to_owned()
         cursor = idx
       }
       None => ()
@@ -283,7 +284,7 @@ pub fn parse_chinese_address(input : String) -> @types.Address {
   // ---- 3. District-level ----
   match find_district_end(trimmed, cursor) {
     Some(idx) => {
-      district = trimmed.get_view(start=cursor, end=idx).unwrap().to_owned()
+      district = trimmed.clamped_view(start=cursor, end=idx).to_owned()
       cursor = idx
     }
     None => ()
@@ -292,7 +293,7 @@ pub fn parse_chinese_address(input : String) -> @types.Address {
   // ---- 4. Street-level ----
   match find_street_end(trimmed, cursor) {
     Some(idx) => {
-      street = trimmed.get_view(start=cursor, end=idx).unwrap().to_owned()
+      street = trimmed.clamped_view(start=cursor, end=idx).to_owned()
       cursor = idx
     }
     None => ()
@@ -300,7 +301,7 @@ pub fn parse_chinese_address(input : String) -> @types.Address {
 
   // ---- 5. Remaining goes to detail ----
   if cursor < n {
-    detail = trimmed.get_view(start=cursor).unwrap().to_owned()
+    detail = trimmed.clamped_view(start=cursor).to_owned()
   }
 
   // ---- 6. Detect postal code in detail or anywhere ----
@@ -309,19 +310,19 @@ pub fn parse_chinese_address(input : String) -> @types.Address {
     // Try to find a 6-digit postal code in the detail.
     let mut i = 0
     while i <= detail.length() - 6 {
-      let sub = detail.get_view(start=i, end=i + 6).unwrap()
+      let sub = detail.clamped_view(start=i, end=i + 6)
       if sub.all(fn(c) { c.is_digit(10) }) {
         postal = sub.to_owned()
         // Remove postal code from detail.
         let before = if i == 0 {
           ""
         } else {
-          detail.get_view(end=i).unwrap().to_owned()
+          detail.clamped_view(end=i).to_owned()
         }
         let after = if i + 6 >= detail.length() {
           ""
         } else {
-          detail.get_view(start=i + 6).unwrap().to_owned()
+          detail.clamped_view(start=i + 6).to_owned()
         }
         detail = before + after
         break
@@ -334,7 +335,7 @@ pub fn parse_chinese_address(input : String) -> @types.Address {
   if postal.length() == 0 {
     let mut i = 0
     while i <= trimmed.length() - 6 {
-      let sub = trimmed.get_view(start=i, end=i + 6).unwrap()
+      let sub = trimmed.clamped_view(start=i, end=i + 6)
       if sub.all(fn(c) { c.is_digit(10) }) {
         postal = sub.to_owned()
         break
@@ -423,13 +424,13 @@ pub fn parse_coordinate(input : String) -> @types.GeoPoint raise ParseError {
   match sep_idx {
     None => raise BadCoordinate(trimmed)
     Some(idx) => {
-      let lat_str = trimmed.get_view(end=idx).unwrap().trim().to_owned()
-      let lng_part = trimmed.get_view(start=idx + 1).unwrap()
+      let lat_str = trimmed.clamped_view(end=idx).trim().to_owned()
+      let lng_part = trimmed.clamped_view(start=idx + 1)
       // lng may have leading whitespace; find where the number starts.
       let lng_trimmed = lng_part.trim().to_owned()
       // If there's a trailing whitespace+something (e.g. altitude), cut at first space.
       let lng_str = match lng_trimmed.find_by(fn(c) { c == ' ' || c == ',' }) {
-        Some(end) => lng_trimmed.get_view(end~).unwrap().to_owned()
+        Some(end) => lng_trimmed.clamped_view(end~).to_owned()
         None => lng_trimmed
       }
       let lat = @string.parse_double(lat_str) catch {

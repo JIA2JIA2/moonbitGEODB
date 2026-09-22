@@ -7,4 +7,5 @@ import {
   "moonbitlang/core/test",
   "JIA2JIA2/moonbitgeodb/lib/types",
   "JIA2JIA2/moonbitgeodb/lib/db",
+  "JIA2JIA2/moonbitgeodb/lib/parser",
 }

@@ -8,11 +8,16 @@
 # 一键演示 61 POI（13 城市簇）+ 全部核心功能
 moon run cmd demo
 
+# 语义地址匹配（20k 真实地址评测语料）
+moon run cmd addr-match "汉中路180号星汉大厦26楼江苏东方燃油有限公司" "汉中路180号星汉大厦26层A江苏东方燃油有限公司"
+moon run cmd addr-eval testdata/data.txt 0          # 全量 20k × 5 candidates 评测
+moon run cmd corpus-db 500                          # 从真实语料构建空间 DB
+
 # 性能基准（默认 1000，可指定 10000 等更大规模）
 moon run cmd benchmark 10000
 
 # 完整测试套件
-moon test   # 339/339 passed
+moon test   # 340/340 passed
 
 # 高级空间分析示例
 moon run cmd kmeans 3                      # K-Means 聚类（3 大宏观区域）
@@ -30,6 +35,7 @@ moon run cmd sde                           # 标准差椭圆
 ## 特性
 
 - **地址解析**：支持多格式地址字符串解析，特别是针对中文地址（如"北京市海淀区颐和园路5号"）的智能行政区划识别
+- **语义地址匹配**：基于特征提取 + Dice 系数 + 启发式规则的三层分类器（完全匹配/部分匹配/不匹配），在 20k 条真实中文地址标注语料上评测，吞吐量 ~24k pairs/s
 - **地理运算**：内置 Haversine 距离计算、方位角计算、边界框（BBox）操作
 - **空间索引**：基于网格的空间索引（BBox 范围查询）与 R-tree（亚线性的 k 最近邻搜索与范围查询）
 - **名称索引**：支持精确匹配、前缀匹配、子串匹配、通配符匹配的名称查找
@@ -162,7 +168,7 @@ moonbitGEODB/
 |------|------|
 | **types** | 定义 `GeoPoint`（地理坐标点）、`Address`（结构化地址）、`GeoEntry`（数据库条目）、`BBox`（边界框）等核心数据类型 |
 | **geo** | 实现 Haversine 公式、Geohash 编解码、WGS84↔GCJ-02 坐标转换、凸包计算、Voronoi 图（泰森多边形）、Moran's I 空间自相关、Getis-Ord Gi* 热点分析、LISA 局部聚类、多边形面积、点-in-多边形、径向密度等地理运算 |
-| **parser** | 支持逗号分隔、制表符分隔、中文行政区划等多种地址格式的解析 |
+| **parser** | 支持逗号分隔、制表符分隔、中文行政区划等多种地址格式的解析；新增**语义地址匹配器**（`address_match.mbt`）——基于特征提取+Dice系数+启发式规则，实现三层分类（完全匹配/部分匹配/不匹配），可对数据库内地址做模糊语义检索 |
 | **index** | 网格空间索引加速 BBox 查询；R-tree（`rtree.mbt`）提供亚线性的 k 最近邻与范围查询；基于 HashMap 的名称/标签/地址索引 |
 | **persist** | 二进制编解码（codec.mbt）、GeoEntry 序列化（binary.mbt）、C FFI IO（persist_native.mbt）、原子写入与备份 |
 | **gen** | 包含 37 个主要中国城市（含真实坐标）、街道名、门牌号的随机地址生成器 |
@@ -271,7 +277,9 @@ moon run cmd lisa-lng                      局部 Moran's I LISA（经度）
 moon run cmd kriging <lat> <lng> [k]       Kriging 克里金插值
 moon run cmd clear                 清空所有条目
 moon run cmd help                  显示帮助
-moon run cmd help                  显示帮助
+moon run cmd addr-match <q> <c>    语义地址匹配（查询 vs 候选）
+moon run cmd addr-eval <path> [N]  评测地址匹配器（JSONL 语料）
+moon run cmd corpus-db [N]         从真实地址语料构建空间 DB
 ```
 
 ### CLI 使用示例
@@ -504,7 +512,7 @@ let db = @gen.gen_db(500)
 moon test
 ```
 
-测试覆盖（**339 个测试**）：
+测试覆盖（**340 个测试**）：
 - 类型构造与序列化
 - 地理距离与 BBox 运算
 - **K-Means / SDE / Moran's I / TSP / 2-opt / IDW / Concave Hull / Kriging** 高级算法
@@ -514,6 +522,7 @@ moon test
 - DBSCAN 密度聚类
 - 径向密度分析
 - 地址解析（中文、英文、多格式）
+- **语义地址匹配（中文地址三层分类器）**
 - 空间索引（R-tree + grid）与名称索引
 - 数据库 CRUD 操作
 - 标签查询与聚合
@@ -574,6 +583,21 @@ $ moon run cmd dbscan 50.0 3
 | 街道名称 | 50+ | 中山路、人民路、解放路、幸福路等 |
 
 运行 `moon run cmd seed 1000` 可快速生成 1000 条随机中国地址用于测试。
+
+### 3. 真实地址评测语料库（20k 条）
+
+`testdata/data.txt` 是一份包含 **20,000 条真实中文地址查询** 的标注语料库，每行 1 个 JSONL 记录，每条 query 配有 5 个人工标注的候选地址（完全匹配/部分匹配/不匹配），总共约 96k 对 query-candidate 对。用于：
+
+- **评测语义地址匹配器**：`moon run cmd addr-eval testdata/data.txt 0` 输出混淆矩阵 + 各分类 precision/recall/F1
+- **构建真实空间 DB**：`moon run cmd corpus-db 500` 取前 500 条记录，自动提取城市坐标，DBSCAN 聚类持久化到 `testdata/geo_corpus.db`
+- **匹配器参数调优**：调整 `address_match.mbt` 中的阈值（`standalone_dice_threshold`、`context_dice_threshold` 等）后重新运行 addr-eval 观察效果
+
+| 统计量 | 数值 |
+|--------|------|
+| query 数量 | 20,000 |
+| 候选地址对 | ~96,400 |
+| 吞吐量 | ~24,000 pairs/s (M1 级别) |
+| 混淆矩阵 | 3×3 (Exact/Partial/None) |
 
 ## 许可证
 

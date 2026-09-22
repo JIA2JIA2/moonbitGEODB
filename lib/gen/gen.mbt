@@ -986,3 +986,63 @@ test "city_count matches cities array" {
   @test.assert_eq(city_count(), cities.length())
   @test.assert_eq(city_count() >= 40, true)
 }
+
+///|
+/// Look up a known city coordinate by fuzzy-matching a city name inside
+/// a free-form address text. Returns (lat, lng) or a Chinese default
+/// coordinate if no city matched.
+fn lookup_city_coord(text : String) -> (Double, Double) {
+  // Order matters: longer city names first so 吐鲁番 beats 吐.
+  let mut i = 0
+  while i < cities.length() {
+    let name = cities[i][0]
+    if text.contains(name) {
+      let lat = @string.parse_double(cities[i][2]) catch { _ => 39.9 }
+      let lng = @string.parse_double(cities[i][3]) catch { _ => 116.4 }
+      return (lat, lng)
+    }
+    i = i + 1
+  }
+  // Chinese geographic centre as fallback.
+  (35.8617, 104.1954)
+}
+
+///|
+/// Build a GeoDB from labelled address-matching corpus records.
+/// Each query and each of its candidate POI texts becomes a GeoEntry;
+/// coordinates are taken from the first known city name found in the
+/// text, with a tiny random jitter so DBSCAN can cluster near-duplicates.
+pub fn corpus_db(records : Array[@parser.AddrMatchRecord]) -> @db.GeoDB {
+  let db = @db.GeoDB::in_memory()
+  let rand = @random.Rand::new()
+  let mut idx = 0
+  for rec in records {
+    let (qlat, qlng) = lookup_city_coord(rec.query)
+    let qid = "q_" + idx.to_string()
+    db.insert(@types.GeoEntry::make(
+      qid,
+      rec.query,
+      @types.Address::empty(),
+      @types.GeoPoint::make(
+        qlat + (rand.double() - 0.5) * 0.01,
+        qlng + (rand.double() - 0.5) * 0.01,
+      ),
+    ))
+    idx = idx + 1
+    for c in rec.candidates {
+      let (clat, clng) = lookup_city_coord(c.text)
+      let cid = "c_" + idx.to_string()
+      db.insert(@types.GeoEntry::make(
+        cid,
+        c.text,
+        @types.Address::empty(),
+        @types.GeoPoint::make(
+          clat + (rand.double() - 0.5) * 0.01,
+          clng + (rand.double() - 0.5) * 0.01,
+        ),
+      ))
+      idx = idx + 1
+    }
+  }
+  db
+}
