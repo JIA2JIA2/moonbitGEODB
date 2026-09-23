@@ -662,6 +662,16 @@ fn main {
     return
   }
 
+  if cmd == "addr-feat-dump" {
+    let path = if args.length() > 2 {
+      args.get(2).unwrap()
+    } else {
+      "testdata/data.txt"
+    }
+    run_addr_feat_dump(path)
+    return
+  }
+
   if cmd == "corpus-db" {
     let n = if args.length() > 2 {
       @string.parse_int(args.get(2).unwrap()) catch {
@@ -2531,6 +2541,67 @@ fn run_addr_eval(path : String, max_records : Int) -> Unit {
     println("  === DIAG: gold=不匹配 pred=完全匹配 (first " + diag_n2e.length().to_string() + ") ===")
     for s in diag_n2e {
       println(s)
+    }
+  }
+}
+
+/// Dump all intermediate features for every query-candidate pair as TSV.
+/// Columns: dice,road_b,feature_recall,name_recall,admin_hit,road_hit,
+/// town_hit,context_ok,house_recall,house_conflict,veto,q_structured,
+/// c_structured,feat_overlap,weak_core_exact,fuzzy_poi_overlap,
+/// reverse_poi_overlap,road_conflict,main_hit,house_missing,foreign_city,
+/// q_roads,c_roads,q_feats,c_feats,score,gold_level
+/// gold_level: 0=Exact, 1=Partial, 2=None
+fn run_addr_feat_dump(path : String) -> Unit {
+  let content = match @persist.load_text(path) {
+    Ok(s) => s
+    Err(e) => {
+      println("Error: " + e)
+      return
+    }
+  }
+  let records : Array[@parser.AddrMatchRecord] = []
+  for line in content.split("\n").collect() {
+    match @parser.parse_match_record(line.to_owned()) {
+      Some(r) => records.push(r)
+      None => ()
+    }
+  }
+  let header = "dice\troad_b\tfeat\tname\tadmin_hit\troad_hit\ttown_hit\tcontext_ok\thouse_recall\thouse_conflict\tveto\tq_struct\tc_struct\tfeat_overlap\tweak_core\tfuzzy_poi\treverse_poi\troad_conflict\tmain_hit\thouse_missing\tforeign_city\tq_roads\tc_roads\tq_feats\tc_feats\tscore\tgold"
+  println(header)
+  for r in records {
+    for c in r.candidates {
+      let (_mr, fb) = @parser.match_address_ex(r.query, c.text)
+      let gi = addr_level_idx(c.level)
+      println(
+        fb.dice.to_string() + "\t" +
+          fb.road_b.to_string() + "\t" +
+          fb.feature_recall.to_string() + "\t" +
+          fb.name_recall.to_string() + "\t" +
+          fb.admin_hit.to_string() + "\t" +
+          fb.road_hit.to_string() + "\t" +
+          fb.town_hit.to_string() + "\t" +
+          fb.context_ok.to_string() + "\t" +
+          fb.house_recall.to_string() + "\t" +
+          fb.house_conflict.to_string() + "\t" +
+          fb.veto.to_string() + "\t" +
+          fb.q_structured.to_string() + "\t" +
+          fb.c_structured.to_string() + "\t" +
+          fb.feat_overlap.to_string() + "\t" +
+          fb.weak_core_exact.to_string() + "\t" +
+          fb.fuzzy_poi_overlap.to_string() + "\t" +
+          fb.reverse_poi_overlap.to_string() + "\t" +
+          fb.road_conflict.to_string() + "\t" +
+          fb.main_hit.to_string() + "\t" +
+          fb.house_missing.to_string() + "\t" +
+          fb.foreign_city.to_string() + "\t" +
+          fb.q_roads.to_string() + "\t" +
+          fb.c_roads.to_string() + "\t" +
+          fb.q_feats.to_string() + "\t" +
+          fb.c_feats.to_string() + "\t" +
+          fb.score.to_string() + "\t" +
+          gi.to_string()
+      )
     }
   }
 }

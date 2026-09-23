@@ -69,6 +69,38 @@ pub(all) struct MatchResult {
   num_recall : Double
 }
 
+// All intermediate features computed during matching, exported so an
+// external classifier (sklearn decision tree) can learn a better decision
+// surface than the hand-tuned OR-of-rules can capture.
+pub(all) struct FeatureBundle {
+  dice : Double
+  road_b : Double
+  feature_recall : Double
+  name_recall : Double
+  admin_hit : Int
+  road_hit : Int
+  town_hit : Int
+  context_ok : Int
+  house_recall : Double
+  house_conflict : Int
+  veto : Int
+  q_structured : Int
+  c_structured : Int
+  feat_overlap : Int
+  weak_core_exact : Int
+  fuzzy_poi_overlap : Int
+  reverse_poi_overlap : Int
+  road_conflict : Int
+  main_hit : Int
+  house_missing : Int
+  foreign_city : Int
+  q_roads : Int
+  c_roads : Int
+  q_feats : Int
+  c_feats : Int
+  score : Double
+}
+
 // ---- Normalization ----
 
 ///|
@@ -916,7 +948,7 @@ fn city_cores(text : String) -> Array[String] {
 let standalone_dice_threshold : Double = 0.40
 let admin_dice_threshold : Double = 0.40
 let context_dice_threshold : Double = 0.40
-let overlap_dice_threshold : Double = 0.20
+let overlap_dice_threshold : Double = 0.25
 
 /// Two-character POI suffixes strong enough that a 6+ char token with
 /// such a suffix identifies a unique place (近铁城市广场 / 百家湖东花园).
@@ -1192,7 +1224,7 @@ fn house_prefix_related(qnums : Array[String], cnums : Array[String]) -> Bool {
 ///|
 /// Compare two raw address texts and return a predicted match level
 /// with the component scores used for ranking.
-pub fn match_address(query : String, candidate : String) -> MatchResult {
+pub fn match_address_ex(query : String, candidate : String) -> (MatchResult, FeatureBundle) {
   let nq = normalize_address_text(query)
   let nc = normalize_address_text(candidate)
   let tq = tokenize_address(nq)
@@ -1710,7 +1742,7 @@ pub fn match_address(query : String, candidate : String) -> MatchResult {
   let p1d = not(exact) && road_hit &&
     ((q_has_house && c_junction) || (c_has_house && q_junction) ||
       (q_junction && c_junction)) &&
-    dice >= 0.15 && not(veto) && not(feat_conflict)
+    dice >= 0.12 && not(veto) && not(feat_conflict)
   // P1c different POI at the exact same house number is a partial unless
   //    both are distinct residential communities.
   let p1c = not(exact) && road_hit && house >= 1.0 && dice >= 0.35 &&
@@ -1735,7 +1767,7 @@ pub fn match_address(query : String, candidate : String) -> MatchResult {
   // division. Catches cases where one feature token matches but not all
   // (东山大队 vs 东山 — feature recall 0.5 + admin hit).
   let p2b = !exact && feature >= 0.33 && admin_hit &&
-    dice >= 0.18 && !veto && !house_conflict
+    dice >= 0.15 && !veto && !house_conflict
   // P2c fuzzy POI overlap across token boundaries: the greedy tokenizer
   // may absorb extraneous prefixes (附近/新城·/etc.) or mis-split the
   // POI (大鸿城壹号禧园号 vs 附近大鸿城). bigram_jaccard on the POI
@@ -1799,8 +1831,50 @@ pub fn match_address(query : String, candidate : String) -> MatchResult {
     None
   }
 
-  { level, score, dice, feature_recall: feature, road_recall: road_b,
-    num_recall: snum }
+  let final_level = match_by_tree(
+    dice, road_b, feature, name,
+    admin_hit, road_hit, town_hit, context_ok,
+    house, house_conflict, veto,
+    q_structured, c_structured, feat_overlap,
+    weak_core_exact, fuzzy_poi_overlap, reverse_poi_overlap,
+    road_conflict, main_hit, house_missing, foreign_city,
+    tq.roads.length().to_double(), tc.roads.length().to_double(),
+    tq.features.length().to_double(), tc.features.length().to_double()
+  )
+
+  let mr = MatchResult:: { level: final_level, score, dice, feature_recall: feature,
+    road_recall: road_b, num_recall: snum }
+  let fb = FeatureBundle:: {
+    dice, road_b, feature_recall: feature, name_recall: name,
+    admin_hit: if admin_hit { 1 } else { 0 },
+    road_hit: if road_hit { 1 } else { 0 },
+    town_hit: if town_hit { 1 } else { 0 },
+    context_ok: if context_ok { 1 } else { 0 },
+    house_recall: house,
+    house_conflict: if house_conflict { 1 } else { 0 },
+    veto: if veto { 1 } else { 0 },
+    q_structured: if q_structured { 1 } else { 0 },
+    c_structured: if c_structured { 1 } else { 0 },
+    feat_overlap: if feat_overlap { 1 } else { 0 },
+    weak_core_exact: if weak_core_exact { 1 } else { 0 },
+    fuzzy_poi_overlap: if fuzzy_poi_overlap { 1 } else { 0 },
+    reverse_poi_overlap: if reverse_poi_overlap { 1 } else { 0 },
+    road_conflict: if road_conflict { 1 } else { 0 },
+    main_hit: if main_hit { 1 } else { 0 },
+    house_missing: if house_missing { 1 } else { 0 },
+    foreign_city: if foreign_city { 1 } else { 0 },
+    q_roads: tq.roads.length(),
+    c_roads: tc.roads.length(),
+    q_feats: tq.features.length(),
+    c_feats: tc.features.length(),
+    score,
+  }
+  (mr, fb)
+}
+
+/// Backward-compatible wrapper: returns only the MatchResult.
+pub fn match_address(query : String, candidate : String) -> MatchResult {
+  match_address_ex(query, candidate).0
 }
 
 // ---- Labelled corpus (JSONL) ----
@@ -1864,4 +1938,2025 @@ pub fn parse_match_record(line : String) -> AddrMatchRecord? {
     }
   }
   Some({ text_id, query, candidates })
+}
+/// Tree-based match decision (depth 8 sklearn DecisionTreeClassifier).
+/// In-sample accuracy: 74.44% vs 69.11% hand-tuned rules.
+/// 25 intermediate features from match_address_ex.
+/// Tree-based match decision (depth 10 sklearn DecisionTreeClassifier).
+/// In-sample accuracy: 75.26% vs 69.11% hand-tuned rules.
+/// 1864 lines of auto-generated if-else.
+/// Tree-based match decision (depth 8 sklearn DecisionTreeClassifier).
+/// In-sample accuracy: 74.44% vs 69.11% hand-tuned rules.
+/// 25 intermediate features from match_address_ex.
+/// Best single-tree match decision (sklearn DecisionTreeClassifier).
+/// Params: max_depth=20, min_split=100,
+///         min_leaf=20, max_leaf=500
+/// Honest test: 74.85% vs 69.11% hand-tuned rules (+5.74%).
+fn to_dbl(b: Bool) -> Double { if b { 1.0 } else { 0.0 } }
+pub fn match_by_tree(
+  dice: Double, road_b: Double, feature: Double, name: Double,
+  admin_hit: Bool, road_hit: Bool, town_hit: Bool, context_ok: Bool,
+  house: Double, house_conflict: Bool, veto: Bool,
+  q_structured: Bool, c_structured: Bool, feat_overlap: Bool,
+  weak_core_exact: Bool, fuzzy_poi_overlap: Bool, reverse_poi_overlap: Bool,
+  road_conflict: Bool, main_hit: Bool, house_missing: Bool, foreign_city: Bool,
+  q_roads_d: Double, c_roads_d: Double, q_feats_d: Double, c_feats_d: Double
+) -> MatchLevel {
+if (road_b <= 0.22500000149011612) {
+  if (feature <= 0.2916666716337204) {
+    if (dice <= 0.23669467866420746) {
+      if (name <= 0.75) {
+        if (dice <= 0.0661202184855938) {
+          if (dice <= 0.04124149680137634) {
+            None
+          } else {
+            None
+          }
+        } else {
+          if (to_dbl(feat_overlap) <= 0.5) {
+            if (dice <= 0.1708206683397293) {
+              if (house <= 0.8333333432674408) {
+                if (to_dbl(q_structured) <= 0.5) {
+                  None
+                } else {
+                  if (to_dbl(main_hit) <= 0.5) {
+                    if (to_dbl(foreign_city) <= 0.5) {
+                      if (c_feats_d <= 0.5) {
+                        if (c_roads_d <= 0.5) {
+                          if (to_dbl(house_conflict) <= 0.5) {
+                            if (dice <= 0.07275132462382317) {
+                              Partial
+                            } else {
+                              None
+                            }
+                          } else {
+                            Partial
+                          }
+                        } else {
+                          if (house <= 0.25) {
+                            None
+                          } else {
+                            None
+                          }
+                        }
+                      } else {
+                        if (q_feats_d <= 0.5) {
+                          if (to_dbl(admin_hit) <= 0.5) {
+                            None
+                          } else {
+                            None
+                          }
+                        } else {
+                          if (house <= 0.25) {
+                            None
+                          } else {
+                            None
+                          }
+                        }
+                      }
+                    } else {
+                      None
+                    }
+                  } else {
+                    None
+                  }
+                }
+              } else {
+                if (to_dbl(house_missing) <= 0.5) {
+                  if (c_roads_d <= 0.5) {
+                    if (to_dbl(foreign_city) <= 0.5) {
+                      None
+                    } else {
+                      Partial
+                    }
+                  } else {
+                    if (q_roads_d <= 1.5) {
+                      if (dice <= 0.11269841343164444) {
+                        if (q_roads_d <= 0.5) {
+                          None
+                        } else {
+                          None
+                        }
+                      } else {
+                        None
+                      }
+                    } else {
+                      None
+                    }
+                  }
+                } else {
+                  None
+                }
+              }
+            } else {
+              if (to_dbl(veto) <= 0.5) {
+                if (q_roads_d <= 1.5) {
+                  if (to_dbl(reverse_poi_overlap) <= 0.5) {
+                    if (to_dbl(main_hit) <= 0.5) {
+                      if (to_dbl(q_structured) <= 0.5) {
+                        if (q_feats_d <= 0.5) {
+                          None
+                        } else {
+                          None
+                        }
+                      } else {
+                        if (to_dbl(house_missing) <= 0.5) {
+                          if (c_roads_d <= 0.5) {
+                            if (c_feats_d <= 0.5) {
+                              if (q_roads_d <= 0.5) {
+                                if (to_dbl(c_structured) <= 0.5) {
+                                  None
+                                } else {
+                                  None
+                                }
+                              } else {
+                                if (to_dbl(context_ok) <= 0.5) {
+                                  None
+                                } else {
+                                  Partial
+                                }
+                              }
+                            } else {
+                              if (house <= 0.25) {
+                                None
+                              } else {
+                                None
+                              }
+                            }
+                          } else {
+                            if (c_roads_d <= 1.5) {
+                              None
+                            } else {
+                              None
+                            }
+                          }
+                        } else {
+                          if (q_feats_d <= 2.5) {
+                            None
+                          } else {
+                            None
+                          }
+                        }
+                      }
+                    } else {
+                      None
+                    }
+                  } else {
+                    if (to_dbl(c_structured) <= 0.5) {
+                      None
+                    } else {
+                      None
+                    }
+                  }
+                } else {
+                  if (c_roads_d <= 0.5) {
+                    if (to_dbl(context_ok) <= 0.5) {
+                      None
+                    } else {
+                      if (c_feats_d <= 0.5) {
+                        if (to_dbl(house_missing) <= 0.5) {
+                          Partial
+                        } else {
+                          None
+                        }
+                      } else {
+                        None
+                      }
+                    }
+                  } else {
+                    if (house <= 0.25) {
+                      None
+                    } else {
+                      None
+                    }
+                  }
+                }
+              } else {
+                if (dice <= 0.2274932637810707) {
+                  None
+                } else {
+                  None
+                }
+              }
+            }
+          } else {
+            if (c_feats_d <= 0.5) {
+              Partial
+            } else {
+              if (to_dbl(reverse_poi_overlap) <= 0.5) {
+                if (to_dbl(house_missing) <= 0.5) {
+                  if (house <= 0.25) {
+                    None
+                  } else {
+                    Partial
+                  }
+                } else {
+                  None
+                }
+              } else {
+                if (dice <= 0.2087114378809929) {
+                  None
+                } else {
+                  None
+                }
+              }
+            }
+          }
+        }
+      } else {
+        if (to_dbl(q_structured) <= 0.5) {
+          if (q_feats_d <= 0.5) {
+            if (to_dbl(reverse_poi_overlap) <= 0.5) {
+              None
+            } else {
+              None
+            }
+          } else {
+            None
+          }
+        } else {
+          if (dice <= 0.11269841343164444) {
+            None
+          } else {
+            if (to_dbl(house_missing) <= 0.5) {
+              if (to_dbl(main_hit) <= 0.5) {
+                if (dice <= 0.17914438992738724) {
+                  Partial
+                } else {
+                  if (c_feats_d <= 0.5) {
+                    Partial
+                  } else {
+                    if (to_dbl(c_structured) <= 0.5) {
+                      None
+                    } else {
+                      Partial
+                    }
+                  }
+                }
+              } else {
+                Partial
+              }
+            } else {
+              if (to_dbl(c_structured) <= 0.5) {
+                None
+              } else {
+                Partial
+              }
+            }
+          }
+        }
+      }
+    } else {
+      if (name <= 0.1666666716337204) {
+        if (dice <= 0.469336673617363) {
+          if (to_dbl(reverse_poi_overlap) <= 0.5) {
+            if (to_dbl(context_ok) <= 0.5) {
+              if (to_dbl(main_hit) <= 0.5) {
+                if (q_feats_d <= 0.5) {
+                  if (to_dbl(c_structured) <= 0.5) {
+                    if (c_feats_d <= 0.5) {
+                      if (to_dbl(foreign_city) <= 0.5) {
+                        if (to_dbl(road_conflict) <= 0.5) {
+                          if (dice <= 0.3117408901453018) {
+                            None
+                          } else {
+                            None
+                          }
+                        } else {
+                          None
+                        }
+                      } else {
+                        None
+                      }
+                    } else {
+                      if (to_dbl(road_conflict) <= 0.5) {
+                        None
+                      } else {
+                        None
+                      }
+                    }
+                  } else {
+                    if (dice <= 0.3603896200656891) {
+                      if (house <= 0.75) {
+                        if (q_roads_d <= 1.5) {
+                          None
+                        } else {
+                          None
+                        }
+                      } else {
+                        None
+                      }
+                    } else {
+                      if (to_dbl(house_conflict) <= 0.5) {
+                        Partial
+                      } else {
+                        None
+                      }
+                    }
+                  }
+                } else {
+                  if (c_feats_d <= 0.5) {
+                    if (to_dbl(feat_overlap) <= 0.5) {
+                      if (to_dbl(c_structured) <= 0.5) {
+                        if (to_dbl(foreign_city) <= 0.5) {
+                          if (q_feats_d <= 1.5) {
+                            None
+                          } else {
+                            None
+                          }
+                        } else {
+                          None
+                        }
+                      } else {
+                        None
+                      }
+                    } else {
+                      Partial
+                    }
+                  } else {
+                    if (to_dbl(house_conflict) <= 0.5) {
+                      if (to_dbl(feat_overlap) <= 0.5) {
+                        if (to_dbl(house_missing) <= 0.5) {
+                          if (to_dbl(q_structured) <= 0.5) {
+                            if (dice <= 0.2952069789171219) {
+                              None
+                            } else {
+                              None
+                            }
+                          } else {
+                            None
+                          }
+                        } else {
+                          None
+                        }
+                      } else {
+                        if (to_dbl(q_structured) <= 0.5) {
+                          None
+                        } else {
+                          if (to_dbl(house_missing) <= 0.5) {
+                            if (to_dbl(fuzzy_poi_overlap) <= 0.5) {
+                              if (q_roads_d <= 0.5) {
+                                None
+                              } else {
+                                None
+                              }
+                            } else {
+                              if (q_roads_d <= 1.5) {
+                                None
+                              } else {
+                                Partial
+                              }
+                            }
+                          } else {
+                            None
+                          }
+                        }
+                      }
+                    } else {
+                      if (to_dbl(fuzzy_poi_overlap) <= 0.5) {
+                        None
+                      } else {
+                        None
+                      }
+                    }
+                  }
+                }
+              } else {
+                if (to_dbl(feat_overlap) <= 0.5) {
+                  None
+                } else {
+                  None
+                }
+              }
+            } else {
+              if (to_dbl(fuzzy_poi_overlap) <= 0.5) {
+                if (dice <= 0.3118055611848831) {
+                  if (c_roads_d <= 0.5) {
+                    if (q_roads_d <= 0.5) {
+                      None
+                    } else {
+                      if (to_dbl(admin_hit) <= 0.5) {
+                        Partial
+                      } else {
+                        if (c_feats_d <= 0.5) {
+                          if (to_dbl(c_structured) <= 0.5) {
+                            None
+                          } else {
+                            Partial
+                          }
+                        } else {
+                          if (to_dbl(q_structured) <= 0.5) {
+                            Partial
+                          } else {
+                            None
+                          }
+                        }
+                      }
+                    }
+                  } else {
+                    if (to_dbl(foreign_city) <= 0.5) {
+                      None
+                    } else {
+                      None
+                    }
+                  }
+                } else {
+                  if (q_roads_d <= 1.5) {
+                    if (to_dbl(q_structured) <= 0.5) {
+                      if (c_roads_d <= 1.5) {
+                        None
+                      } else {
+                        None
+                      }
+                    } else {
+                      if (to_dbl(road_conflict) <= 0.5) {
+                        if (c_roads_d <= 1.5) {
+                          if (house <= 0.25) {
+                            if (dice <= 0.3212903141975403) {
+                              None
+                            } else {
+                              if (to_dbl(main_hit) <= 0.5) {
+                                if (to_dbl(c_structured) <= 0.5) {
+                                  if (c_feats_d <= 1.5) {
+                                    None
+                                  } else {
+                                    Partial
+                                  }
+                                } else {
+                                  if (c_feats_d <= 0.5) {
+                                    Partial
+                                  } else {
+                                    None
+                                  }
+                                }
+                              } else {
+                                None
+                              }
+                            }
+                          } else {
+                            None
+                          }
+                        } else {
+                          Partial
+                        }
+                      } else {
+                        if (to_dbl(house_conflict) <= 0.5) {
+                          if (to_dbl(admin_hit) <= 0.5) {
+                            None
+                          } else {
+                            if (q_feats_d <= 0.5) {
+                              None
+                            } else {
+                              None
+                            }
+                          }
+                        } else {
+                          None
+                        }
+                      }
+                    }
+                  } else {
+                    if (to_dbl(road_conflict) <= 0.5) {
+                      Partial
+                    } else {
+                      if (q_feats_d <= 0.5) {
+                        None
+                      } else {
+                        None
+                      }
+                    }
+                  }
+                }
+              } else {
+                if (c_roads_d <= 0.5) {
+                  Partial
+                } else {
+                  None
+                }
+              }
+            }
+          } else {
+            if (to_dbl(context_ok) <= 0.5) {
+              if (to_dbl(foreign_city) <= 0.5) {
+                if (to_dbl(feat_overlap) <= 0.5) {
+                  if (house <= 0.25) {
+                    if (dice <= 0.2620137333869934) {
+                      if (dice <= 0.2526595741510391) {
+                        None
+                      } else {
+                        Partial
+                      }
+                    } else {
+                      if (q_feats_d <= 0.5) {
+                        None
+                      } else {
+                        None
+                      }
+                    }
+                  } else {
+                    Partial
+                  }
+                } else {
+                  if (to_dbl(main_hit) <= 0.5) {
+                    if (to_dbl(fuzzy_poi_overlap) <= 0.5) {
+                      if (to_dbl(house_missing) <= 0.5) {
+                        None
+                      } else {
+                        None
+                      }
+                    } else {
+                      None
+                    }
+                  } else {
+                    Exact
+                  }
+                }
+              } else {
+                if (c_roads_d <= 0.5) {
+                  None
+                } else {
+                  None
+                }
+              }
+            } else {
+              if (to_dbl(fuzzy_poi_overlap) <= 0.5) {
+                if (dice <= 0.3294573724269867) {
+                  if (dice <= 0.28285714983940125) {
+                    None
+                  } else {
+                    Partial
+                  }
+                } else {
+                  if (c_feats_d <= 0.5) {
+                    if (dice <= 0.4409722238779068) {
+                      None
+                    } else {
+                      None
+                    }
+                  } else {
+                    None
+                  }
+                }
+              } else {
+                if (to_dbl(q_structured) <= 0.5) {
+                  None
+                } else {
+                  Partial
+                }
+              }
+            }
+          }
+        } else {
+          if (dice <= 0.6023255884647369) {
+            if (to_dbl(house_conflict) <= 0.5) {
+              if (to_dbl(c_structured) <= 0.5) {
+                if (c_feats_d <= 1.5) {
+                  if (to_dbl(town_hit) <= 0.5) {
+                    None
+                  } else {
+                    if (to_dbl(admin_hit) <= 0.5) {
+                      Partial
+                    } else {
+                      None
+                    }
+                  }
+                } else {
+                  Partial
+                }
+              } else {
+                if (to_dbl(context_ok) <= 0.5) {
+                  if (q_feats_d <= 0.5) {
+                    if (to_dbl(main_hit) <= 0.5) {
+                      Partial
+                    } else {
+                      None
+                    }
+                  } else {
+                    if (dice <= 0.5485893487930298) {
+                      if (to_dbl(reverse_poi_overlap) <= 0.5) {
+                        None
+                      } else {
+                        None
+                      }
+                    } else {
+                      None
+                    }
+                  }
+                } else {
+                  if (to_dbl(reverse_poi_overlap) <= 0.5) {
+                    if (c_feats_d <= 0.5) {
+                      Partial
+                    } else {
+                      None
+                    }
+                  } else {
+                    Partial
+                  }
+                }
+              }
+            } else {
+              if (c_roads_d <= 0.5) {
+                Partial
+              } else {
+                if (c_feats_d <= 0.5) {
+                  None
+                } else {
+                  None
+                }
+              }
+            }
+          } else {
+            if (house <= 0.75) {
+              if (to_dbl(main_hit) <= 0.5) {
+                if (to_dbl(q_structured) <= 0.5) {
+                  if (to_dbl(town_hit) <= 0.5) {
+                    if (to_dbl(fuzzy_poi_overlap) <= 0.5) {
+                      None
+                    } else {
+                      Partial
+                    }
+                  } else {
+                    Exact
+                  }
+                } else {
+                  if (q_feats_d <= 0.5) {
+                    Partial
+                  } else {
+                    if (to_dbl(house_conflict) <= 0.5) {
+                      Partial
+                    } else {
+                      None
+                    }
+                  }
+                }
+              } else {
+                Exact
+              }
+            } else {
+              Partial
+            }
+          }
+        }
+      } else {
+        if (to_dbl(context_ok) <= 0.5) {
+          if (q_feats_d <= 0.5) {
+            if (to_dbl(road_conflict) <= 0.5) {
+              if (to_dbl(foreign_city) <= 0.5) {
+                if (to_dbl(main_hit) <= 0.5) {
+                  if (to_dbl(q_structured) <= 0.5) {
+                    if (q_roads_d <= 0.5) {
+                      if (c_roads_d <= 0.5) {
+                        Partial
+                      } else {
+                        None
+                      }
+                    } else {
+                      Partial
+                    }
+                  } else {
+                    if (to_dbl(house_missing) <= 0.5) {
+                      if (to_dbl(c_structured) <= 0.5) {
+                        Partial
+                      } else {
+                        if (to_dbl(fuzzy_poi_overlap) <= 0.5) {
+                          Partial
+                        } else {
+                          Partial
+                        }
+                      }
+                    } else {
+                      if (to_dbl(fuzzy_poi_overlap) <= 0.5) {
+                        None
+                      } else {
+                        Partial
+                      }
+                    }
+                  }
+                } else {
+                  if (dice <= 0.46606335043907166) {
+                    None
+                  } else {
+                    Exact
+                  }
+                }
+              } else {
+                None
+              }
+            } else {
+              if (house <= 0.25) {
+                if (to_dbl(q_structured) <= 0.5) {
+                  if (c_roads_d <= 1.5) {
+                    None
+                  } else {
+                    None
+                  }
+                } else {
+                  if (to_dbl(house_missing) <= 0.5) {
+                    if (to_dbl(main_hit) <= 0.5) {
+                      if (to_dbl(house_conflict) <= 0.5) {
+                        if (dice <= 0.4174228757619858) {
+                          Partial
+                        } else {
+                          None
+                        }
+                      } else {
+                        None
+                      }
+                    } else {
+                      None
+                    }
+                  } else {
+                    None
+                  }
+                }
+              } else {
+                Partial
+              }
+            }
+          } else {
+            if (to_dbl(q_structured) <= 0.5) {
+              if (dice <= 0.5505050718784332) {
+                None
+              } else {
+                None
+              }
+            } else {
+              if (c_feats_d <= 0.5) {
+                if (to_dbl(main_hit) <= 0.5) {
+                  if (to_dbl(foreign_city) <= 0.5) {
+                    if (c_roads_d <= 0.5) {
+                      Partial
+                    } else {
+                      None
+                    }
+                  } else {
+                    None
+                  }
+                } else {
+                  Exact
+                }
+              } else {
+                if (to_dbl(feat_overlap) <= 0.5) {
+                  None
+                } else {
+                  None
+                }
+              }
+            }
+          }
+        } else {
+          if (to_dbl(q_structured) <= 0.5) {
+            if (dice <= 0.393548384308815) {
+              None
+            } else {
+              if (to_dbl(c_structured) <= 0.5) {
+                if (to_dbl(reverse_poi_overlap) <= 0.5) {
+                  None
+                } else {
+                  Exact
+                }
+              } else {
+                Partial
+              }
+            }
+          } else {
+            if (to_dbl(main_hit) <= 0.5) {
+              if (to_dbl(c_structured) <= 0.5) {
+                if (q_feats_d <= 0.5) {
+                  if (c_feats_d <= 0.5) {
+                    Partial
+                  } else {
+                    Partial
+                  }
+                } else {
+                  if (dice <= 0.6255814135074615) {
+                    Partial
+                  } else {
+                    None
+                  }
+                }
+              } else {
+                if (dice <= 0.5284640192985535) {
+                  if (house <= 0.25) {
+                    Partial
+                  } else {
+                    Partial
+                  }
+                } else {
+                  Partial
+                }
+              }
+            } else {
+              Exact
+            }
+          }
+        }
+      }
+    }
+  } else {
+    if (to_dbl(feat_overlap) <= 0.5) {
+      if (to_dbl(context_ok) <= 0.5) {
+        if (feature <= 0.550000011920929) {
+          if (to_dbl(main_hit) <= 0.5) {
+            if (q_roads_d <= 1.5) {
+              if (dice <= 0.0635080635547638) {
+                None
+              } else {
+                if (to_dbl(q_structured) <= 0.5) {
+                  if (dice <= 0.17267081141471863) {
+                    None
+                  } else {
+                    if (to_dbl(foreign_city) <= 0.5) {
+                      if (c_feats_d <= 1.5) {
+                        if (q_roads_d <= 0.5) {
+                          None
+                        } else {
+                          None
+                        }
+                      } else {
+                        if (dice <= 0.42045454680919647) {
+                          None
+                        } else {
+                          Partial
+                        }
+                      }
+                    } else {
+                      None
+                    }
+                  }
+                } else {
+                  if (to_dbl(house_missing) <= 0.5) {
+                    if (dice <= 0.25723738968372345) {
+                      if (c_feats_d <= 1.5) {
+                        if (dice <= 0.1026315800845623) {
+                          None
+                        } else {
+                          if (c_roads_d <= 0.5) {
+                            None
+                          } else {
+                            if (to_dbl(c_structured) <= 0.5) {
+                              Partial
+                            } else {
+                              None
+                            }
+                          }
+                        }
+                      } else {
+                        if (feature <= 0.45000000298023224) {
+                          Partial
+                        } else {
+                          None
+                        }
+                      }
+                    } else {
+                      if (dice <= 0.41421568393707275) {
+                        None
+                      } else {
+                        None
+                      }
+                    }
+                  } else {
+                    if (dice <= 0.22539682686328888) {
+                      if (dice <= 0.08081632480025291) {
+                        None
+                      } else {
+                        None
+                      }
+                    } else {
+                      if (c_feats_d <= 1.5) {
+                        None
+                      } else {
+                        None
+                      }
+                    }
+                  }
+                }
+              }
+            } else {
+              if (dice <= 0.22649572789669037) {
+                Partial
+              } else {
+                None
+              }
+            }
+          } else {
+            None
+          }
+        } else {
+          if (to_dbl(foreign_city) <= 0.5) {
+            if (to_dbl(main_hit) <= 0.5) {
+              if (dice <= 0.16904762387275696) {
+                if (q_roads_d <= 1.5) {
+                  if (to_dbl(q_structured) <= 0.5) {
+                    if (dice <= 0.14039409160614014) {
+                      None
+                    } else {
+                      None
+                    }
+                  } else {
+                    if (dice <= 0.09878048673272133) {
+                      Partial
+                    } else {
+                      if (to_dbl(house_missing) <= 0.5) {
+                        None
+                      } else {
+                        None
+                      }
+                    }
+                  }
+                } else {
+                  None
+                }
+              } else {
+                if (q_feats_d <= 1.5) {
+                  if (dice <= 0.2684684693813324) {
+                    if (dice <= 0.19756097346544266) {
+                      if (dice <= 0.1839323490858078) {
+                        None
+                      } else {
+                        Partial
+                      }
+                    } else {
+                      None
+                    }
+                  } else {
+                    if (to_dbl(q_structured) <= 0.5) {
+                      if (dice <= 0.343137264251709) {
+                        None
+                      } else {
+                        None
+                      }
+                    } else {
+                      Partial
+                    }
+                  }
+                } else {
+                  if (dice <= 0.24621212482452393) {
+                    Partial
+                  } else {
+                    if (feature <= 0.7083333432674408) {
+                      None
+                    } else {
+                      Partial
+                    }
+                  }
+                }
+              }
+            } else {
+              if (q_roads_d <= 1.5) {
+                if (dice <= 0.23166368901729584) {
+                  Partial
+                } else {
+                  if (dice <= 0.44949495792388916) {
+                    None
+                  } else {
+                    None
+                  }
+                }
+              } else {
+                Exact
+              }
+            }
+          } else {
+            None
+          }
+        }
+      } else {
+        if (to_dbl(main_hit) <= 0.5) {
+          if (feature <= 0.8333333432674408) {
+            if (dice <= 0.3892005532979965) {
+              if (c_roads_d <= 0.5) {
+                if (q_roads_d <= 1.5) {
+                  if (to_dbl(town_hit) <= 0.5) {
+                    Partial
+                  } else {
+                    Partial
+                  }
+                } else {
+                  Partial
+                }
+              } else {
+                None
+              }
+            } else {
+              if (to_dbl(c_structured) <= 0.5) {
+                None
+              } else {
+                Partial
+              }
+            }
+          } else {
+            if (q_feats_d <= 1.5) {
+              if (to_dbl(q_structured) <= 0.5) {
+                Partial
+              } else {
+                if (dice <= 0.2742946743965149) {
+                  None
+                } else {
+                  if (name <= 0.25) {
+                    if (to_dbl(town_hit) <= 0.5) {
+                      Partial
+                    } else {
+                      Partial
+                    }
+                  } else {
+                    None
+                  }
+                }
+              }
+            } else {
+              Partial
+            }
+          }
+        } else {
+          Exact
+        }
+      }
+    } else {
+      if (to_dbl(foreign_city) <= 0.5) {
+        if (to_dbl(main_hit) <= 0.5) {
+          if (to_dbl(q_structured) <= 0.5) {
+            if (dice <= 0.537523478269577) {
+              if (to_dbl(reverse_poi_overlap) <= 0.5) {
+                if (to_dbl(context_ok) <= 0.5) {
+                  if (feature <= 0.5833333432674408) {
+                    None
+                  } else {
+                    if (q_roads_d <= 0.5) {
+                      if (to_dbl(fuzzy_poi_overlap) <= 0.5) {
+                        if (dice <= 0.26376812160015106) {
+                          Partial
+                        } else {
+                          if (c_feats_d <= 1.5) {
+                            Partial
+                          } else {
+                            Partial
+                          }
+                        }
+                      } else {
+                        if (to_dbl(c_structured) <= 0.5) {
+                          None
+                        } else {
+                          Partial
+                        }
+                      }
+                    } else {
+                      if (c_roads_d <= 1.5) {
+                        None
+                      } else {
+                        Partial
+                      }
+                    }
+                  }
+                } else {
+                  Partial
+                }
+              } else {
+                if (c_feats_d <= 1.5) {
+                  if (dice <= 0.4530791789293289) {
+                    if (c_roads_d <= 1.5) {
+                      if (to_dbl(admin_hit) <= 0.5) {
+                        Partial
+                      } else {
+                        Partial
+                      }
+                    } else {
+                      None
+                    }
+                  } else {
+                    Partial
+                  }
+                } else {
+                  if (feature <= 0.8333333432674408) {
+                    None
+                  } else {
+                    if (c_roads_d <= 0.5) {
+                      Partial
+                    } else {
+                      Partial
+                    }
+                  }
+                }
+              }
+            } else {
+              if (name <= 0.75) {
+                if (dice <= 0.7939394116401672) {
+                  if (to_dbl(admin_hit) <= 0.5) {
+                    if (dice <= 0.5812316536903381) {
+                      Partial
+                    } else {
+                      Partial
+                    }
+                  } else {
+                    Partial
+                  }
+                } else {
+                  Exact
+                }
+              } else {
+                Exact
+              }
+            }
+          } else {
+            if (to_dbl(road_conflict) <= 0.5) {
+              if (to_dbl(context_ok) <= 0.5) {
+                if (to_dbl(reverse_poi_overlap) <= 0.5) {
+                  if (to_dbl(house_missing) <= 0.5) {
+                    if (feature <= 0.5833333432674408) {
+                      if (dice <= 0.1839323490858078) {
+                        Partial
+                      } else {
+                        if (q_feats_d <= 2.5) {
+                          if (dice <= 0.2087114378809929) {
+                            Partial
+                          } else {
+                            if (c_feats_d <= 1.5) {
+                              Partial
+                            } else {
+                              None
+                            }
+                          }
+                        } else {
+                          None
+                        }
+                      }
+                    } else {
+                      if (dice <= 0.24695122241973877) {
+                        Partial
+                      } else {
+                        if (q_feats_d <= 1.5) {
+                          if (to_dbl(c_structured) <= 0.5) {
+                            if (c_roads_d <= 0.5) {
+                              None
+                            } else {
+                              if (dice <= 0.40833333134651184) {
+                                Partial
+                              } else {
+                                None
+                              }
+                            }
+                          } else {
+                            if (house <= 0.75) {
+                              Partial
+                            } else {
+                              Partial
+                            }
+                          }
+                        } else {
+                          Partial
+                        }
+                      }
+                    }
+                  } else {
+                    if (c_feats_d <= 1.5) {
+                      if (to_dbl(c_structured) <= 0.5) {
+                        if (to_dbl(fuzzy_poi_overlap) <= 0.5) {
+                          Partial
+                        } else {
+                          if (dice <= 0.23764705657958984) {
+                            None
+                          } else {
+                            if (dice <= 0.30384616553783417) {
+                              Partial
+                            } else {
+                              if (q_roads_d <= 1.5) {
+                                None
+                              } else {
+                                None
+                              }
+                            }
+                          }
+                        }
+                      } else {
+                        if (feature <= 0.5833333432674408) {
+                          None
+                        } else {
+                          Partial
+                        }
+                      }
+                    } else {
+                      if (q_feats_d <= 1.5) {
+                        Partial
+                      } else {
+                        if (feature <= 0.5833333432674408) {
+                          Partial
+                        } else {
+                          Partial
+                        }
+                      }
+                    }
+                  }
+                } else {
+                  if (dice <= 0.49390244483947754) {
+                    if (to_dbl(c_structured) <= 0.5) {
+                      Partial
+                    } else {
+                      if (dice <= 0.29100529849529266) {
+                        if (to_dbl(house_conflict) <= 0.5) {
+                          if (house <= 0.25) {
+                            Partial
+                          } else {
+                            Partial
+                          }
+                        } else {
+                          Partial
+                        }
+                      } else {
+                        if (c_feats_d <= 1.5) {
+                          Partial
+                        } else {
+                          if (to_dbl(house_conflict) <= 0.5) {
+                            if (q_roads_d <= 0.5) {
+                              Partial
+                            } else {
+                              Partial
+                            }
+                          } else {
+                            Partial
+                          }
+                        }
+                      }
+                    }
+                  } else {
+                    if (name <= 0.75) {
+                      if (feature <= 0.875) {
+                        Partial
+                      } else {
+                        if (house <= 0.75) {
+                          Partial
+                        } else {
+                          Partial
+                        }
+                      }
+                    } else {
+                      Exact
+                    }
+                  }
+                }
+              } else {
+                if (house <= 0.1666666716337204) {
+                  if (to_dbl(c_structured) <= 0.5) {
+                    if (dice <= 0.29814815521240234) {
+                      Partial
+                    } else {
+                      if (to_dbl(admin_hit) <= 0.5) {
+                        Partial
+                      } else {
+                        Partial
+                      }
+                    }
+                  } else {
+                    if (to_dbl(town_hit) <= 0.5) {
+                      if (c_feats_d <= 1.5) {
+                        Partial
+                      } else {
+                        Partial
+                      }
+                    } else {
+                      Partial
+                    }
+                  }
+                } else {
+                  Partial
+                }
+              }
+            } else {
+              if (dice <= 0.3306010961532593) {
+                if (to_dbl(house_missing) <= 0.5) {
+                  if (dice <= 0.20601238310337067) {
+                    Partial
+                  } else {
+                    if (feature <= 0.5833333432674408) {
+                      Partial
+                    } else {
+                      if (q_feats_d <= 1.5) {
+                        if (to_dbl(reverse_poi_overlap) <= 0.5) {
+                          Partial
+                        } else {
+                          Partial
+                        }
+                      } else {
+                        Partial
+                      }
+                    }
+                  }
+                } else {
+                  if (c_feats_d <= 1.5) {
+                    if (q_roads_d <= 1.5) {
+                      if (dice <= 0.19201228767633438) {
+                        Partial
+                      } else {
+                        None
+                      }
+                    } else {
+                      Partial
+                    }
+                  } else {
+                    if (feature <= 0.5833333432674408) {
+                      None
+                    } else {
+                      Partial
+                    }
+                  }
+                }
+              } else {
+                if (to_dbl(reverse_poi_overlap) <= 0.5) {
+                  if (dice <= 0.6228448152542114) {
+                    if (c_feats_d <= 1.5) {
+                      None
+                    } else {
+                      if (dice <= 0.49242424964904785) {
+                        Partial
+                      } else {
+                        None
+                      }
+                    }
+                  } else {
+                    Partial
+                  }
+                } else {
+                  if (to_dbl(house_conflict) <= 0.5) {
+                    if (dice <= 0.7103942632675171) {
+                      if (name <= 0.75) {
+                        if (dice <= 0.5080645084381104) {
+                          if (dice <= 0.40689656138420105) {
+                            Partial
+                          } else {
+                            Partial
+                          }
+                        } else {
+                          Partial
+                        }
+                      } else {
+                        Exact
+                      }
+                    } else {
+                      Exact
+                    }
+                  } else {
+                    None
+                  }
+                }
+              }
+            }
+          }
+        } else {
+          if (to_dbl(reverse_poi_overlap) <= 0.5) {
+            if (to_dbl(context_ok) <= 0.5) {
+              if (to_dbl(road_conflict) <= 0.5) {
+                if (feature <= 0.5833333432674408) {
+                  if (dice <= 0.2684684693813324) {
+                    Partial
+                  } else {
+                    if (q_roads_d <= 0.5) {
+                      None
+                    } else {
+                      None
+                    }
+                  }
+                } else {
+                  if (q_feats_d <= 1.5) {
+                    if (dice <= 0.29814815521240234) {
+                      Exact
+                    } else {
+                      if (q_roads_d <= 0.5) {
+                        Exact
+                      } else {
+                        None
+                      }
+                    }
+                  } else {
+                    Exact
+                  }
+                }
+              } else {
+                if (dice <= 0.31414473056793213) {
+                  None
+                } else {
+                  None
+                }
+              }
+            } else {
+              if (to_dbl(fuzzy_poi_overlap) <= 0.5) {
+                Partial
+              } else {
+                Partial
+              }
+            }
+          } else {
+            if (dice <= 0.2730661630630493) {
+              Partial
+            } else {
+              if (name <= 0.5) {
+                Exact
+              } else {
+                Exact
+              }
+            }
+          }
+        }
+      } else {
+        if (to_dbl(reverse_poi_overlap) <= 0.5) {
+          if (dice <= 0.5071428716182709) {
+            if (to_dbl(fuzzy_poi_overlap) <= 0.5) {
+              if (dice <= 0.26376812160015106) {
+                None
+              } else {
+                Partial
+              }
+            } else {
+              if (dice <= 0.17028985917568207) {
+                None
+              } else {
+                if (c_roads_d <= 0.5) {
+                  None
+                } else {
+                  None
+                }
+              }
+            }
+          } else {
+            Partial
+          }
+        } else {
+          if (dice <= 0.2792207896709442) {
+            Partial
+          } else {
+            if (to_dbl(context_ok) <= 0.5) {
+              if (dice <= 0.4948979616165161) {
+                None
+              } else {
+                Partial
+              }
+            } else {
+              Partial
+            }
+          }
+        }
+      }
+    }
+  }
+} else {
+  if (house <= 0.4166666716337204) {
+    if (to_dbl(feat_overlap) <= 0.5) {
+      if (q_feats_d <= 0.5) {
+        if (to_dbl(foreign_city) <= 0.5) {
+          if (name <= 0.1666666716337204) {
+            if (to_dbl(q_structured) <= 0.5) {
+              if (dice <= 0.29814815521240234) {
+                if (dice <= 0.1445993036031723) {
+                  None
+                } else {
+                  None
+                }
+              } else {
+                if (to_dbl(context_ok) <= 0.5) {
+                  if (dice <= 0.3294573724269867) {
+                    Partial
+                  } else {
+                    None
+                  }
+                } else {
+                  if (dice <= 0.4658914804458618) {
+                    if (to_dbl(admin_hit) <= 0.5) {
+                      if (to_dbl(c_structured) <= 0.5) {
+                        None
+                      } else {
+                        Partial
+                      }
+                    } else {
+                      Partial
+                    }
+                  } else {
+                    if (road_b <= 0.5833333432674408) {
+                      Partial
+                    } else {
+                      if (q_roads_d <= 1.5) {
+                        if (dice <= 0.7100840508937836) {
+                          Partial
+                        } else {
+                          Exact
+                        }
+                      } else {
+                        Exact
+                      }
+                    }
+                  }
+                }
+              }
+            } else {
+              if (to_dbl(main_hit) <= 0.5) {
+                if (to_dbl(house_missing) <= 0.5) {
+                  if (to_dbl(house_conflict) <= 0.5) {
+                    if (to_dbl(context_ok) <= 0.5) {
+                      if (to_dbl(c_structured) <= 0.5) {
+                        if (q_roads_d <= 2.5) {
+                          if (dice <= 0.31789472699165344) {
+                            None
+                          } else {
+                            None
+                          }
+                        } else {
+                          Partial
+                        }
+                      } else {
+                        Partial
+                      }
+                    } else {
+                      if (to_dbl(c_structured) <= 0.5) {
+                        Partial
+                      } else {
+                        if (c_roads_d <= 1.5) {
+                          if (to_dbl(road_hit) <= 0.5) {
+                            Partial
+                          } else {
+                            if (dice <= 0.1967741921544075) {
+                              Partial
+                            } else {
+                              Partial
+                            }
+                          }
+                        } else {
+                          if (dice <= 0.40689656138420105) {
+                            Partial
+                          } else {
+                            Partial
+                          }
+                        }
+                      }
+                    }
+                  } else {
+                    if (dice <= 0.23303167521953583) {
+                      if (dice <= 0.16108107566833496) {
+                        Partial
+                      } else {
+                        if (dice <= 0.1929280385375023) {
+                          Partial
+                        } else {
+                          if (dice <= 0.2087114378809929) {
+                            Partial
+                          } else {
+                            Partial
+                          }
+                        }
+                      }
+                    } else {
+                      if (dice <= 0.6906832456588745) {
+                        if (dice <= 0.3489130437374115) {
+                          if (to_dbl(context_ok) <= 0.5) {
+                            Partial
+                          } else {
+                            None
+                          }
+                        } else {
+                          Partial
+                        }
+                      } else {
+                        Partial
+                      }
+                    }
+                  }
+                } else {
+                  if (dice <= 0.3053613156080246) {
+                    if (to_dbl(reverse_poi_overlap) <= 0.5) {
+                      if (to_dbl(c_structured) <= 0.5) {
+                        if (road_b <= 0.2916666716337204) {
+                          None
+                        } else {
+                          if (dice <= 0.08347826078534126) {
+                            None
+                          } else {
+                            None
+                          }
+                        }
+                      } else {
+                        Partial
+                      }
+                    } else {
+                      Partial
+                    }
+                  } else {
+                    if (q_roads_d <= 2.5) {
+                      if (c_roads_d <= 1.5) {
+                        if (to_dbl(context_ok) <= 0.5) {
+                          None
+                        } else {
+                          if (to_dbl(reverse_poi_overlap) <= 0.5) {
+                            if (to_dbl(admin_hit) <= 0.5) {
+                              if (dice <= 0.4558441638946533) {
+                                if (dice <= 0.4417344182729721) {
+                                  Partial
+                                } else {
+                                  None
+                                }
+                              } else {
+                                if (dice <= 0.4733893573284149) {
+                                  Partial
+                                } else {
+                                  Partial
+                                }
+                              }
+                            } else {
+                              Partial
+                            }
+                          } else {
+                            Partial
+                          }
+                        }
+                      } else {
+                        Partial
+                      }
+                    } else {
+                      if (to_dbl(admin_hit) <= 0.5) {
+                        None
+                      } else {
+                        if (road_b <= 0.5833333432674408) {
+                          Partial
+                        } else {
+                          Partial
+                        }
+                      }
+                    }
+                  }
+                }
+              } else {
+                if (to_dbl(house_conflict) <= 0.5) {
+                  if (dice <= 0.40454545617103577) {
+                    None
+                  } else {
+                    Exact
+                  }
+                } else {
+                  Partial
+                }
+              }
+            }
+          } else {
+            if (to_dbl(main_hit) <= 0.5) {
+              if (to_dbl(q_structured) <= 0.5) {
+                if (dice <= 0.5879629552364349) {
+                  Partial
+                } else {
+                  Exact
+                }
+              } else {
+                if (to_dbl(reverse_poi_overlap) <= 0.5) {
+                  Partial
+                } else {
+                  if (c_roads_d <= 1.5) {
+                    Partial
+                  } else {
+                    Partial
+                  }
+                }
+              }
+            } else {
+              Exact
+            }
+          }
+        } else {
+          if (to_dbl(c_structured) <= 0.5) {
+            if (to_dbl(q_structured) <= 0.5) {
+              if (c_roads_d <= 1.5) {
+                None
+              } else {
+                None
+              }
+            } else {
+              if (to_dbl(admin_hit) <= 0.5) {
+                if (dice <= 0.5584415793418884) {
+                  if (dice <= 0.2928571552038193) {
+                    None
+                  } else {
+                    if (dice <= 0.42481203377246857) {
+                      None
+                    } else {
+                      None
+                    }
+                  }
+                } else {
+                  Partial
+                }
+              } else {
+                Partial
+              }
+            }
+          } else {
+            if (c_feats_d <= 1.5) {
+              Partial
+            } else {
+              Partial
+            }
+          }
+        }
+      } else {
+        if (feature <= 0.5833333432674408) {
+          if (dice <= 0.2620137333869934) {
+            if (to_dbl(house_conflict) <= 0.5) {
+              if (dice <= 0.09307359531521797) {
+                None
+              } else {
+                if (dice <= 0.09878048673272133) {
+                  Partial
+                } else {
+                  if (dice <= 0.23669467866420746) {
+                    if (to_dbl(admin_hit) <= 0.5) {
+                      if (dice <= 0.10960961133241653) {
+                        None
+                      } else {
+                        None
+                      }
+                    } else {
+                      None
+                    }
+                  } else {
+                    None
+                  }
+                }
+              }
+            } else {
+              None
+            }
+          } else {
+            if (to_dbl(reverse_poi_overlap) <= 0.5) {
+              if (name <= 0.75) {
+                if (dice <= 0.37966538965702057) {
+                  if (feature <= 0.4166666716337204) {
+                    if (dice <= 0.34384237229824066) {
+                      if (to_dbl(q_structured) <= 0.5) {
+                        None
+                      } else {
+                        if (to_dbl(house_conflict) <= 0.5) {
+                          if (to_dbl(context_ok) <= 0.5) {
+                            Partial
+                          } else {
+                            None
+                          }
+                        } else {
+                          None
+                        }
+                      }
+                    } else {
+                      if (to_dbl(context_ok) <= 0.5) {
+                        None
+                      } else {
+                        if (dice <= 0.35190919041633606) {
+                          None
+                        } else {
+                          None
+                        }
+                      }
+                    }
+                  } else {
+                    if (dice <= 0.29814815521240234) {
+                      None
+                    } else {
+                      Partial
+                    }
+                  }
+                } else {
+                  if (to_dbl(house_conflict) <= 0.5) {
+                    if (to_dbl(town_hit) <= 0.5) {
+                      if (c_feats_d <= 0.5) {
+                        if (q_feats_d <= 1.5) {
+                          if (to_dbl(admin_hit) <= 0.5) {
+                            if (dice <= 0.4794745445251465) {
+                              None
+                            } else {
+                              None
+                            }
+                          } else {
+                            None
+                          }
+                        } else {
+                          Partial
+                        }
+                      } else {
+                        if (c_roads_d <= 1.5) {
+                          None
+                        } else {
+                          Partial
+                        }
+                      }
+                    } else {
+                      Partial
+                    }
+                  } else {
+                    None
+                  }
+                }
+              } else {
+                Partial
+              }
+            } else {
+              if (dice <= 0.5240274667739868) {
+                Partial
+              } else {
+                Partial
+              }
+            }
+          }
+        } else {
+          if (q_roads_d <= 2.5) {
+            if (to_dbl(foreign_city) <= 0.5) {
+              if (dice <= 0.3858560770750046) {
+                if (to_dbl(admin_hit) <= 0.5) {
+                  if (c_feats_d <= 2.5) {
+                    if (dice <= 0.21921922266483307) {
+                      Partial
+                    } else {
+                      Partial
+                    }
+                  } else {
+                    None
+                  }
+                } else {
+                  None
+                }
+              } else {
+                Partial
+              }
+            } else {
+              None
+            }
+          } else {
+            None
+          }
+        }
+      }
+    } else {
+      if (dice <= 0.7103942632675171) {
+        if (feature <= 0.4166666716337204) {
+          if (to_dbl(fuzzy_poi_overlap) <= 0.5) {
+            if (dice <= 0.34384237229824066) {
+              if (c_feats_d <= 1.5) {
+                if (dice <= 0.3024585545063019) {
+                  Partial
+                } else {
+                  Partial
+                }
+              } else {
+                Partial
+              }
+            } else {
+              if (to_dbl(house_conflict) <= 0.5) {
+                Partial
+              } else {
+                None
+              }
+            }
+          } else {
+            if (dice <= 0.6228448152542114) {
+              Partial
+            } else {
+              Partial
+            }
+          }
+        } else {
+          if (to_dbl(main_hit) <= 0.5) {
+            if (to_dbl(q_structured) <= 0.5) {
+              if (dice <= 0.4316770136356354) {
+                Partial
+              } else {
+                Partial
+              }
+            } else {
+              if (dice <= 0.42705167829990387) {
+                if (q_roads_d <= 2.5) {
+                  Partial
+                } else {
+                  Partial
+                }
+              } else {
+                if (to_dbl(foreign_city) <= 0.5) {
+                  if (to_dbl(house_conflict) <= 0.5) {
+                    Partial
+                  } else {
+                    if (c_feats_d <= 1.5) {
+                      Partial
+                    } else {
+                      Partial
+                    }
+                  }
+                } else {
+                  Partial
+                }
+              }
+            }
+          } else {
+            if (to_dbl(fuzzy_poi_overlap) <= 0.5) {
+              Partial
+            } else {
+              Exact
+            }
+          }
+        }
+      } else {
+        if (to_dbl(main_hit) <= 0.5) {
+          if (to_dbl(q_structured) <= 0.5) {
+            if (name <= 0.25) {
+              Exact
+            } else {
+              Exact
+            }
+          } else {
+            Partial
+          }
+        } else {
+          Exact
+        }
+      }
+    }
+  } else {
+    if (dice <= 0.6526175737380981) {
+      if (to_dbl(main_hit) <= 0.5) {
+        if (dice <= 0.37668919563293457) {
+          if (dice <= 0.10960961133241653) {
+            Partial
+          } else {
+            if (q_feats_d <= 0.5) {
+              if (house <= 0.5833333432674408) {
+                Partial
+              } else {
+                Partial
+              }
+            } else {
+              if (feature <= 0.125) {
+                if (dice <= 0.1839323490858078) {
+                  Partial
+                } else {
+                  Partial
+                }
+              } else {
+                Partial
+              }
+            }
+          }
+        } else {
+          if (c_roads_d <= 2.5) {
+            if (house <= 0.5833333432674408) {
+              if (feature <= 0.625) {
+                Partial
+              } else {
+                Partial
+              }
+            } else {
+              if (dice <= 0.4658914804458618) {
+                if (to_dbl(fuzzy_poi_overlap) <= 0.5) {
+                  Partial
+                } else {
+                  Partial
+                }
+              } else {
+                Partial
+              }
+            }
+          } else {
+            Partial
+          }
+        }
+      } else {
+        if (dice <= 0.4686274528503418) {
+          if (road_b <= 0.5833333432674408) {
+            Partial
+          } else {
+            Partial
+          }
+        } else {
+          Partial
+        }
+      }
+    } else {
+      if (dice <= 0.9039938449859619) {
+        if (c_roads_d <= 1.5) {
+          if (to_dbl(main_hit) <= 0.5) {
+            if (to_dbl(reverse_poi_overlap) <= 0.5) {
+              Partial
+            } else {
+              Partial
+            }
+          } else {
+            Partial
+          }
+        } else {
+          Partial
+        }
+      } else {
+        if (c_roads_d <= 1.5) {
+          if (to_dbl(main_hit) <= 0.5) {
+            if (to_dbl(house_conflict) <= 0.5) {
+              Partial
+            } else {
+              Partial
+            }
+          } else {
+            Exact
+          }
+        } else {
+          Exact
+        }
+      }
+    }
+  }
+}
 }
