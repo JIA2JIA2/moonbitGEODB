@@ -156,6 +156,11 @@ pub fn normalize_address_text(input : String) -> String {
         ignore(sbuf.write_string("栋"))
       }
       ci = ci + 1
+    } else if ch == ('圆') {
+      // Common CJK typo: 花圆 → 花园, 沁园春圆 → 沁园春园.
+      // 圆 (circle) vs 园 (garden) — homophones on Mandarin (yuán).
+      ignore(sbuf.write_string("园"))
+      ci = ci + 1
     } else if ccode == 0xFF08 || ccode == 0xFF09 ||
       ccode == 0xFF0C || ccode == 0xFF1A ||
       ccode == 0xFF1B || ccode == 0xFF1D || ccode == 0xFF1E {
@@ -846,6 +851,18 @@ fn city_cores(text : String) -> Array[String] {
   while i < codes.length() {
     if (codes[i] == ('市').to_int() || codes[i] == ('县').to_int()) &&
       i >= 2 {
+      // "市/县" followed by a road suffix (街/路/道/巷/弄/线) is a
+      // street-name fragment (西梆子市街, 建设路县巷), not an admin
+      // district marker — skip it.
+      if i + 1 < codes.length() {
+        let next = codes[i + 1]
+        if next == ('街').to_int() || next == ('路').to_int() ||
+          next == ('道').to_int() || next == ('巷').to_int() ||
+          next == ('弄').to_int() || next == ('线').to_int() {
+          i = i + 1
+          continue
+        }
+      }
       let mut s = i - 1
       while s > i - 4 && s > 0 && is_cjk_code(codes[s - 1]) {
         s = s - 1
@@ -1600,6 +1617,13 @@ pub fn match_address(query : String, candidate : String) -> MatchResult {
   //    even light textual overlap signals the same corridor.
   let p1b = not(exact) && road_hit && junction_ok && not(q_has_feat) &&
     not(house_conflict) && dice >= 0.20 && not(veto)
+  // P1d one side is a road+house-number, the other is an intersection
+  //    description on the SAME road (中山北路467号 vs 中山北路与黄土山
+  //   交叉口). They describe different spots on the same corridor.
+  let p1d = not(exact) && road_hit &&
+    ((q_has_house && c_junction) || (c_has_house && q_junction) ||
+      (q_junction && c_junction)) &&
+    dice >= 0.15 && not(veto) && not(feat_conflict)
   // P1c different POI at the exact same house number is a partial unless
   //    both are distinct residential communities.
   let p1c = not(exact) && road_hit && house >= 1.0 && dice >= 0.35 &&
@@ -1665,7 +1689,7 @@ pub fn match_address(query : String, candidate : String) -> MatchResult {
   let p9 = not(exact) && name_any_hit && q_structured && c_structured &&
     dice >= 0.15 && not(house_conflict) && not(veto)
   let partial =
-    p1 || p1b || p1c || p2 || p2b || p3 || p4 || p5 || p6 || p7 || p7d || p8 || p9
+    p1 || p1b || p1c || p1d || p2 || p2b || p3 || p4 || p5 || p6 || p7 || p7d || p8 || p9
 
   let level : MatchLevel = if exact {
     Exact
