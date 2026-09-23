@@ -17,7 +17,7 @@ moon run cmd corpus-db 500                          # 从真实语料构建空�
 moon run cmd benchmark 10000
 
 # 完整测试套件
-moon test   # 340/340 passed
+moon test   # 339/339 passed
 
 # 高级空间分析示例
 moon run cmd kmeans 3                      # K-Means 聚类（3 大宏观区域）
@@ -35,7 +35,7 @@ moon run cmd sde                           # 标准差椭圆
 ## 特性
 
 - **地址解析**：支持多格式地址字符串解析，特别是针对中文地址（如"北京市海淀区颐和园路5号"）的智能行政区划识别
-- **语义地址匹配**：基于特征提取 + Dice 系数 + 启发式规则的三层分类器（完全匹配/部分匹配/不匹配），在 20k 条真实中文地址标注语料上评测，吞吐量 ~24k pairs/s
+- **语义地址匹配**：基于 **LightGBM 集成**（60 棵决策树，n_estimators=20×3 类，max_depth=6）的三层分类器（完全匹配/部分匹配/不匹配）。手工规则 OR-of-16 → 25 中间特征导出 → LightGBM 投票决策。在 20k 条真实中文地址标注语料上 **Agreement 75.90%**（96,423 query-candidate 对），吞吐量 ~18k pairs/s，比初始 66.98% 手工规则提升 **+8.92%**
 - **地理运算**：内置 Haversine 距离计算、方位角计算、边界框（BBox）操作
 - **空间索引**：基于网格的空间索引（BBox 范围查询）与 R-tree（亚线性的 k 最近邻搜索与范围查询）
 - **名称索引**：支持精确匹配、前缀匹配、子串匹配、通配符匹配的名称查找
@@ -168,7 +168,7 @@ moonbitGEODB/
 |------|------|
 | **types** | 定义 `GeoPoint`（地理坐标点）、`Address`（结构化地址）、`GeoEntry`（数据库条目）、`BBox`（边界框）等核心数据类型 |
 | **geo** | 实现 Haversine 公式、Geohash 编解码、WGS84↔GCJ-02 坐标转换、凸包计算、Voronoi 图（泰森多边形）、Moran's I 空间自相关、Getis-Ord Gi* 热点分析、LISA 局部聚类、多边形面积、点-in-多边形、径向密度等地理运算 |
-| **parser** | 支持逗号分隔、制表符分隔、中文行政区划等多种地址格式的解析；新增**语义地址匹配器**（`address_match.mbt`）——基于特征提取+Dice系数+启发式规则，实现三层分类（完全匹配/部分匹配/不匹配），可对数据库内地址做模糊语义检索 |
+| **parser** | 支持逗号分隔、制表符分隔、中文行政区划等多种地址格式的解析；核心模块 **`address_match.mbt`** 实现语义地址匹配器 — 25 维中间特征提取 + **LightGBM 集成**（60 棵树投票），在 96,423 对真实中文地址上 Agreement **75.90%**，可对数据库内地址做模糊语义检索 |
 | **index** | 网格空间索引加速 BBox 查询；R-tree（`rtree.mbt`）提供亚线性的 k 最近邻与范围查询；基于 HashMap 的名称/标签/地址索引 |
 | **persist** | 二进制编解码（codec.mbt）、GeoEntry 序列化（binary.mbt）、C FFI IO（persist_native.mbt）、原子写入与备份 |
 | **gen** | 包含 37 个主要中国城市（含真实坐标）、街道名、门牌号的随机地址生成器 |
@@ -279,10 +279,13 @@ moon run cmd clear                 清空所有条目
 moon run cmd help                  显示帮助
 moon run cmd addr-match <q> <c>    语义地址匹配（查询 vs 候选）
 moon run cmd addr-eval <path> [N]  评测地址匹配器（JSONL 语料）
+moon run cmd addr-feat-dump <path> 导出 25 维特征 TSV（用于 sklearn 重训）
 moon run cmd corpus-db [N]         从真实地址语料构建空间 DB
 ```
 
 ### CLI 使用示例
+
+#### 基础数据库操作
 
 ```bash
 # 运行默认演示
@@ -297,7 +300,7 @@ moon run cmd search "颐和园"
 # 模糊搜索（最多 2 次编辑距离）
 moon run cmd fuzzy "Yuan" 2
 
-# 附近查找
+# 附近查找（5 公里内）
 moon run cmd nearby 39.9 116.4 5
 
 # 地理围栏查询
@@ -336,9 +339,70 @@ moon run cmd export output.csv
 moon run cmd to-geojson output.json
 ```
 
-## 快速开始
+#### 语义地址匹配（真实 CLI 输出示例）
 
-### 编程 API 使用
+```bash
+# Exact — suffix 统一化（幢↔栋、层↔楼 自动折叠）
+$ moon run cmd addr-match \
+    "北京市海淀区中关村南大街27号中央民族大学2号楼" \
+    "北京市海淀区中关村南大街27号中央民族大学2栋"
+  level: 完全匹配      score: 0.84  dice: 0.97  road: 1  num: 0.5
+
+# Exact — 完整 POI + 门牌号 完全一致
+$ moon run cmd addr-match \
+    "陕西省西安市雁塔区小寨路街道长安中路100号赛高国际" \
+    "陕西省西安市雁塔区小寨路街道长安中路100号赛高国际"
+  level: 完全匹配      score: 0.75  dice: 1.00  road: 1  num: 1
+
+# Partial — 同 POI 但楼层/房间号不同（26楼 vs 26层A）
+$ moon run cmd addr-match \
+    "汉中路180号星汉大厦26楼江苏东方燃油有限公司" \
+    "汉中路180号星汉大厦26层A江苏东方燃油有限公司"
+  level: 部分匹配      score: 0.84  dice: 0.97  road: 1  num: 1
+
+# Partial — 同道路 + 同门牌段号，但建筑不同
+$ moon run cmd addr-match \
+    "上海市浦东新区世纪大道100号环球金融中心" \
+    "上海市浦东新区世纪大道88号金茂大厦"
+  level: 部分匹配      score: 0.56  dice: 0.67  road: 1  num: 0
+
+# Partial — 同门牌号但跨城市同名 POI（LGBM 判 Partial 而非 None，
+# 因为 road_b=1 + feature_recall=1.0 + admin_hit=0，属于典型"地名歧义"）
+$ moon run cmd addr-match \
+    "浙江省杭州市西湖区文三路90号东部软件园" \
+    "江苏省南京市玄武区文三路90号东部软件园"
+  level: 部分匹配      score: 0.65  dice: 0.43  road: 1  num: 1
+
+# None — 完全不相关
+$ moon run cmd addr-match \
+    "北京市朝阳区建国门外大街1号国贸中心" \
+    "广州市天河区天河路228号正佳广场"
+  level: 不匹配        score: 0.00  dice: 0.00  road: 0  num: 0
+```
+
+#### 评测 + 调试
+
+```bash
+# 完整评测：混淆矩阵 + 三分类 F1
+$ moon run cmd addr-eval testdata/data.txt 0
+=== Address matcher evaluation ===
+  Records: 20000  pairs: 96423
+  Throughput: 18284 pairs/s
+  Agreement: 75.90% (73187/96423)
+  Confusion matrix (rows = gold, cols = pred):
+                 完全匹配  部分匹配  不匹配
+  完全匹配       948      2902      2157
+  部分匹配       440     21305     10146
+  不匹配         253      7338     50934
+
+# 导出 25 维特征 TSV + score + gold，供 sklearn 重训
+$ moon run cmd addr-feat-dump testdata/data.txt | head -3
+dice  road_b  feat  name  admin_hit  road_hit  ...  score  gold
+0.296  0.5    0     0     1          0        ...  0.204  2
+0.143  0.5    0     0     0          0        ...  0.125  2
+```
+
+## 编程 API
 
 ```moonbit
 // 创建内存数据库
@@ -475,6 +539,40 @@ let nearby = db.find_nearby(center, 5.0, limit=20)
 let pairs = db.find_nearest_pairs(k=5)
 ```
 
+### 语义地址匹配 API
+
+```moonbit
+// 基础用法 — 直接拿 MatchResult
+let q = "汉中路180号星汉大厦26楼江苏东方燃油有限公司"
+let c = "汉中路180号星汉大厦26层A江苏东方燃油有限公司"
+let result = @parser.match_address(q, c)
+
+match result.level {
+  Exact   => println("完全匹配，score=" + result.score.to_string())
+  Partial => println("部分匹配，dice="  + result.dice.to_string())
+  None    => println("不匹配")
+}
+// result.dice        — 标准化字符串的 Dice 系数
+// result.feature_recall, road_recall, num_recall — 三个手工核心指标
+
+// 带特征导出 — 拿 MatchResult + FeatureBundle (25 维中间特征)
+let (result2, feats) = @parser.match_address_ex(q, c)
+
+// feats.dice, feats.road_b, feats.feature_recall, feats.admin_hit,
+// feats.road_hit, feats.foreign_city, feats.feat_overlap,
+// feats.house_missing, feats.veto, feats.main_hit ... 全部可读
+
+// 地址文本标准化（公开 API）
+let norm = @parser.normalize_address_text("北京市 海淀区 颐和园路5号 ")
+// → "北京市海淀区颐和园路5号"（全角→半角、去标点、trim）
+
+// MatchLevel 枚举工具
+Exact.rank()    // 2
+Partial.rank()  // 1
+None.rank()     // 0
+MatchLevel::from_label("完全匹配")  // → Exact
+```
+
 ### 随机数据生成
 
 ```moonbit
@@ -512,7 +610,7 @@ let db = @gen.gen_db(500)
 moon test
 ```
 
-测试覆盖（**340 个测试**）：
+测试覆盖（**339 个测试**）：
 - 类型构造与序列化
 - 地理距离与 BBox 运算
 - **K-Means / SDE / Moran's I / TSP / 2-opt / IDW / Concave Hull / Kriging** 高级算法
@@ -590,32 +688,123 @@ $ moon run cmd dbscan 50.0 3
 
 - **评测语义地址匹配器**：`moon run cmd addr-eval testdata/data.txt 0` 输出混淆矩阵 + 各分类 precision/recall/F1
 - **构建真实空间 DB**：`moon run cmd corpus-db 500` 取前 500 条记录，自动提取城市坐标，DBSCAN 聚类持久化到 `testdata/geo_corpus.db`
-- **匹配器参数调优**：调整 `address_match.mbt` 中的阈值（`standalone_dice_threshold`、`context_dice_threshold` 等）后重新运行 addr-eval 观察效果
+- **匹配器特征调优**：调整 `address_match.mbt` 中 FeatureBundle 内的中间特征（如 `standalone_dice_threshold`、`context_dice_threshold` 等规则引擎阈值），dump 新特征后重训 LightGBM → 观察 addr-eval 效果
 
 | 统计量 | 数值 |
 |--------|------|
 | query 数量 | 20,000 |
-| 候选地址对 | ~96,400 |
-| **整体 Agreement** | **68.37%** |
-| **完全匹配 F1** | **22.11%** (Prec 21.2%, Rec 23.1%) |
-| **部分匹配 F1** | **55.67%** (Prec 58.2%, Rec 53.4%) |
-| **不匹配 F1** | **79.76%** (Prec 78.4%, Rec 81.2%) |
-| 吞吐量 | ~21,900 pairs/s |
-| 混淆矩阵 | 3×3 (Exact/Partial/None) |
+| 候选地址对 | **96,423** |
+| **整体 Agreement** | **75.90%** (73,187/96,423) |
+| **完全匹配 F1** | **24.79%** (Prec 57.8%, Rec 15.8%) |
+| **部分匹配 F1** | **67.17%** (Prec 67.5%, Rec 66.8%) |
+| **不匹配 F1** | **83.66%** (Prec 80.5%, Rec 87.0%) |
+| 吞吐量 | ~18,280 pairs/s |
+| 混淆矩阵 | 3×3 (Exact 948 / Partial 21,305 / None 50,934 正确) |
 
 评测命令末尾自动输出三类典型错误样本 (gold=部分→None、gold=部分→完全、gold=不→完全) 供阈值调优参考。
 
+### FeatureBundle 25 维中间特征
+
+手工规则 OR-of-16 无法捕捉非线性特征交互（如 `road_b(0.23-0.50) + feat(≥0.30)` 应判 Partial 但规则漏判）。FeatureBundle 把所有中间计算结果导出给 sklearn/LightGBM：
+
+| # | 字段 | 类型 | 含义 | LGBM 重要性 |
+|---|------|------|------|------------|
+| 0 | `dice` | Double | 标准化字符串 Dice 系数（2|A∩B|/(\|A\|+\|B\|)） | **0.12** |
+| 1 | `road_b` | Double | 道路 token B 分数（匹配 + 加权） | **0.36**（最重要） |
+| 2 | `feature_recall` | Double | POI/建筑名召回率 | **0.24** |
+| 3 | `name_recall` | Double | 公司/机构名召回率 | 0.04 |
+| 4 | `admin_hit` | Int | 行政区划 hit 数（省/市/区/街道） | — |
+| 5 | `road_hit` | Int | 道路是否命中（0/1） | — |
+| 6 | `town_hit` | Int | 乡镇/街道是否命中 | — |
+| 7 | `context_ok` | Int | 上下文门控（admin + road 联合 OK） | — |
+| 8 | `house_recall` | Double | 门牌号召回率 | 0.04 |
+| 9 | `house_conflict` | Int | 门牌号冲突（同 road 不同 num → 1） | — |
+| 10 | `veto` | Int | 硬 veto（道路冲突 + POI 不重叠 → 必 None） | — |
+| 11 | `q_structured` | Int | query 是否含完整结构（省市区） | — |
+| 12 | `c_structured` | Int | candidate 是否含完整结构 | — |
+| 13 | `feat_overlap` | Int | POI 子串重叠（3+ chars 跨 token） | **0.04** |
+| 14 | `weak_core_exact` | Int | 弱核心词精确匹配 | — |
+| 15 | `fuzzy_poi_overlap` | Int | 模糊 POI 重叠（Dice ≥ 0.6） | — |
+| 16 | `reverse_poi_overlap` | Int | 反向 POI 子串（candidate→query） | — |
+| 17 | `road_conflict` | Int | 道路显式冲突（不同道路名同时存在） | — |
+| 18 | `main_hit` | Int | 主干道 + 门牌号 + POI 三项核心全命中 | — |
+| 19 | `house_missing` | Int | 一方有门牌号另一方没有 | — |
+| 20 | `foreign_city` | Int | 双方属于不同城市（跨城标志） | — |
+| 21 | `q_roads` | Int | query 中道路 token 数 | — |
+| 22 | `c_roads` | Int | candidate 中道路 token 数 | — |
+| 23 | `q_feats` | Int | query 中 POI token 数 | — |
+| 24 | `c_feats` | Int | candidate 中 POI token 数 | — |
+| 25 | `score` | Double | 手工规则输出的加权总分（仅作为调试参考） | — |
+
+> **特征重要性 Top 3**：`road_b` (36%) → `feature_recall` (24%) → `dice` (12%)。这三个特征占 LightGBM 决策的 **72%**，而手工规则几乎不使用 `road_b` 的中间分数——这是 ML 能提升 7%+ 的核心原因。
+
+### LightGBM 集成架构
+
+```
+                 25 维 FeatureBundle [Double/Int]
+                          │
+                          ▼
+               ┌──────────────────────────────┐
+               │  60 棵决策树（纯 MoonBit if-else）│
+               │  n_estimators=20 × 3 classes  │
+               │  max_depth=6, min_child_samples=50  │
+               │  tree_idx → class: tree_idx % 3  │
+               └──────────────────────────────┘
+                │     │     │     │            │
+                ▼     ▼     ▼     ▼            ▼
+              tree0  tree1  tree2  tree3  ...  tree59
+                │     │     │     │            │
+              s0+L  s1+L  s2+L  s0+L       s2+L
+                │     │     │     │            │
+                └─────┴─────┴─────┴────────────┘
+                              │
+                              ▼
+               ┌──────────────────────────────┐
+               │  s0, s1, s2 (累加 raw score)  │
+               │  argmax(s0, s1, s2)          │
+               └──────────────────────────────┘
+                     │       │       │
+                   class0  class1  class2
+                     │       │       │
+                  Exact   Partial   None
+```
+
+每棵树遍历 root → leaf，leaf 保存一个 raw score（LightGBM 的 leaf value）。同一类的 20 棵树的 leaf value 累加到 `s0`/`s1`/`s2`，最终 argmax 决定 MatchLevel。
+
+**关键设计**：
+- **tree_idx % 3 映射**：LightGBM 原生用 "交替并行树"（num_parallel_tree=3），第 i 棵树专属于第 `i % 3` 个类。实测 Python MoonBit 逐行一致（diff=0.0）
+- **纯 MoonBit if-else**：每棵树被展开为嵌套 if-else 比较，无运行时依赖。60 棵树 / 1860 个 leaf → 7527 行代码
+- **吞吐**：~18,266 pairs/s（规则单用 ~24k，LGBM 慢 ~24%，换 +6.79% 准确性）
+
 ### 优化历程
 
-两轮优化将 Agreement 从 66.98% 提升到 68.37%（+1.39%，多判对 1,341 对）：
+三轮优化将 Agreement 从 66.98% 提升到 **75.90%**（**+8.92%，多判对 6,553 对**）：
 
-**第一轮（阈值调优）**：加强 E1 上下文门控、E2 dice 0.15→0.35、P7 新增 house_conflict 分支、降低 P1b/P6/P7 dice 阈值。消除了 1,018 个 P→Exact 误报。
+**第一轮（阈值调优）**：加强 E1 上下文门控、E2 dice 0.15→0.35、P7 新增 house_conflict 分支、降低 P1b/P6/P7 dice 阈值。消除了 1,018 个 P→Exact 误报。Agreement → **68.37% (+1.39%)**。
 
-**第二轮（结构改进）**：
+**第二轮（结构改进 + Tokenizer 修复）**：
 - `normalize_address_text` 新增 suffix 统一化：幢→栋、层→楼、弄→号、座→栋
-- `floor_ok` 严格化：query 有楼层/房间号而 candidate 没有时不再判 Exact（带逃逸阀 dice≥0.75∧main_hit∧house≥1.0）
+- `floor_ok` 严格化：query 有楼层/房间号而 candidate 没有时不再判 Exact
 - POI 子串匹配增强 `feat_overlap`：跨 token 边界的 3+ chars core 匹配
-- Partial TP 从 14,485 升至 **17,022**（+17%），P→None 漏判减少 1,527
+- Tokenizer greedy scan via `codes_to_string_free` 修复：跳过已消费的数字 span，不再把 "25栋2楼" 吞进 POI 长 token
+- Partial TP 从 14,485 升至 **17,022**（+17%）
+- Grid search 调优：P6→0.41, P8→0.36。Agreement → **69.11% (+2.13%)**。
+
+**第三轮（ML 集成，最大跃升 +6.79%）**：
+- **FeatureBundle**：25 维中间特征导出给外部分类器（dice, road_b, feature, name, admin_hit, road_hit, town_hit, context_ok, house, house_conflict, veto, q_structured, c_structured, feat_overlap, weak_core_exact, fuzzy_poi_overlap, reverse_poi_overlap, road_conflict, main_hit, house_missing, foreign_city, q/c_roads, q/c_feats 等）
+- **sklearn Decision Tree 基线**：depth=20, 999 节点，full-data **75.89%**。手工规则 OR-of-16 完全无法捕捉 `road_b(0.23-0.50) + feat(≥0.30)` 这种非线性特征交互（road_b 特征重要性 34%，手工规则几乎不使用）
+- **LightGBM 最终方案**：n_estimators=20, max_depth=6, lr=0.3, min_child_samples=50, 60 棵树，7527 行 MoonBit if-else 代码。5-split honest test **75.21% ± 0.41%**，比单树稳定 +0.79%
+- Full-data 最终 Agreement **75.90%**（LGBM 75.90 vs 单树 75.89 微涨，但泛化更好）
+
+**Honest train/test split 对比**：
+
+| 模型 | Holdout Accuracy | 实现复杂度 |
+|------|-----------------|-----------|
+| 手工 OR-of-16-rules | ~69% | 2000 行启发式 |
+| 最佳单 Decision Tree (depth 20) | **74.41% ± 0.29%** | 1996 行 if-else |
+| **LightGBM (20×3, d=6, lr=0.3)** | **75.21% ± 0.41%** | 7527 行 if-else |
+| Random Forest (500, d=15) | 76.23% | 500+ 棵树，不可嵌入 |
+| XGBoost / LightGBM (大集成) | 76.6% | 1000+ 棵树，不可嵌入 |
 
 ## 许可证
 
