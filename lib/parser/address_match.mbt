@@ -931,6 +931,10 @@ fn token_any_hit(query : Array[String], candidate : Array[String]) -> Bool {
 /// 超市 / 城市 / 自治县 false positives. District-level 区 is excluded
 /// on purpose: a bare district often legitimately contains the query.
 fn city_cores(text : String) -> Array[String] {
+  // Fast path: if text contains neither 市 nor 县, no city core exists.
+  if not(text.contains("市")) && not(text.contains("县")) {
+    return []
+  }
   let codes : Array[Int] = []
   for c in text {
     codes.push(c.to_int())
