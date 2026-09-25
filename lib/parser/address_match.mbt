@@ -69,6 +69,23 @@ pub(all) struct MatchResult {
   num_recall : Double
 }
 
+/// Pre-tokenized query for matching against many candidates. Extracted
+/// from the hot path so a single query is normalized and tokenized once
+/// instead of once per candidate (the corpus has ~5 candidates per query).
+pub(all) struct PreparedQuery {
+  norm : String
+  tq : AddrTokens
+}
+
+///|
+/// Normalize and tokenize a query once. Pair with `match_address_prepared`
+/// to avoid re-tokenizing the query for every candidate.
+pub fn prepare_query(query : String) -> PreparedQuery {
+  let norm = normalize_address_text(query)
+  let tq = tokenize_address(norm)
+  { norm, tq }
+}
+
 // All intermediate features computed during matching, exported so an
 // external classifier (sklearn decision tree) can learn a better decision
 // surface than the hand-tuned OR-of-rules can capture.
@@ -410,7 +427,7 @@ let suffix_by_first : @hashmap.HashMap[Int, Array[Int]] = {
 
 ///|
 /// Tokens extracted from one normalized address.
-priv struct AddrTokens {
+pub(all) struct AddrTokens {
   roads : Array[String]
   towns : Array[String]
   admins : Array[String]
@@ -1226,8 +1243,30 @@ fn house_prefix_related(qnums : Array[String], cnums : Array[String]) -> Bool {
 /// with the component scores used for ranking.
 pub fn match_address_ex(query : String, candidate : String) -> (MatchResult, FeatureBundle) {
   let nq = normalize_address_text(query)
-  let nc = normalize_address_text(candidate)
   let tq = tokenize_address(nq)
+  match_norm_ex(nq, tq, candidate)
+}
+
+///|
+/// Match a pre-tokenized query (from `prepare_query`) against a candidate
+/// text. Avoids re-normalizing and re-tokenizing the query on every
+/// candidate — the dominant cost when one query is scored against many
+/// candidates (e.g. the labelled corpus has ~5 candidates per query).
+pub fn match_address_prepared(
+  pq : PreparedQuery,
+  candidate : String,
+) -> (MatchResult, FeatureBundle) {
+  match_norm_ex(pq.norm, pq.tq, candidate)
+}
+
+/// Core scorer: `nq`/`tq` are the query's normalized text and tokens;
+/// `candidate` is the raw candidate text still to be normalized+tokenized.
+fn match_norm_ex(
+  nq : String,
+  tq : AddrTokens,
+  candidate : String,
+) -> (MatchResult, FeatureBundle) {
+  let nc = normalize_address_text(candidate)
   let tc = tokenize_address(nc)
 
   let dice = dice_bigrams(tq.bigrams, tc.bigrams)

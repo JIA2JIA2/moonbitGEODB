@@ -136,6 +136,7 @@ moon run cmd sde                           # 标准差椭圆
 | TSP 2-opt | **49,548** | **406,937** | O(n²·rounds)，实测亚线性 | edge 数组 + 0 HashMap |
 | **Moran's I KNN** | 27,748 | 634,763 | **O(n·k·log n) ✓** | 真 R-tree KNN + 行标准化 |
 | **Kriging (k=12)** | 8,184 | 40,882 | O(n·log n + k²) | R-tree KNN + 变异函数 |
+| **corpus-db (真实地址)** | 25,156 (200条) | 281,983 (2000条) | ~O(n) ✓ | geocode + bulk_insert |
 
 运行命令：`moon run cmd benchmark [N]`（默认 N=1000）
 

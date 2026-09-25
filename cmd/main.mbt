@@ -159,28 +159,45 @@ fn build_usage() -> String {
     "  moon run cmd delaunay-edges              Delaunay edges (unique) of all entries\n"
   let s66 = s65 +
     "  moon run cmd kriging <lat> <lng> [k]     Kriging interpolation at query point\n"
-  let s67 = s66 + "\n"
-  let s68 = s67 + "Examples:\n"
-  let s69 = s68 + "  moon run cmd\n"
-  let s70 = s69 + "  moon run cmd \"北京市海淀区颐和园路5号\"\n"
-  let s71 = s70 + "  moon run cmd search \"颐和园\"\n"
-  let s72 = s71 + "  moon run cmd fuzzy \"Yuan\" 2\n"
-  let s73 = s72 + "  moon run cmd tag \"poi\"\n"
-  let s74 = s73 + "  moon run cmd province \"北京市\"\n"
-  let s75 = s74 + "  moon run cmd stats\n"
-  let s76 = s75 + "  moon run cmd export output.csv\n"
-  let s77 = s76 + "  moon run cmd seed 500\n"
-  let s78 = s77 + "  moon run cmd save geo.db\n"
-  let s79 = s78 + "  moon run cmd to-json out.json\n"
-  let s80 = s79 + "  moon run cmd cluster 5.0\n"
-  let s81 = s80 + "  moon run cmd ring-query 39.9 116.4 1.0 5.0\n"
-  let s82 = s81 + "  moon run cmd distance-histogram 39.9 116.4 50.0 10\n"
-  let s83 = s82 + "  moon run cmd nn-range bj-yiheyuan 5\n"
-  let s84 = s83 + "  moon run cmd morans-i-lat\n"
-  let s85 = s84 + "  moon run cmd hotspot-lat\n"
-  let s86 = s85 + "  moon run cmd lisa-lat\n"
-  let s87 = s86 + "  moon run cmd dbscan 50.0 3\n"
-  s87
+  let s67 = s66 +
+    "  moon run cmd addr-match <query> <cand>   Semantic address match (exact/partial/none)\n"
+  let s68 = s67 +
+    "  moon run cmd addr-eval <path> [n]        Evaluate on labelled address corpus\n"
+  let s69 = s68 +
+    "  moon run cmd corpus-db <n>               Build spatial DB from address corpus\n"
+  let s70 = s69 +
+    "  moon run cmd idw <lat> <lng> [power]     IDW spatial interpolation\n"
+  let s71 = s70 +
+    "  moon run cmd concave-hull <alpha>        Concave hull (alpha-shape) boundary\n"
+  let s72 = s71 +
+    "  moon run cmd kmeans <k>                  K-Means clustering\n"
+  let s73 = s72 +
+    "  moon run cmd dbscan <eps_km> <min_pts>   DBSCAN density clustering\n"
+  let s74 = s73 +
+    "  moon run cmd sde                         Standard deviational ellipse\n"
+  let s75 = s74 + "\n"
+  let s76 = s75 + "Examples:\n"
+  let s77 = s76 + "  moon run cmd\n"
+  let s78 = s77 + "  moon run cmd \"北京市海淀区颐和园路5号\"\n"
+  let s79 = s78 + "  moon run cmd search \"颐和园\"\n"
+  let s80 = s79 + "  moon run cmd fuzzy \"Yuan\" 2\n"
+  let s81 = s80 + "  moon run cmd tag \"poi\"\n"
+  let s82 = s81 + "  moon run cmd province \"北京市\"\n"
+  let s83 = s82 + "  moon run cmd stats\n"
+  let s84 = s83 + "  moon run cmd export output.csv\n"
+  let s85 = s84 + "  moon run cmd seed 500\n"
+  let s86 = s85 + "  moon run cmd save geo.db\n"
+  let s87 = s86 + "  moon run cmd to-json out.json\n"
+  let s88 = s87 + "  moon run cmd cluster 5.0\n"
+  let s89 = s88 + "  moon run cmd ring-query 39.9 116.4 1.0 5.0\n"
+  let s90 = s89 + "  moon run cmd distance-histogram 39.9 116.4 50.0 10\n"
+  let s91 = s90 + "  moon run cmd nn-range bj-yiheyuan 5\n"
+  let s92 = s91 + "  moon run cmd morans-i-lat\n"
+  let s93 = s92 + "  moon run cmd hotspot-lat\n"
+  let s94 = s93 + "  moon run cmd lisa-lat\n"
+  let s95 = s94 + "  moon run cmd dbscan 50.0 3\n"
+  let s96 = s95 + "  moon run cmd addr-match \"汉中路180号星汉大厦\" \"汉中路180号星汉大厦26层A\"\n"
+  s96
 }
 
 ///|
@@ -2424,8 +2441,9 @@ fn run_addr_eval(path : String, max_records : Int) -> Unit {
   let diag_cutoff = 40
   let t_match0 = @bench.monotonic_clock_start()
   for r in records {
+    let pq = @parser.prepare_query(r.query)
     for c in r.candidates {
-      let mr = @parser.match_address(r.query, c.text)
+      let mr = @parser.match_address_prepared(pq, c.text).0
       let pred = mr.level
       let gi = addr_level_idx(c.level)
       let pi = addr_level_idx(pred)
@@ -2570,8 +2588,9 @@ fn run_addr_feat_dump(path : String) -> Unit {
   let header = "dice\troad_b\tfeat\tname\tadmin_hit\troad_hit\ttown_hit\tcontext_ok\thouse_recall\thouse_conflict\tveto\tq_struct\tc_struct\tfeat_overlap\tweak_core\tfuzzy_poi\treverse_poi\troad_conflict\tmain_hit\thouse_missing\tforeign_city\tq_roads\tc_roads\tq_feats\tc_feats\tscore\tgold"
   println(header)
   for r in records {
+    let pq = @parser.prepare_query(r.query)
     for c in r.candidates {
-      let (_mr, fb) = @parser.match_address_ex(r.query, c.text)
+      let (_mr, fb) = @parser.match_address_prepared(pq, c.text)
       let gi = addr_level_idx(c.level)
       println(
         fb.dice.to_string() + "\t" +
