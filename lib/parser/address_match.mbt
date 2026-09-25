@@ -127,26 +127,37 @@ pub(all) struct FeatureBundle {
 /// lower-cased.  Chinese numeral runs (三巷 / 二十三号) are converted to
 /// Arabic digits so the same number in different scripts compares equal.
 pub fn normalize_address_text(input : String) -> String {
-  let folded : StringBuilder = StringBuilder()
+  // First pass: fold full-width chars, drop whitespace/punctuation,
+  // lower-case ASCII letters, and build codes array directly.
+  let codes : Array[Int] = []
   for c in input {
     let code = c.to_int()
     // Full-width ASCII variants: ！ U+FF01 .. ～ U+FF5E map to !..~
     if code >= 0xFF01 && code <= 0xFF5E {
-      write_norm_char(folded, (code - 0xFEE0).unsafe_to_char())
-      continue
-    }
-    if code == 0x3000 {
+      let folded = code - 0xFEE0
+      // Now apply the same rules as write_norm_char to the folded char.
+      if folded == 0x20 {
+        // Space: drop.
+      } else if folded >= 0x4E00 && folded <= 0x9FFF {
+        codes.push(folded)
+      } else if (folded >= 0x41 && folded <= 0x5A) || (folded >= 0x61 && folded <= 0x7A) {
+        let lower = if folded >= 0x41 && folded <= 0x5A { folded + 0x20 } else { folded }
+        codes.push(lower)
+      } else if folded >= 0x30 && folded <= 0x39 {
+        codes.push(folded)
+      }
+      // Everything else (punctuation, symbols) is dropped.
+    } else if code == 0x3000 {
       // Full-width space: drop.
-      continue
+    } else if code >= 0x4E00 && code <= 0x9FFF {
+      codes.push(code)
+    } else if (code >= 0x41 && code <= 0x5A) || (code >= 0x61 && code <= 0x7A) {
+      let lower = if code >= 0x41 && code <= 0x5A { code + 0x20 } else { code }
+      codes.push(lower)
+    } else if code >= 0x30 && code <= 0x39 {
+      codes.push(code)
     }
-    write_norm_char(folded, c)
-  }
-  // Convert Chinese numeral runs (both sides get the same treatment, so
-  // name identity is preserved while script differences disappear).
-  let src = folded.to_string()
-  let codes : Array[Int] = []
-  for c in src {
-    codes.push(c.to_int())
+    // Whitespace and everything else (punctuation, symbols) is dropped.
   }
   let out = StringBuilder()
   let mut i = 0
@@ -532,6 +543,7 @@ fn tokenize_address(norm : String) -> AddrTokens {
     codes.push(c.to_int())
   }
   let n = codes.length()
+
   let roads : Array[String] = []
   let towns : Array[String] = []
   let admins : Array[String] = []
@@ -960,12 +972,6 @@ fn city_cores(text : String) -> Array[String] {
   res
 }
 
-/// Thresholds calibrated against the 20k-record labelled corpus; run
-/// `moon run cmd addr-eval` for the confusion matrix.
-let standalone_dice_threshold : Double = 0.40
-let admin_dice_threshold : Double = 0.40
-let context_dice_threshold : Double = 0.40
-let overlap_dice_threshold : Double = 0.25
 
 /// Two-character POI suffixes strong enough that a 6+ char token with
 /// such a suffix identifies a unique place (近铁城市广场 / 百家湖东花园).
@@ -975,21 +981,6 @@ let strong_feat_suffixes = [
   "基地", "中心", "新村", "新区", "小区", "步行街", "风景区",
 ]
 
-/// A feature token that can identify a place on its own (without an
-/// agreeing road/number).
-fn is_standalone_feat(tok : String) -> Bool {
-  if tok.length() >= 7 {
-    return true
-  }
-  if tok.length() >= 6 {
-    for s in strong_feat_suffixes {
-      if tok.ends_with(s) {
-        return true
-      }
-    }
-  }
-  false
-}
 
 /// A structural number is a "house number" when it ends with 号;
 /// 栋/幢/座/号楼/单元 identify buildings/units.
@@ -1011,47 +1002,6 @@ fn is_main_building_num(tok : String) -> Bool {
     tok.ends_with("座")
 }
 
-fn is_phase_num(tok : String) -> Bool {
-  tok.ends_with("期")
-}
-
-/// Floor / room suffixes (2层, 5楼, 1室, A厅...)
-fn is_floor_num(tok : String) -> Bool {
-  tok.ends_with("层") || tok.ends_with("楼") || tok.ends_with("室") ||
-    tok.ends_with("厅") || tok.ends_with("排")
-}
-
-/// Recall of building tokens (栋/幢/座/号楼/单元): a missing building on
-/// the candidate side means the address is less detailed (partial).
-fn building_recall(query : Array[String], candidate : Array[String]) -> Double {
-  recall_filtered(query, candidate, is_building_num)
-}
-
-/// Recall of detail numbers (层/楼/室/期) compared by numeric value, so
-/// 26楼 and 26层 agree. Only phase numbers (期) are required for an
-/// exact match; floor/room omissions are tolerated.
-fn detail_value_recall(query : Array[String], candidate : Array[String],
-    pred : (String) -> Bool) -> Double {
-  let cval : @hashmap.HashMap[String, Bool] = @hashmap.HashMap([])
-  for t in candidate {
-    cval.set(house_digit_prefix(t), true)
-  }
-  let mut total = 0
-  let mut hit = 0
-  for t in query {
-    if pred(t) {
-      total = total + 1
-      if cval.contains(house_digit_prefix(t)) {
-        hit = hit + 1
-      }
-    }
-  }
-  if total == 0 {
-    1.0
-  } else {
-    hit.to_double() / total.to_double()
-  }
-}
 
 fn recall_filtered(query : Array[String], candidate : Array[String],
     pred : (String) -> Bool) -> Double {
@@ -1083,9 +1033,6 @@ let weak_feat_ends = ["村", "苑", "城", "府", "馆", "店", "寺", "园", "�
 /// kind sharing an address are distinct entities (百家湖东花园 vs
 /// 百家湖国际花园), whereas a community vs a facility (神兴小区 vs
 /// 神兴小学) is a partial.
-let residential_suffixes = [
-  "小区", "新村", "新区", "花园", "家园", "公寓", "别墅", "社区", "苑", "府",
-]
 
 fn is_weak_feat(tok : String) -> Bool {
   if tok.length() <= 4 {
@@ -1270,6 +1217,29 @@ fn match_norm_ex(
   let tc = tokenize_address(nc)
 
   let dice = dice_bigrams(tq.bigrams, tc.bigrams)
+
+  // Early exit: very low dice + no query context → None. Avoids expensive
+  // token_recall_bidir and ensemble evaluation for hopeless pairs.
+  if dice < 0.05 && tq.roads.length() == 0 &&
+      tq.towns.length() == 0 && tq.admins.length() == 0 {
+    let mr = MatchResult:: {
+      level: None, score: dice, dice,
+      feature_recall: 0.0, road_recall: 0.0, num_recall: 0.0,
+    }
+    let fb = FeatureBundle:: {
+      dice, road_b: 0.0, feature_recall: 0.0, name_recall: 0.0,
+      admin_hit: 0, road_hit: 0, town_hit: 0, context_ok: 0,
+      house_recall: 0.0, house_conflict: 0, veto: 0,
+      q_structured: 0, c_structured: 0, feat_overlap: 0,
+      weak_core_exact: 0, fuzzy_poi_overlap: 0, reverse_poi_overlap: 0,
+      road_conflict: 0, main_hit: 0, house_missing: 0, foreign_city: 0,
+      q_roads: 0, c_roads: tc.roads.length(),
+      q_feats: 0, c_feats: tc.features.length(),
+      score: dice,
+    }
+    return (mr, fb)
+  }
+
   let road = token_recall(tq.roads, tc.roads)
   let town = token_recall(tq.towns, tc.towns)
   let admin = token_recall(tq.admins, tc.admins)
