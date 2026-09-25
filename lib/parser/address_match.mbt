@@ -29,6 +29,7 @@ pub(all) enum MatchLevel {
   None
 }
 
+
 ///|
 pub impl Show for MatchLevel with fn output(self, logger) {
   logger.write_string(match self {
