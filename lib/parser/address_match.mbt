@@ -1358,17 +1358,7 @@ fn match_norm_ex(
   let name = token_recall(tq.names, c_poi)
   let snum = token_recall(tq.struct_nums, tc.struct_nums)
   let house = recall_filtered(tq.struct_nums, tc.struct_nums, is_house_num)
-  let main_rec =
-    recall_filtered(tq.struct_nums, tc.struct_nums, is_main_building_num)
-  let unit_rec = recall_filtered(tq.struct_nums, tc.struct_nums, is_unit_num)
-  let phase_ok =
-    detail_value_recall(tq.detail_nums, tc.detail_nums, is_phase_num) >= 1.0
-  // If query mentions specific floors/rooms (2楼/5层/A厅) that the
-  // candidate drops, they describe different levels of detail → Partial.
-  // The floor_ok escape valve (dice≥0.85 && main_hit && house≥1.0) is
-  // evaluated later — dice/main_hit/house are defined below.
-  let floor_hard_ok =
-    detail_value_recall(tq.detail_nums, tc.detail_nums, is_floor_num) >= 1.0
+
 
   let q_has_house = {
     let mut found = false
@@ -1422,29 +1412,7 @@ fn match_norm_ex(
     }
     hit
   }
-  let building_ok = (not(q_has_main) || main_rec >= 1.0 || main_hit) &&
-    (not(q_has_unit) || unit_rec >= 1.0 || (q_has_main && main_hit))
-  // Candidate names no main building at all: it is a less detailed
-  // description of the same POI, not a conflicting building.
-  let c_main_absent = {
-    let mut found = false
-    for t in tc.struct_nums {
-      if is_main_building_num(t) {
-        found = true
-      }
-    }
-    not(found)
-  }
-  let building_complete = (not(q_has_main) || main_rec >= 1.0 || main_hit ||
-    c_main_absent) &&
-    (not(q_has_unit) || unit_rec >= 1.0 || (q_has_main && main_hit))
-  // Floor check evaluated here (all variables now available).
-  // Escape valve: when dice ≥ 0.85 AND both the main building and house
-  // numbers match exactly, tolerate a missing floor — both describe
-  // the same unique building with almost complete text overlap.
-  let floor_ok = floor_hard_ok ||
-    (dice >= 0.75 && main_hit && house >= 1.0)
-  let detail_complete = building_complete && phase_ok && floor_ok
+
   // Query names a house number that the candidate lacks, and the query
   // has no main building to anchor identity on: suspicious cross-region
   // name coincidence (藤桥永宁村124号 vs 海宁市永宁村).
@@ -1452,11 +1420,7 @@ fn match_norm_ex(
 
   let q_has_roads = tq.roads.length() > 0
   let c_has_roads = tc.roads.length() > 0
-  let q_has_feat = tq.features.length() > 0
-  let c_has_poi = c_poi.length() > 0
-  let q_has_target = q_poi.length() > 0
 
-  let feat_all = q_has_feat && feature >= 1.0
 
   // Bidirectional road recall: a query road also matches when the
   // candidate road is a substring of it (裕华东岗路 vs 东岗路).
@@ -1466,132 +1430,7 @@ fn match_norm_ex(
   let admin_hit = token_any_hit(tq.admins, tc.admins)
   let context_ok = road_hit || town_hit || admin_hit
 
-  // Every query feature matches a candidate POI token in either
-  // direction (江南建华新村 vs 建华新村).
-  let feat_bidir_all = {
-    let mut ok = q_has_feat
-    if ok {
-      for qf in tq.features {
-        let mut found = false
-        for cf in c_poi {
-          if token_pair_hit(qf, cf) {
-            found = true
-            break
-          }
-        }
-        if not(found) {
-          ok = false
-          break
-        }
-      }
-    }
-    ok
-  }
 
-  // Any bare query name appears inside a candidate POI/name token.
-  let name_any_hit = token_any_hit(tq.names, c_poi)
-  let name_all = tq.names.length() > 0 && name >= 1.0
-  // Every bare query name appears verbatim in the raw candidate text
-  // (华腾新天地5层 vs ...华腾新天地(大郊亭南街)).
-  let name_raw_all = {
-    let mut ok = tq.names.length() > 0
-    if ok {
-      for qn in tq.names {
-        if not(nc.contains(qn)) {
-          ok = false
-          break
-        }
-      }
-    }
-    ok
-  }
-
-  // Standalone-distinctive suffixed POI token present in the candidate.
-  let mut standalone_fwd = false
-  for qf in tq.features {
-    if is_standalone_feat(qf) {
-      for cf in c_poi {
-        if cf.contains(qf) {
-          standalone_fwd = true
-          break
-        }
-      }
-    }
-  }
-  // Adjacent multi-suffix POIs split into several features
-  // (铁成佳园 + 农贸大市场): their in-order compound is the real unique
-  // name when it appears verbatim on both sides.
-  let compound = {
-    let sb = StringBuilder()
-    for qf in tq.features {
-      ignore(sb.write_string(qf))
-    }
-    sb.to_string()
-  }
-  let compound_fwd = compound.length() >= 7 && nq.contains(compound) &&
-    nc.contains(compound)
-  if compound_fwd {
-    standalone_fwd = true
-  }
-
-  // Strong containment: a 4+ char query POI token appears verbatim
-  // inside a candidate POI token (candidate is a superset of the name).
-  let mut strong_embed = false
-  for qf in tq.features {
-    if qf.length() >= 4 {
-      for cf in c_poi {
-        if cf.contains(qf) {
-          strong_embed = true
-          break
-        }
-      }
-    }
-  }
-  if compound_fwd {
-    strong_embed = true
-  }
-
-  // Raw-text anchor: the distinctive tail of a query feature appears
-  // verbatim in the candidate text, even when greedy scan windows
-  // absorbed different prefixes (交汇处装饰城 vs 汇处鲁南装饰城).
-  // The fragment is built from the CORE (category suffix stripped,
-  // plus 有限/股份 company-filler stripped), so generic tails such as
-  // 限公司 / 花园 never anchor. Weak single-char suffixes use 2 core
-  // chars, strong suffixes use 3.
-  let mut anchor_strong = false
-  let mut anchor_weak = false
-  for qf in tq.features {
-    let weak = is_weak_feat(qf)
-    let mut core = core_of_poi(qf)
-    for _ in 0..<2 {
-      for filler in ["有限责任", "股份有限", "有限", "股份"] {
-        if core.ends_with(filler) && core.length() > filler.length() {
-          core = core[:core.length() - filler.length()].to_string()
-        }
-      }
-    }
-    let k = if weak {
-      2
-    } else {
-      3
-    }
-    let start = if core.length() > k {
-      core.length() - k
-    } else {
-      0
-    }
-    let core_tail = core[start:].to_string()
-    let suffix = qf[core.length():].to_string()
-    let anchor = core_tail + suffix
-    if anchor.length() >= 3 && nc.contains(anchor) {
-      if weak {
-        anchor_weak = true
-      } else {
-        anchor_strong = true
-      }
-    }
-  }
-  let anchor_any = anchor_strong || anchor_weak
 
   // Name overlap for conflict suppression: raw nested containment, a
   // 3+ char common substring after stripping generic category tails,
@@ -1648,14 +1487,6 @@ fn match_norm_ex(
     feat_overlap = true
   }
 
-  // All query features are weak/generic short tokens (村/园/山 ...).
-  let mut weak_all = q_has_feat
-  for qf in tq.features {
-    if not(is_weak_feat(qf)) {
-      weak_all = false
-      break
-    }
-  }
 
   let house_prefix = house_prefix_related(tq.struct_nums, tc.struct_nums)
 
@@ -1664,11 +1495,6 @@ fn match_norm_ex(
   // prefix relation, not a conflict).
   let house_conflict = q_has_house && c_has_house && house < 1.0 &&
     not(house_prefix)
-  // Candidate with a genuinely different POI name (no shared core,
-  // anchor or nested token) blocks corridor-only promotion.
-  let feat_conflict = q_poi.length() > 0 && c_has_poi && not(feat_all) &&
-    not(name_all) && not(feat_overlap) && not(strong_embed) &&
-    not(anchor_any) && not(feat_bidir_all)
 
   // A foreign city marker (海宁市 / 泰兴市) absent from the query with
   // no shared context means the shared village/POI name is a coincidence
@@ -1682,37 +1508,6 @@ fn match_norm_ex(
   }
   let veto = foreign_city && not(context_ok) && dice < 0.35
 
-  // An intersection / junction description on one side names a stretch
-  // of road, not a point: a road-only match against such a candidate is
-  // none unless both sides are intersection descriptions.
-  let junction_marker = "交叉口"
-  let q_junction = nq.contains(junction_marker) || nq.contains("交汇处")
-  let c_junction = nc.contains(junction_marker) || nc.contains("交汇处") ||
-    nc.contains("交口")
-
-  // Whether each side names a residential-community POI.
-  let q_res = {
-    let mut found = false
-    for qf in tq.features {
-      for s in residential_suffixes {
-        if qf.ends_with(s) {
-          found = true
-        }
-      }
-    }
-    found
-  }
-  let c_res = {
-    let mut found = false
-    for cf in tc.features {
-      for s in residential_suffixes {
-        if cf.ends_with(s) {
-          found = true
-        }
-      }
-    }
-    found
-  }
 
   let q_structured = tq.struct_nums.length() > 0 ||
     tq.detail_nums.length() > 0
@@ -1722,153 +1517,6 @@ fn match_norm_ex(
   let score = 0.35 * dice + 0.25 * feature + 0.15 * road_b +
     0.10 * snum + 0.05 * town + 0.05 * admin + 0.05 * name
 
-  // ---- Exact: same unique entity ----
-  // Buildings/phases named in the query must be present; floors/rooms
-  // and a missing 单元 (when the main building matches) are tolerated.
-  // E1 distinctive standalone POI (>=7 chars, or >=6 with strong
-  //    suffix): unique enough on its own. Now gated: needs either
-  //    very high dice (>=0.80) or some shared context (road/town/admin)
-  //    to prevent same-name POIs in distant cities (兴东 vs 沙河镇).
-  let e1 = standalone_fwd && not(road_conflict) && not(house_conflict) &&
-    detail_complete && dice >= standalone_dice_threshold &&
-    (dice >= 0.80 || context_ok)
-  // E2 distinctive bare name fully shared (佳乐钢琴 / 龙凤呈祥).
-  let e2 = name_all && not(road_conflict) && not(house_conflict) &&
-    detail_complete && dice >= 0.35
-  // E3 all POI features shared AND road corridor AND house number agree.
-  let e3 = feat_all && not(road_conflict) && road_hit &&
-    (not(q_has_house) || house >= 1.0 || not(c_has_house)) &&
-    detail_complete
-  // E4 all (short) POI features shared inside a common admin/road/town
-  //    context (高淳区新桥村232号 vs 高淳区新桥村).
-  let e4 = feat_all && not(road_conflict) && context_ok &&
-    dice >= admin_dice_threshold && detail_complete
-  // E5 all POI features shared (in either direction: 江南建华新村 vs
-  //    建华新村): with the same main building / house number and strong
-  //    overlap, or with no building detail on either side.
-  let e5 = (feat_all || feat_bidir_all) && not(road_conflict) &&
-    detail_complete &&
-    (main_hit && dice >= 0.45 ||
-      house >= 1.0 && dice >= 0.45 && not(house_missing) ||
-      c_main_absent && dice >= 0.30 && not(house_missing) &&
-        not(c_has_house && not(q_has_house)))
-  // E6 the full distinctive compound POI name (>=7 chars) appears
-  //    verbatim on both sides, regardless of corridor numbers
-  //    (汇景家园景康苑 vs 康景路26号汇景家园景康苑).
-  let e6 = compound_fwd && detail_complete && dice >= 0.40 &&
-    not(c_has_house && not(q_has_house))
-  // E7 every bare query name appears verbatim in the candidate text.
-  let e7 = name_raw_all && not(road_conflict) && not(house_conflict) &&
-    detail_complete && dice >= 0.45
-  let exact = e1 || e2 || e3 || e4 || e5 || e6 || e7
-
-  // ---- Partial: same corridor / same-type POI, different entity ----
-  // P1 same road corridor with agreeing/compatible house numbers and no
-  //    contradictory POI name.
-  let junction_ok = not(c_junction) || q_junction
-  let p1 = not(exact) && road_hit && junction_ok &&
-    (house >= 1.0 || house_prefix || (not(q_has_house) && not(c_has_house))) &&
-    not(feat_conflict) && not(veto)
-  // P1b road corridor fully shared, query carries no POI of its own
-  //    (白东线成家川...东邑村 vs 潞城区白东线). Lowered dice from 0.25
-  //    to 0.20: when both describe no POI and the road is fully shared,
-  //    even light textual overlap signals the same corridor.
-  let p1b = not(exact) && road_hit && junction_ok && not(q_has_feat) &&
-    not(house_conflict) && dice >= 0.20 && not(veto)
-  // P1d one side is a road+house-number, the other is an intersection
-  //    description on the SAME road (中山北路467号 vs 中山北路与黄土山
-  //   交叉口). They describe different spots on the same corridor.
-  let p1d = not(exact) && road_hit &&
-    ((q_has_house && c_junction) || (c_has_house && q_junction) ||
-      (q_junction && c_junction)) &&
-    dice >= 0.12 && not(veto) && not(feat_conflict)
-  // P1c different POI at the exact same house number is a partial unless
-  //    both are distinct residential communities.
-  let p1c = not(exact) && road_hit && house >= 1.0 && dice >= 0.35 &&
-    not(q_res && c_res)
-  // P2 POI fully shared. Weak suffix tokens (村/园/山) settle for less
-  //    text overlap; structured queries need a distinctive (multi-token
-  //    or long-core) feature; foreign city/county markers veto.
-  let mut distinctive = tq.features.length() >= 2
-  if not(distinctive) {
-    for qf in tq.features {
-      if core_of_poi(qf).length() >= 3 {
-        distinctive = true
-      }
-    }
-  }
-  let p2 = not(exact) && feat_all && not(veto) && not(house_conflict) &&
-    (context_ok || dice >= context_dice_threshold ||
-      (weak_all && dice >= 0.40) ||
-      (weak_all && dice >= 0.25 && not(house_missing)) ||
-      (q_structured && not(house_missing) && distinctive))
-  // P2b partial POI overlap (feature ≥ 0.50) anchored by a shared admin
-  // division. Catches cases where one feature token matches but not all
-  // (东山大队 vs 东山 — feature recall 0.5 + admin hit).
-  let p2b = !exact && feature >= 0.33 && admin_hit &&
-    dice >= 0.15 && !veto && !house_conflict
-  // P2c fuzzy POI overlap across token boundaries: the greedy tokenizer
-  // may absorb extraneous prefixes (附近/新城·/etc.) or mis-split the
-  // POI (大鸿城壹号禧园号 vs 附近大鸿城). bigram_jaccard on the POI
-  // blob bypasses token pairing entirely — anchoring with shared road
-  // or admin plus decent text overlap prevents spurious matches.
-  let p2c = !exact && !veto && !house_conflict && dice >= 0.22 &&
-    ((fuzzy_poi_overlap && road_b >= 0.5) ||
-      (reverse_poi_overlap && (road_b >= 0.33 || admin_hit)))
-  // P3 distinctive POI shared but the address core contradicts
-  //    (different road / different explicit house number).
-  let p3 = not(exact) && standalone_fwd && not(road_conflict) &&
-    not(house_conflict)
-  // P4 distinctive POI fragment shared verbatim: strong fragments need
-  //    context or structure on the query side; weak 2-char fragments
-  //    (龙城/壹城) additionally need structure on both sides.
-  let p4 = not(exact) && not(veto) &&
-    ((strong_embed || anchor_strong) &&
-      (context_ok || q_structured || dice >= 0.45) ||
-      anchor_weak && (context_ok || dice >= 0.45 ||
-        (q_structured && c_structured)))
-  // P5 query has no POI of its own but names the same township/street.
-  let p5 = not(exact) && not(q_has_target) && town_hit
-  // P6 shared admin division with strong overall text overlap
-  //    (秦淮区高桥门199号 vs 秦淮区高桥门200号3幢).
-  let p6 = not(exact) && admin_hit && dice >= 0.41
-  // P6b shared admin division + partial road overlap: the bare place-
-  // name-as-road case (申家巷, 南沙路) where road_b ≥ 0.33 anchors the
-  // match but full road_hit or dice≥0.35 P6 misses.
-  let p6b = !exact && admin_hit && road_b >= 0.33 && dice >= 0.25 &&
-    !veto && !feat_conflict
-  // P7 same road corridor with structure numbers on both sides and
-  //    decent text overlap (neighbouring buildings on the same road).
-  //    Lowered dice threshold to catch road-corridor cases that barely
-  //    overlap textually (中山北路467号 vs 中山北路605-607号).
-  let p7 = not(exact) && road_b >= 0.5 && q_structured && c_structured &&
-    dice >= 0.15 && not(feat_conflict)
-  // P7d same road corridor, structured numbers on both sides but
-  //    contradictory house numbers (different buildings on same road,
-  //    e.g. 中山北路467号 vs 中山北路348号小区). Overlap just needs
-  //    the road token present; features must not conflict.
-  let p7d = not(exact) && road_b >= 0.5 && q_structured && c_structured &&
-    house_conflict && dice >= 0.08 && not(feat_conflict) && not(veto)
-  // P8 same POI core (3+ chars after stripping the category tail, or an
-  //    exact weak core such as 龙城) with structured buildings on both
-  //    sides and no contradictory house numbers.
-  let p8 = not(exact) && feat_overlap && q_structured && c_structured &&
-    not(house_conflict) && not(veto) &&
-    (weak_core_exact || context_ok || dice >= 0.36)
-  // P9 shared bare place name (3 chars, e.g. 高桥门) and structured on
-  //    both sides.
-  let p9 = not(exact) && name_any_hit && q_structured && c_structured &&
-    dice >= 0.15 && not(house_conflict) && not(veto)
-  let partial =
-    p1 || p1b || p1c || p1d || p2 || p2b || p2c || p3 || p4 || p5 || p6 || p6b || p7 || p7d || p8 || p9
-
-  let level : MatchLevel = if exact {
-    Exact
-  } else if partial {
-    Partial
-  } else {
-    None
-  }
 
   let final_level = match_by_ensemble(
     dice, road_b, feature, name,
