@@ -559,7 +559,7 @@ fn tokenize_address(norm : String) -> AddrTokens {
     consumed.push(false)
   }
 
-  // ---- Pass 1: number runs + immediate unit suffix ----
+// ---- Pass 1: number runs + immediate unit suffix ----
   // Done first so the number spans (232号 / 602号楼 / 2单元 / 3期) are
   // marked consumed and never leak into POI token windows or bare
   // names. Bare digit runs are intentionally NOT tokens. Highway
@@ -798,9 +798,13 @@ fn tokenize_address(norm : String) -> AddrTokens {
   }
 
   // ---- CJK bigrams ----
+  // Build from the codes array directly (already in memory) to avoid
+  // re-iterating the normalized string.
   let mut prev = -1
-  for c in norm {
-    let code = c.to_int()
+  let m = codes.length()
+  let mut bi = 0
+  while bi < m {
+    let code = codes[bi]
     if is_cjk_code(code) {
       if prev >= 0 {
         bigrams.push(prev * 41000 + code)
@@ -809,6 +813,7 @@ fn tokenize_address(norm : String) -> AddrTokens {
     } else {
       prev = -1
     }
+    bi = bi + 1
   }
 
   { roads, towns, admins, features, names, struct_nums, detail_nums, bigrams }
@@ -919,6 +924,7 @@ fn token_any_hit(query : Array[String], candidate : Array[String]) -> Bool {
   }
   false
 }
+
 
 /// 2-3 CJK-char cores of explicit city/county-level regions that appear
 /// as X市 / X县 in `text` (上海市 / 泰兴市 / 浚县), guarding against
