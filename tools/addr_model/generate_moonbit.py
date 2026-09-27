@@ -1,8 +1,14 @@
-"""从训练好的 LightGBM 模型生成 MoonBit match_by_ensemble 函数。"""
+"""从训练好的 LightGBM 模型生成 MoonBit match_by_ensemble 函数。
+
+环境变量 TREE_IN（默认 /tmp/addr_trees.json）指定输入的树结构 JSON。
+"""
 import json
+import os
+
+TREE_IN = os.environ.get("TREE_IN", "/tmp/addr_trees.json")
 
 # 加载树结构
-with open("/tmp/addr_trees.json") as f:
+with open(TREE_IN) as f:
     data = json.load(f)
 
 feature_names = data["feature_names"]

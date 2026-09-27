@@ -1,5 +1,10 @@
-"""训练最终模型：模糊匹配特征 + 组合特征，导出用于 MoonBit 移植。"""
+"""训练最终模型：模糊匹配特征 + 组合特征，导出用于 MoonBit 移植。
+
+超参数可通过环境变量覆盖：
+  NUM_LEAVES（默认 31）、N_EST（默认 200）、SKIP_CV（默认 0，设 1 跳过交叉验证）
+"""
 import json
+import os
 import numpy as np
 from sklearn.model_selection import StratifiedKFold
 from Levenshtein import distance as lev_distance
@@ -9,6 +14,10 @@ import pickle
 
 DATA_PATH = "/home/developer/moonbitGEODB/testdata/data.txt"
 FEAT_PATH = "/tmp/feat_dump.tsv"
+NUM_LEAVES = int(os.environ.get("NUM_LEAVES", "31"))
+N_EST = int(os.environ.get("N_EST", "200"))
+SKIP_CV = os.environ.get("SKIP_CV", "0") == "1"
+TREE_OUT = os.environ.get("TREE_OUT", "/tmp/addr_trees.json")
 
 def jaccard_sim(a, b):
     set_a, set_b = set(a), set(b)
@@ -121,29 +130,33 @@ print(f"新特征形状: {X_new.shape}")
 X_combined = np.hstack([X_old, X_new])
 print(f"合并后特征形状: {X_combined.shape}")
 
-# 5-fold CV
+# 训练参数（环境变量可覆盖）
 params = dict(
-    n_estimators=200,
-    num_leaves=31,
+    n_estimators=N_EST,
+    num_leaves=NUM_LEAVES,
     max_depth=-1,
     learning_rate=0.05,
     random_state=42,
     verbose=-1,
 )
+print(f"params: n_estimators={N_EST}, num_leaves={NUM_LEAVES}, lr=0.05")
 
-skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-folds = list(skf.split(X_combined, y))
+if not SKIP_CV:
+    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    folds = list(skf.split(X_combined, y))
 
-oof = np.zeros(len(y), dtype=int)
-for fold, (tr, te) in enumerate(folds):
-    clf = lgb.LGBMClassifier(**params)
-    clf.fit(X_combined[tr], y[tr])
-    oof[te] = clf.predict(X_combined[te])
-    acc = (oof[te] == y[te]).mean()
-    print(f"fold {fold}: {acc:.6f}")
+    oof = np.zeros(len(y), dtype=int)
+    for fold, (tr, te) in enumerate(folds):
+        clf = lgb.LGBMClassifier(**params)
+        clf.fit(X_combined[tr], y[tr])
+        oof[te] = clf.predict(X_combined[te])
+        acc = (oof[te] == y[te]).mean()
+        print(f"fold {fold}: {acc:.6f}")
 
-oof_acc = (oof == y).mean()
-print(f"\nOOF Agreement (with all new features): {oof_acc:.6f}")
+    oof_acc = (oof == y).mean()
+    print(f"\nOOF Agreement (with all new features): {oof_acc:.6f}")
+else:
+    print("(SKIP_CV=1，跳过交叉验证)")
 
 # 全量训练
 print("\n全量训练...")
@@ -192,8 +205,8 @@ tree_data = {
     ],
 }
 
-with open("/tmp/addr_trees.json", "w") as f:
+with open(TREE_OUT, "w") as f:
     import json
     json.dump(tree_data, f, indent=2)
 
-print("决策树已导出到 /tmp/addr_trees.json")
+print(f"决策树已导出到 {TREE_OUT}")
