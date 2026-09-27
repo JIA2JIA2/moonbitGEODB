@@ -2,11 +2,13 @@
 
 超参数可通过环境变量覆盖：
   NUM_LEAVES（默认 31）、N_EST（默认 200）、SKIP_CV（默认 0，设 1 跳过交叉验证）
+  MIN_CHILD_SAMPLES（默认 20）、REG_ALPHA（默认 0.0）、REG_LAMBDA（默认 0.0）
+  EARLY_STOP（默认 0，设 N>0 则用 N 轮 patience early stopping）
 """
 import json
 import os
 import numpy as np
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedKFold, train_test_split
 from Levenshtein import distance as lev_distance
 from jellyfish import jaro_winkler_similarity
 import lightgbm as lgb
@@ -18,6 +20,10 @@ NUM_LEAVES = int(os.environ.get("NUM_LEAVES", "31"))
 N_EST = int(os.environ.get("N_EST", "200"))
 SKIP_CV = os.environ.get("SKIP_CV", "0") == "1"
 TREE_OUT = os.environ.get("TREE_OUT", "/tmp/addr_trees.json")
+MIN_CHILD_SAMPLES = int(os.environ.get("MIN_CHILD_SAMPLES", "20"))
+REG_ALPHA = float(os.environ.get("REG_ALPHA", "0.0"))
+REG_LAMBDA = float(os.environ.get("REG_LAMBDA", "0.0"))
+EARLY_STOP = int(os.environ.get("EARLY_STOP", "0"))
 
 def jaccard_sim(a, b):
     set_a, set_b = set(a), set(b)
@@ -136,10 +142,33 @@ params = dict(
     num_leaves=NUM_LEAVES,
     max_depth=-1,
     learning_rate=0.05,
+    min_child_samples=MIN_CHILD_SAMPLES,
+    reg_alpha=REG_ALPHA,
+    reg_lambda=REG_LAMBDA,
     random_state=42,
     verbose=-1,
 )
 print(f"params: n_estimators={N_EST}, num_leaves={NUM_LEAVES}, lr=0.05")
+print(f"        min_child_samples={MIN_CHILD_SAMPLES}, reg_alpha={REG_ALPHA}, reg_lambda={REG_LAMBDA}")
+
+# Early stopping 验证
+if EARLY_STOP > 0:
+    print(f"使用 early stopping (patience={EARLY_STOP})")
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_combined, y, test_size=0.2, random_state=42, stratify=y
+    )
+    clf = lgb.LGBMClassifier(**params)
+    clf.fit(
+        X_train, y_train,
+        eval_set=[(X_val, y_val)],
+        eval_metric='multi_logloss',
+        callbacks=[lgb.early_stopping(stopping_rounds=EARLY_STOP, verbose=False)]
+    )
+    # 使用最佳迭代次数
+    best_iter = clf.best_iteration_ if clf.best_iteration_ is not None else N_EST
+    print(f"最佳迭代次数: {best_iter}")
+    # 更新参数为最佳迭代次数
+    params['n_estimators'] = best_iter
 
 if not SKIP_CV:
     skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
