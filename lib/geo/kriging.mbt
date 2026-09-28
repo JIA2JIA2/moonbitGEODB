@@ -17,11 +17,16 @@
 
 ///|
 /// 变异函数模型类型。
+/// 全部变体作为 fit_variogram(model_type?) 的公共选择保留，
+/// 即使当前包内的调用方只使用默认 Spherical。
+#warnings("-unused_constructor")
 pub enum VariogramModel {
   Spherical
   Exponential
   Gaussian
 } derive(Debug)
+
+pub extend VariogramModel with Debug::{ to_repr }
 
 ///|
 /// 拟合后的变异函数参数。
@@ -36,6 +41,8 @@ pub(all) struct FittedVariogram {
   model : VariogramModel
 } derive(Debug)
 
+pub extend FittedVariogram with Debug::{ to_repr }
+
 ///|
 /// 经验变异函数的一个滞后项。
 /// - lag_center: 滞后中心距离（km）
@@ -46,6 +53,8 @@ pub(all) struct LagBin {
   semivariance : Double
   num_pairs : Int
 } derive(Debug)
+
+pub extend LagBin with Debug::{ to_repr }
 
 // ---- 经验变异函数 ----
 

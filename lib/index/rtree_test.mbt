@@ -57,7 +57,7 @@ fn rt_same(a : Array[(String, Double)], b : Array[(String, Double)]) -> Bool {
 
 ///|
 test "RTree::new is empty" {
-  let t = RTree::new()
+  let t = @index.RTree::new()
   @test.assert_eq(t.size(), 0)
   @test.assert_eq(t.nearest(rt_pt(0.0, 0.0), 10).length(), 0)
   @test.assert_eq(
@@ -70,7 +70,7 @@ test "RTree::new is empty" {
 
 ///|
 test "RTree::insert and size" {
-  let t = RTree::new()
+  let t = @index.RTree::new()
   t.insert("a", rt_pt(39.9, 116.4))
   t.insert("b", rt_pt(31.2, 121.5))
   @test.assert_eq(t.size(), 2)
@@ -80,7 +80,7 @@ test "RTree::insert and size" {
 
 ///|
 test "RTree::search returns contained ids" {
-  let t = RTree::new()
+  let t = @index.RTree::new()
   t.insert("bj", rt_pt(39.9, 116.4))
   t.insert("sh", rt_pt(31.2, 121.5))
   t.insert("tj", rt_pt(39.1, 117.2))
@@ -100,7 +100,7 @@ test "RTree::nearest matches brute force (small)" {
     ("sh", rt_pt(31.2, 121.5)),
     ("tj", rt_pt(39.1, 117.2)),
   ]
-  let t = RTree::new()
+  let t = @index.RTree::new()
   for item in points {
     t.insert(item.0, item.1)
   }
@@ -110,7 +110,7 @@ test "RTree::nearest matches brute force (small)" {
 
 ///|
 test "RTree::nearest matches brute force (large, triggers splits)" {
-  let t = RTree::new()
+  let t = @index.RTree::new()
   let points : Array[(String, @types.GeoPoint)] = []
   let mut i = 0
   while i < 100 {
@@ -134,7 +134,7 @@ test "RTree::nearest matches brute force (large, triggers splits)" {
 
 ///|
 test "RTree::remove keeps nearest correct" {
-  let t = RTree::new()
+  let t = @index.RTree::new()
   let mut i = 0
   while i < 50 {
     let lat = 30.0 + (i % 10).to_double() * 0.3
@@ -169,7 +169,7 @@ test "RTree::remove keeps nearest correct" {
 
 ///|
 test "RTree::insert replaces same id" {
-  let t = RTree::new()
+  let t = @index.RTree::new()
   t.insert("a", rt_pt(0.0, 0.0))
   t.insert("a", rt_pt(40.0, 120.0))
   @test.assert_eq(t.size(), 1)
@@ -181,7 +181,7 @@ test "RTree::insert replaces same id" {
 
 ///|
 test "RTree::nearest k bounds" {
-  let t = RTree::new()
+  let t = @index.RTree::new()
   t.insert("a", rt_pt(0.0, 0.0))
   t.insert("b", rt_pt(1.0, 1.0))
   @test.assert_eq(t.nearest(rt_pt(0.0, 0.0), 0).length(), 0)
@@ -190,7 +190,7 @@ test "RTree::nearest k bounds" {
 
 ///|
 test "RTree::remove missing returns false" {
-  let t = RTree::new()
+  let t = @index.RTree::new()
   t.insert("a", rt_pt(0.0, 0.0))
   @test.assert_eq(t.remove("nope"), false)
   @test.assert_eq(t.remove("a"), true)

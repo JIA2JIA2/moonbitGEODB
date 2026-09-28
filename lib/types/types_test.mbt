@@ -3,14 +3,14 @@
 
 ///|
 test "GeoPoint::make stores lat/lng" {
-  let p = GeoPoint::make(39.9, 116.4)
+  let p = @types.GeoPoint::make(39.9, 116.4)
   @test.assert_eq(p.lat, 39.9)
   @test.assert_eq(p.lng, 116.4)
 }
 
 ///|
 test "Address::empty has all blank fields" {
-  let a = Address::empty()
+  let a = @types.Address::empty()
   @test.assert_eq(a.country, "")
   @test.assert_eq(a.province, "")
   @test.assert_eq(a.city, "")
@@ -22,7 +22,7 @@ test "Address::empty has all blank fields" {
 
 ///|
 test "Address::to_line joins non-empty parts with comma" {
-  let a : Address = {
+  let a : @types.Address = {
     country: "China",
     province: "Beijing",
     city: "",
@@ -36,13 +36,13 @@ test "Address::to_line joins non-empty parts with comma" {
 
 ///|
 test "Address::to_line on empty address returns empty string" {
-  @test.assert_eq(Address::empty().to_line(), "")
+  @test.assert_eq(@types.Address::empty().to_line(), "")
 }
 
 ///|
 test "GeoEntry::make has empty tags" {
-  let p = GeoPoint::make(0.0, 0.0)
-  let e = GeoEntry::make("id1", "name", Address::empty(), p)
+  let p = @types.GeoPoint::make(0.0, 0.0)
+  let e = @types.GeoEntry::make("id1", "name", @types.Address::empty(), p)
   @test.assert_eq(e.id, "id1")
   @test.assert_eq(e.name, "name")
   @test.assert_eq(e.tags.length(), 0)
@@ -50,9 +50,9 @@ test "GeoEntry::make has empty tags" {
 
 ///|
 test "BBox::from_corners normalizes min/max" {
-  let a = GeoPoint::make(40.0, 117.0)
-  let b = GeoPoint::make(39.0, 116.0)
-  let bbox = BBox::from_corners(a, b)
+  let a = @types.GeoPoint::make(40.0, 117.0)
+  let b = @types.GeoPoint::make(39.0, 116.0)
+  let bbox = @types.BBox::from_corners(a, b)
   @test.assert_eq(bbox.min_lat, 39.0)
   @test.assert_eq(bbox.max_lat, 40.0)
   @test.assert_eq(bbox.min_lng, 116.0)
@@ -61,9 +61,9 @@ test "BBox::from_corners normalizes min/max" {
 
 ///|
 test "GeoPoint ToJson / FromJson round-trip" {
-  let p = GeoPoint::make(1.5, -2.25)
+  let p = @types.GeoPoint::make(1.5, -2.25)
   let ok = try {
-    let q : GeoPoint = @json.from_json(p.to_json())
+    let q : @types.GeoPoint = @json.from_json(p.to_json())
     q.lat == 1.5 && q.lng == -2.25
   } catch {
     _ => false
@@ -73,7 +73,7 @@ test "GeoPoint ToJson / FromJson round-trip" {
 
 ///|
 test "Address ToJson / FromJson round-trip" {
-  let a : Address = {
+  let a : @types.Address = {
     country: "CN",
     province: "BJ",
     city: "Beijing",
@@ -83,7 +83,7 @@ test "Address ToJson / FromJson round-trip" {
     detail: "extra",
   }
   let ok = try {
-    let b : Address = @json.from_json(a.to_json())
+    let b : @types.Address = @json.from_json(a.to_json())
     a == b
   } catch {
     _ => false

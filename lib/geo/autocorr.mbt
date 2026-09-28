@@ -26,6 +26,9 @@ pub(all) struct MoranResult {
   n : Int // number of observations
 } derive(Eq, Debug)
 
+pub extend MoranResult with Eq::{ equal, not_equal }
+pub extend MoranResult with Debug::{ to_repr }
+
 ///|
 /// Result of the Getis-Ord Gi* statistic for one point.
 pub(all) struct GetisResult {
@@ -35,6 +38,9 @@ pub(all) struct GetisResult {
   is_coldspot : Bool // gi_star < -threshold
 } derive(Eq, Debug)
 
+pub extend GetisResult with Eq::{ equal, not_equal }
+pub extend GetisResult with Debug::{ to_repr }
+
 ///|
 /// Result of the Local Moran's I (LISA) statistic for one point.
 pub(all) struct LocalMoranResult {
@@ -43,6 +49,9 @@ pub(all) struct LocalMoranResult {
   z_score : Double // conditional randomisation z-score
   cluster : String // "HH" | "LL" | "HL" | "LH" | "NS"
 } derive(Eq, Debug)
+
+pub extend LocalMoranResult with Eq::{ equal, not_equal }
+pub extend LocalMoranResult with Debug::{ to_repr }
 
 ///|
 /// Enhanced global Moran's I with full significance testing (z-score and

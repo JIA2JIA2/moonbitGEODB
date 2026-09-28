@@ -1746,7 +1746,7 @@ fn run_export(path : String) -> Unit {
         println("Saved binary DB to: " + path)
         println("CSV export (first 500 chars):")
         let preview = if csv.length() > 500 {
-          csv.substring(start=0, end=500) + "..."
+          csv[:500].to_owned() + "..."
         } else {
           csv
         }
@@ -2349,7 +2349,7 @@ fn run_dbscan(eps_km : Double, min_points : Int) -> Unit {
   if noise > 0 {
     println("  Noise points:")
     for e in db.all() {
-      if not(assigned.contains(e.id)) {
+      if !(assigned.contains(e.id)) {
         println("    - " + e.id + " (" + e.name + ")")
       }
     }
@@ -2613,7 +2613,7 @@ fn format2(v : Double) -> String {
   if s.length() <= 7 {
     s
   } else {
-    s[0:7].to_string()
+    s[0:7].to_owned()
   }
 }
 
@@ -3091,7 +3091,6 @@ fn run_kmeans(k : Int, max_iter : Int) -> Unit {
   let db = build_sample_db()
   let clusters = db.kmeans(k, max_iter~)
   println("")
-  let mut inertia_total = 0.0
   let mut j = 0
   while j < clusters.length() {
     let cl = clusters[j]
@@ -3625,7 +3624,7 @@ fn run_hotspot_lat() -> Unit {
     }
   })
   let mut shown = 0
-  for (abs_gi, r) in sorted {
+  for (_, r) in sorted {
     if shown >= 5 {
       break
     }

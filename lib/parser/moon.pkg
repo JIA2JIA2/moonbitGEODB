@@ -5,3 +5,7 @@ import {
   "moonbitlang/core/hashmap",
   "JIA2JIA2/moonbitgeodb/lib/types",
 }
+
+import {
+  "moonbitlang/core/test",
+} for "test"

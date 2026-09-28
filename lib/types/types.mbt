@@ -8,6 +8,12 @@ pub(all) struct GeoPoint {
   lng : Double // [-180, 180]
 } derive(Eq, Debug, ToJson, FromJson)
 
+/// Explicitly promote derived trait methods as regular methods.
+pub extend GeoPoint with Eq::{ equal, not_equal }
+pub extend GeoPoint with @moonbitlang/core/debug.Debug::{ to_repr }
+pub extend GeoPoint with ToJson::{ to_json }
+pub extend GeoPoint with @moonbitlang/core/json.FromJson::{ from_json }
+
 ///|
 /// Axis-aligned geographic bounding box.
 pub(all) struct BBox {
@@ -16,6 +22,11 @@ pub(all) struct BBox {
   min_lng : Double
   max_lng : Double
 } derive(Eq, Debug, ToJson, FromJson)
+
+pub extend BBox with Eq::{ equal, not_equal }
+pub extend BBox with @moonbitlang/core/debug.Debug::{ to_repr }
+pub extend BBox with ToJson::{ to_json }
+pub extend BBox with @moonbitlang/core/json.FromJson::{ from_json }
 
 ///|
 /// Structured postal address. Empty string means "unspecified".
@@ -29,6 +40,11 @@ pub(all) struct Address {
   detail : String // 补充说明 / Extra detail
 } derive(Eq, Debug, ToJson, FromJson)
 
+pub extend Address with Eq::{ equal, not_equal }
+pub extend Address with @moonbitlang/core/debug.Debug::{ to_repr }
+pub extend Address with ToJson::{ to_json }
+pub extend Address with @moonbitlang/core/json.FromJson::{ from_json }
+
 ///|
 /// A stored geo record.
 pub(all) struct GeoEntry {
@@ -38,6 +54,11 @@ pub(all) struct GeoEntry {
   location : GeoPoint
   mut tags : Array[String]
 } derive(Eq, Debug, ToJson, FromJson)
+
+pub extend GeoEntry with Eq::{ equal, not_equal }
+pub extend GeoEntry with @moonbitlang/core/debug.Debug::{ to_repr }
+pub extend GeoEntry with ToJson::{ to_json }
+pub extend GeoEntry with @moonbitlang/core/json.FromJson::{ from_json }
 
 ///|
 /// Construct a GeoPoint.

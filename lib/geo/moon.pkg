@@ -3,10 +3,12 @@ import {
   "moonbitlang/core/math",
   "moonbitlang/core/cmp",
   "moonbitlang/core/string",
-  "moonbitlang/core/char",
   "moonbitlang/core/hashmap",
   "moonbitlang/core/random",
-  "moonbitlang/core/test",
   "JIA2JIA2/moonbitgeodb/lib/types",
 
 }
+
+import {
+  "moonbitlang/core/test",
+} for "test"

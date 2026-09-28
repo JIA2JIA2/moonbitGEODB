@@ -27,32 +27,32 @@ fn make_entry(
 
 ///|
 test "GeoDB::in_memory starts empty" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   @test.assert_eq(db.size(), 0)
 }
 
 ///|
 test "GeoDB::insert and get" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   let e = make_entry("p01", "Tiananmen", 39.9087, 116.3975)
   db.insert(e)
   @test.assert_eq(db.size(), 1)
-  @test.assert_eq(db.get("p01") is Some, true)
+  @test.assert_eq(db.get("p01") is Some(_), true)
   @test.assert_eq(db.get("missing") is None, true)
 }
 
 ///|
 test "GeoDB::remove" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "X", 10.0, 20.0))
-  @test.assert_eq(db.remove("p01") is Some, true)
+  @test.assert_eq(db.remove("p01") is Some(_), true)
   @test.assert_eq(db.size(), 0)
   @test.assert_eq(db.remove("p01") is None, true)
 }
 
 ///|
 test "GeoDB::insert_raw parses address string" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   let e = db.insert_raw(
     "p01", "Tiananmen", 39.9, 116.4, "China,Beijing,Beijing,Dongcheng,Tiananmen,100009",
   )
@@ -89,7 +89,7 @@ fn make_entry_with_addr(
 
 ///|
 test "GeoDB::compute_center returns correct center" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "A", 10.0, 20.0))
   db.insert(make_entry("p02", "B", 30.0, 40.0))
   match db.compute_center() {
@@ -105,13 +105,13 @@ test "GeoDB::compute_center returns correct center" {
 
 ///|
 test "GeoDB::compute_center returns None for empty DB" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   @test.assert_eq(db.compute_center() is None, true)
 }
 
 ///|
 test "GeoDB::compute_bbox returns correct bounds" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "A", 10.0, 20.0))
   db.insert(make_entry("p02", "B", 30.0, 40.0))
   db.insert(make_entry("p03", "C", 5.0, 50.0))
@@ -129,13 +129,13 @@ test "GeoDB::compute_bbox returns correct bounds" {
 
 ///|
 test "GeoDB::compute_max_distance finds farthest pair" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "A", 0.0, 0.0))
   db.insert(make_entry("p02", "B", 1.0, 1.0))
   db.insert(make_entry("p03", "C", 50.0, 50.0))
   match db.compute_max_distance() {
     None => @test.assert_eq(true, false)
-    Some((p1, p2, d)) => {
+    Some((_, _, d)) => {
       // Distance between (0,0) and (50,50) should be farthest
       @test.assert_eq(d > 0.0, true)
       @test.assert_eq(d < 10000.0, true) // sanity check
@@ -145,14 +145,14 @@ test "GeoDB::compute_max_distance finds farthest pair" {
 
 ///|
 test "GeoDB::compute_max_distance returns None for < 2 entries" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "A", 0.0, 0.0))
   @test.assert_eq(db.compute_max_distance() is None, true)
 }
 
 ///|
 test "GeoDB::province_distribution counts correctly" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(
     make_entry_with_addr(
       "p01",
@@ -200,7 +200,7 @@ test "GeoDB::province_distribution counts correctly" {
 
 ///|
 test "GeoDB::city_distribution counts correctly" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(
     make_entry_with_addr(
       "p01",
@@ -247,7 +247,7 @@ test "GeoDB::city_distribution counts correctly" {
 
 ///|
 test "GeoDB::city_distribution filtered by province" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(
     make_entry_with_addr(
       "p01",
@@ -292,7 +292,7 @@ test "GeoDB::city_distribution filtered by province" {
 
 ///|
 test "GeoDB::tag_distribution counts correctly" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(
     make_entry_with_addr(
       "p01",
@@ -342,7 +342,7 @@ test "GeoDB::tag_distribution counts correctly" {
 
 ///|
 test "GeoDB::summary generates readable output" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(
     make_entry_with_addr(
       "p01",
@@ -378,7 +378,7 @@ test "GeoDB::summary generates readable output" {
 
 ///|
 test "GeoDB::find_by_tag works through DB" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(
     make_entry_with_addr(
       "p01",
@@ -422,7 +422,7 @@ test "GeoDB::find_by_tag works through DB" {
 
 ///|
 test "GeoDB::find_by_province works through DB" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(
     make_entry_with_addr(
       "p01",
@@ -466,7 +466,7 @@ test "GeoDB::find_by_province works through DB" {
 
 ///|
 test "GeoDB::list_tags lists all unique tags" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(
     make_entry_with_addr(
       "p01",
@@ -497,7 +497,7 @@ test "GeoDB::list_tags lists all unique tags" {
 
 ///|
 test "GeoDB::list_provinces lists all unique provinces" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(
     make_entry_with_addr(
       "p01",
@@ -528,7 +528,7 @@ test "GeoDB::list_provinces lists all unique provinces" {
 
 ///|
 test "GeoDB::insert_raw parses postal code" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   let e = db.insert_raw(
     "p01", "Tiananmen", 39.9, 116.4, "China,Beijing,Beijing,Dongcheng,Tiananmen,100009",
   )
@@ -538,7 +538,7 @@ test "GeoDB::insert_raw parses postal code" {
 
 ///|
 test "GeoDB::insert_raw falls back to empty address on bad input" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   let _ = db.insert_raw("p01", "X", 0.0, 0.0, "NoSeparatorHere")
   @test.assert_eq(db.size(), 1)
   match db.get("p01") {
@@ -549,15 +549,15 @@ test "GeoDB::insert_raw falls back to empty address on bad input" {
 
 ///|
 test "GeoDB::insert_record_line with full line" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   let r = db.insert_record_line("Tiananmen\t39.9087, 116.3975\tChina,Beijing")
-  @test.assert_eq(r is Some, true)
+  @test.assert_eq(r is Some(_), true)
   @test.assert_eq(db.size(), 1)
 }
 
 ///|
 test "GeoDB::insert_record_line assigns generated id when empty" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   let r = db.insert_record_line("JustAName\t1.0, 2.0")
   match r {
     Some(e) => @test.assert_eq(e.id.length() > 0, true)
@@ -567,13 +567,13 @@ test "GeoDB::insert_record_line assigns generated id when empty" {
 
 ///|
 test "GeoDB::insert_record_line returns None on empty line" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   @test.assert_eq(db.insert_record_line(""), None)
 }
 
 ///|
 test "GeoDB::gen_id is monotonic" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   let a = db.gen_id("e")
   let b = db.gen_id("e")
   @test.assert_eq(a == "e0", true)
@@ -582,7 +582,7 @@ test "GeoDB::gen_id is monotonic" {
 
 ///|
 test "GeoDB::find_by_name" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "Tiananmen", 39.9, 116.4))
   db.insert(make_entry("p02", "Shanghai", 31.2, 121.5))
   @test.assert_eq(db.find_by_name("tiananmen").length(), 1)
@@ -592,7 +592,7 @@ test "GeoDB::find_by_name" {
 
 ///|
 test "GeoDB::find_name_prefix and contains" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "Tiananmen", 39.9, 116.4))
   db.insert(make_entry("p02", "Tianjin", 39.1, 117.2))
   @test.assert_eq(db.find_name_prefix("Tian").length(), 2)
@@ -601,7 +601,7 @@ test "GeoDB::find_name_prefix and contains" {
 
 ///|
 test "GeoDB::find_in_bbox" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "Beijing", 39.9, 116.4))
   db.insert(make_entry("p02", "Shanghai", 31.2, 121.5))
   let bbox : @types.BBox = {
@@ -615,7 +615,7 @@ test "GeoDB::find_in_bbox" {
 
 ///|
 test "GeoDB::find_nearby filters by radius" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "Beijing", 39.9042, 116.4074))
   db.insert(make_entry("p02", "Tianjin", 39.0842, 117.2009))
   db.insert(make_entry("p03", "Shanghai", 31.2304, 121.4737))
@@ -630,7 +630,7 @@ test "GeoDB::find_nearby filters by radius" {
 
 ///|
 test "GeoDB::find_nearby respects limit" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "A", 0.0, 0.0))
   db.insert(make_entry("p02", "B", 0.001, 0.001))
   db.insert(make_entry("p03", "C", 0.002, 0.002))
@@ -641,7 +641,7 @@ test "GeoDB::find_nearby respects limit" {
 
 ///|
 test "GeoDB::find_nearest returns k sorted" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "Shanghai", 31.2304, 121.4737))
   db.insert(make_entry("p02", "Tianjin", 39.0842, 117.2009))
   db.insert(make_entry("p03", "Beijing", 39.9042, 116.4074))
@@ -658,11 +658,11 @@ test "GeoDB::find_nearest returns k sorted" {
 
 ///|
 test "GeoDB::to_bytes and from_bytes round-trip" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "Beijing", 39.9042, 116.4074))
   db.insert(make_entry("p02", "Shanghai", 31.2304, 121.4737))
   let bytes = db.to_bytes()
-  let db2 = GeoDB::in_memory()
+  let db2 = @db.GeoDB::in_memory()
   match db2.from_bytes(bytes) {
     Err(_) => @test.assert_eq(true, false)
     Ok(_) => @test.assert_eq(db2.size(), 2)
@@ -672,23 +672,23 @@ test "GeoDB::to_bytes and from_bytes round-trip" {
 ///|
 test "GeoDB::save_to and open round-trip" {
   let path = "/tmp/geodb_test_save_load.db"
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "Beijing", 39.9042, 116.4074))
   db.insert(make_entry("p02", "Shanghai", 31.2304, 121.4737))
   match db.save_to(path) {
     Err(_) => @test.assert_eq(true, false)
     Ok(_) => {
-      let db2 = GeoDB::open(path)
+      let db2 = @db.GeoDB::open(path)
       @test.assert_eq(db2.size(), 2)
-      @test.assert_eq(db2.get("p01") is Some, true)
-      @test.assert_eq(db2.get("p02") is Some, true)
+      @test.assert_eq(db2.get("p01") is Some(_), true)
+      @test.assert_eq(db2.get("p02") is Some(_), true)
     }
   }
 }
 
 ///|
 test "GeoDB::save without path returns Err" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   match db.save() {
     Err(_) => @test.assert_eq(true, true)
     Ok(_) => @test.assert_eq(true, false)
@@ -697,14 +697,14 @@ test "GeoDB::save without path returns Err" {
 
 ///|
 test "GeoDB::open on missing file yields empty db" {
-  let db = GeoDB::open("/tmp/geodb_does_not_exist_xyz.db")
+  let db = @db.GeoDB::open("/tmp/geodb_does_not_exist_xyz.db")
   @test.assert_eq(db.size(), 0)
 }
 
 ///|
 test "GeoDB::backup and restore round-trip" {
   let path = "/tmp/geodb_test_backup.db"
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "Beijing", 39.9042, 116.4074))
   db.insert(make_entry("p02", "Shanghai", 31.2304, 121.4737))
   match db.save_to(path) {
@@ -720,8 +720,8 @@ test "GeoDB::backup and restore round-trip" {
             Err(_) => @test.assert_eq(true, false)
             Ok(_) => {
               @test.assert_eq(db.size(), 2)
-              @test.assert_eq(db.get("p01") is Some, true)
-              @test.assert_eq(db.get("p02") is Some, true)
+              @test.assert_eq(db.get("p01") is Some(_), true)
+              @test.assert_eq(db.get("p02") is Some(_), true)
             }
           }
         }
@@ -732,7 +732,7 @@ test "GeoDB::backup and restore round-trip" {
 ///|
 test "GeoDB::check integrity" {
   let path = "/tmp/geodb_test_check.db"
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "Beijing", 39.9042, 116.4074))
   match db.save_to(path) {
     Err(_) => @test.assert_eq(true, false)
@@ -749,7 +749,7 @@ test "GeoDB::check integrity" {
 
 ///|
 test "GeoDB::all returns snapshot" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "A", 0.0, 0.0))
   let snap = db.all()
   db.insert(make_entry("p02", "B", 1.0, 1.0))
@@ -761,7 +761,7 @@ test "GeoDB::all returns snapshot" {
 
 ///|
 test "GeoDB - store, parse, retrieve: 北京市海淀区颐和园路5号" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   // Step 1: Insert a record using raw API (triggers address parsing).
   let e = db.insert_raw(
     "summer-palace", "颐和园", 39.9999, 116.2755, "北京市海淀区颐和园路5号",
@@ -803,7 +803,7 @@ test "GeoDB - store, parse, retrieve: 北京市海淀区颐和园路5号" {
 
 ///|
 test "GeoDB::contains_point checks if point is inside bbox" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "A", 39.9, 116.4))
   db.insert(make_entry("p02", "B", 31.2, 121.5))
   // A point near Beijing should be inside the combined bbox
@@ -814,13 +814,13 @@ test "GeoDB::contains_point checks if point is inside bbox" {
 
 ///|
 test "GeoDB::contains_point returns false for empty DB" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   @test.assert_eq(db.contains_point(@types.GeoPoint::make(0.0, 0.0)), false)
 }
 
 ///|
 test "GeoDB::find_within_distance returns sorted results" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "Beijing", 39.9042, 116.4074))
   db.insert(make_entry("p02", "Tianjin", 39.0842, 117.2009))
   db.insert(make_entry("p03", "Shanghai", 31.2304, 121.4737))
@@ -839,7 +839,7 @@ test "GeoDB::find_within_distance returns sorted results" {
 
 ///|
 test "GeoDB::find_sorted_by_distance returns all sorted" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "Shanghai", 31.2304, 121.4737))
   db.insert(make_entry("p02", "Tianjin", 39.0842, 117.2009))
   db.insert(make_entry("p03", "Beijing", 39.9042, 116.4074))
@@ -856,7 +856,7 @@ test "GeoDB::find_sorted_by_distance returns all sorted" {
 
 ///|
 test "GeoDB::find_name_fuzzy finds similar names" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "Tiananmen", 39.9, 116.4))
   db.insert(make_entry("p02", "Shanghai", 31.2, 121.5))
   db.insert(make_entry("p03", "Tianjin", 39.1, 117.2))
@@ -873,7 +873,7 @@ test "GeoDB::find_name_fuzzy finds similar names" {
 
 ///|
 test "GeoDB::find_name_fuzzy respects max_distance" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "Beijing", 39.9, 116.4))
   // "Bejing" (distance 1) should match with max_distance=2
   let r1 = db.find_name_fuzzy("Bejing", max_distance=2)
@@ -885,18 +885,18 @@ test "GeoDB::find_name_fuzzy respects max_distance" {
 
 ///|
 test "levenshtein_distance function works correctly" {
-  @test.assert_eq(levenshtein_distance("kitten", "sitten"), 1)
-  @test.assert_eq(levenshtein_distance("", "abc"), 3)
-  @test.assert_eq(levenshtein_distance("abc", ""), 3)
-  @test.assert_eq(levenshtein_distance("", ""), 0)
-  @test.assert_eq(levenshtein_distance("abc", "abc"), 0)
+  @test.assert_eq(@db.levenshtein_distance("kitten", "sitten"), 1)
+  @test.assert_eq(@db.levenshtein_distance("", "abc"), 3)
+  @test.assert_eq(@db.levenshtein_distance("abc", ""), 3)
+  @test.assert_eq(@db.levenshtein_distance("", ""), 0)
+  @test.assert_eq(@db.levenshtein_distance("abc", "abc"), 0)
 }
 
 // ---- CSV export tests ----
 
 ///|
 test "GeoDB::to_csv exports all entries" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(
     make_entry_with_addr(
       "p01",
@@ -932,7 +932,7 @@ test "GeoDB::to_csv exports all entries" {
 
 ///|
 test "GeoDB::to_csv handles special characters" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(
     make_entry_with_addr("p01", "Name,with,commas", 0.0, 0.0, "", "", [], [
       "tag1;tag2",
@@ -947,7 +947,7 @@ test "GeoDB::to_csv handles special characters" {
 
 ///|
 test "GeoDB::add_tag adds tag to entry" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("p01", "A", 0.0, 0.0, "", "", [], ["poi"]))
   @test.assert_eq(db.find_by_tag("landmark").length(), 0)
   let ok = db.add_tag("p01", "landmark")
@@ -958,7 +958,7 @@ test "GeoDB::add_tag adds tag to entry" {
 
 ///|
 test "GeoDB::add_tag returns false for existing tag" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("p01", "A", 0.0, 0.0, "", "", [], ["poi"]))
   let ok = db.add_tag("p01", "POI") // case-insensitive duplicate
   @test.assert_eq(ok, false)
@@ -966,14 +966,14 @@ test "GeoDB::add_tag returns false for existing tag" {
 
 ///|
 test "GeoDB::add_tag returns false for missing entry" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   let ok = db.add_tag("nonexistent", "tag")
   @test.assert_eq(ok, false)
 }
 
 ///|
 test "GeoDB::remove_tag removes tag from entry" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(
     make_entry_with_addr("p01", "A", 0.0, 0.0, "", "", [], ["poi", "landmark"]),
   )
@@ -985,7 +985,7 @@ test "GeoDB::remove_tag removes tag from entry" {
 
 ///|
 test "GeoDB::remove_tag returns false if tag not present" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("p01", "A", 0.0, 0.0, "", "", [], ["poi"]))
   let ok = db.remove_tag("p01", "nonexistent")
   @test.assert_eq(ok, false)
@@ -995,7 +995,7 @@ test "GeoDB::remove_tag returns false if tag not present" {
 
 ///|
 test "GeoDB::insert_batch inserts multiple entries" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   let entries : Array[@types.GeoEntry] = [
     make_entry("p01", "A", 0.0, 0.0),
     make_entry("p02", "B", 1.0, 1.0),
@@ -1008,19 +1008,19 @@ test "GeoDB::insert_batch inserts multiple entries" {
 
 ///|
 test "GeoDB::remove_batch removes multiple entries" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "A", 0.0, 0.0))
   db.insert(make_entry("p02", "B", 1.0, 1.0))
   db.insert(make_entry("p03", "C", 2.0, 2.0))
   let n = db.remove_batch(["p01", "p03", "nonexistent"])
   @test.assert_eq(n, 2)
   @test.assert_eq(db.size(), 1)
-  @test.assert_eq(db.get("p02") is Some, true)
+  @test.assert_eq(db.get("p02") is Some(_), true)
 }
 
 ///|
 test "GeoDB::clear removes all entries" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "A", 0.0, 0.0))
   db.insert(make_entry("p02", "B", 1.0, 1.0))
   @test.assert_eq(db.size(), 2)
@@ -1032,7 +1032,7 @@ test "GeoDB::clear removes all entries" {
 
 ///|
 test "GeoDB::update_location changes entry location" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "A", 0.0, 0.0))
   let ok = db.update_location("p01", @types.GeoPoint::make(39.9, 116.4))
   @test.assert_eq(ok, true)
@@ -1047,7 +1047,7 @@ test "GeoDB::update_location changes entry location" {
 
 ///|
 test "GeoDB::update_name changes entry name" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "OldName", 0.0, 0.0))
   let ok = db.update_name("p01", "NewName")
   @test.assert_eq(ok, true)
@@ -1062,7 +1062,7 @@ test "GeoDB::update_name changes entry name" {
 
 ///|
 test "GeoDB::update_location returns false for missing entry" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   @test.assert_eq(
     db.update_location("missing", @types.GeoPoint::make(0.0, 0.0)),
     false,
@@ -1073,7 +1073,7 @@ test "GeoDB::update_location returns false for missing entry" {
 
 ///|
 test "GeoDB::find_by_city works through DB" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(
     make_entry_with_addr(
       "p01",
@@ -1105,7 +1105,7 @@ test "GeoDB::find_by_city works through DB" {
 
 ///|
 test "GeoDB::find_by_district works through DB" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(
     make_entry_with_addr(
       "p01",
@@ -1136,7 +1136,7 @@ test "GeoDB::find_by_district works through DB" {
 
 ///|
 test "GeoDB::find_by_province_city compound query" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(
     make_entry_with_addr(
       "p01",
@@ -1168,7 +1168,7 @@ test "GeoDB::find_by_province_city compound query" {
 
 ///|
 test "GeoDB::find_by_all_tags AND logic through DB" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(
     make_entry_with_addr("p01", "A", 0.0, 0.0, "", "", [], ["poi", "landmark"]),
   )
@@ -1180,7 +1180,7 @@ test "GeoDB::find_by_all_tags AND logic through DB" {
 
 ///|
 test "GeoDB::find_by_any_tags OR logic through DB" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("p01", "A", 0.0, 0.0, "", "", [], ["poi"]))
   db.insert(
     make_entry_with_addr("p02", "B", 1.0, 1.0, "", "", [], ["transport"]),
@@ -1191,7 +1191,7 @@ test "GeoDB::find_by_any_tags OR logic through DB" {
 
 ///|
 test "GeoDB::list_cities and list_districts" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(
     make_entry_with_addr(
       "p01",
@@ -1226,7 +1226,7 @@ test "GeoDB::list_cities and list_districts" {
 
 ///|
 test "GeoDB::to_json round-trip preserves entries" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(
     make_entry_with_addr(
       "p01",
@@ -1254,7 +1254,7 @@ test "GeoDB::to_json round-trip preserves entries" {
   let json_str = db.to_json()
   @test.assert_eq(json_str.length() > 0, true)
   // Import into a fresh DB.
-  let db2 = GeoDB::in_memory()
+  let db2 = @db.GeoDB::in_memory()
   let n = db2.import_json(json_str)
   @test.assert_eq(n, 2)
   @test.assert_eq(db2.size(), 2)
@@ -1270,20 +1270,20 @@ test "GeoDB::to_json round-trip preserves entries" {
 
 ///|
 test "GeoDB::to_json on empty DB returns []" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   @test.assert_eq(db.to_json(), "[]")
 }
 
 ///|
 test "GeoDB::import_json on empty/empty-array returns 0" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   @test.assert_eq(db.import_json(""), 0)
   @test.assert_eq(db.import_json("[]"), 0)
 }
 
 ///|
 test "GeoDB::distance_between computes haversine correctly" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "A", 39.9, 116.4))
   db.insert(make_entry("p02", "B", 39.9, 116.4))
   match db.distance_between("p01", "p02") {
@@ -1294,14 +1294,14 @@ test "GeoDB::distance_between computes haversine correctly" {
 
 ///|
 test "GeoDB::distance_between with missing id returns None" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "A", 39.9, 116.4))
   @test.assert_eq(db.distance_between("p01", "missing") is None, true)
 }
 
 ///|
 test "GeoDB::find_nearest_pairs returns closest pairs" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "A", 0.0, 0.0))
   db.insert(make_entry("p02", "B", 0.0, 1.0))
   db.insert(make_entry("p03", "C", 10.0, 10.0))
@@ -1314,7 +1314,7 @@ test "GeoDB::find_nearest_pairs returns closest pairs" {
 
 ///|
 test "GeoDB::find_nearest_pairs on empty/singleton returns empty" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   @test.assert_eq(db.find_nearest_pairs(5).length(), 0)
   db.insert(make_entry("p01", "A", 0.0, 0.0))
   @test.assert_eq(db.find_nearest_pairs(5).length(), 0)
@@ -1322,7 +1322,7 @@ test "GeoDB::find_nearest_pairs on empty/singleton returns empty" {
 
 ///|
 test "GeoDB::find_neighbors returns k nearest" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "A", 0.0, 0.0))
   db.insert(make_entry("p02", "B", 0.0, 1.0))
   db.insert(make_entry("p03", "C", 10.0, 10.0))
@@ -1333,14 +1333,14 @@ test "GeoDB::find_neighbors returns k nearest" {
 
 ///|
 test "GeoDB::find_neighbors with missing id returns empty" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "A", 0.0, 0.0))
   @test.assert_eq(db.find_neighbors("missing", 5).length(), 0)
 }
 
 ///|
 test "GeoDB::count_by_tag works" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(
     make_entry_with_addr("p01", "A", 0.0, 0.0, "", "", [], ["poi", "landmark"]),
   )
@@ -1355,14 +1355,14 @@ test "GeoDB::count_by_tag works" {
 
 ///|
 test "GeoDB::count_by_tag is case-insensitive" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("p01", "A", 0.0, 0.0, "", "", [], ["POI"]))
   @test.assert_eq(db.count_by_tag("poi"), 1)
 }
 
 ///|
 test "GeoDB::district_distribution counts correctly" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(
     make_entry_with_addr(
       "p01",
@@ -1408,7 +1408,7 @@ test "GeoDB::district_distribution counts correctly" {
 
 ///|
 test "GeoDB::district_distribution filtered by province" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(
     make_entry_with_addr(
       "p01",
@@ -1440,7 +1440,7 @@ test "GeoDB::district_distribution filtered by province" {
 
 ///|
 test "GeoDB::find_name_pattern supports wildcards" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "Apple", 0.0, 0.0))
   db.insert(make_entry("p02", "Application", 1.0, 1.0))
   db.insert(make_entry("p03", "Banana", 2.0, 2.0))
@@ -1458,7 +1458,7 @@ test "GeoDB::find_name_pattern supports wildcards" {
 
 ///|
 test "GeoDB::centroid_weighted_by_tag works" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("p01", "A", 10.0, 20.0, "", "", [], ["poi"]))
   db.insert(make_entry_with_addr("p02", "B", 30.0, 40.0, "", "", [], ["poi"]))
   match db.centroid_weighted_by_tag("poi") {
@@ -1473,14 +1473,14 @@ test "GeoDB::centroid_weighted_by_tag works" {
 
 ///|
 test "GeoDB::centroid_weighted_by_tag returns None for missing tag" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("p01", "A", 0.0, 0.0, "", "", [], ["poi"]))
   @test.assert_eq(db.centroid_weighted_by_tag("missing") is None, true)
 }
 
 ///|
 test "GeoDB::tag_pair_distribution counts co-occurring pairs" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(
     make_entry_with_addr("p01", "A", 0.0, 0.0, "", "", [], ["poi", "landmark"]),
   )
@@ -1502,7 +1502,7 @@ test "GeoDB::tag_pair_distribution counts co-occurring pairs" {
 
 ///|
 test "GeoDB::update_coordinates changes location" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "A", 10.0, 20.0))
   let ok = db.update_coordinates("p01", 30.0, 40.0)
   @test.assert_eq(ok, true)
@@ -1517,13 +1517,13 @@ test "GeoDB::update_coordinates changes location" {
 
 ///|
 test "GeoDB::update_coordinates missing id returns false" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   @test.assert_eq(db.update_coordinates("missing", 0.0, 0.0), false)
 }
 
 ///|
 test "GeoDB::find_in_bbox_strict filters by bbox AND radius" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "A", 0.0, 0.0))
   db.insert(make_entry("p02", "B", 0.001, 0.001)) // ~157m away
   db.insert(make_entry("p03", "C", 10.0, 10.0)) // far away
@@ -1539,7 +1539,7 @@ test "GeoDB::find_in_bbox_strict filters by bbox AND radius" {
 
 ///|
 test "GeoDB::to_geojson produces FeatureCollection" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(
     make_entry_with_addr(
       "p01",
@@ -1562,7 +1562,7 @@ test "GeoDB::to_geojson produces FeatureCollection" {
 
 ///|
 test "GeoDB::find_name_contains_case preserves case" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "Apple", 0.0, 0.0))
   db.insert(make_entry("p02", "apple", 1.0, 1.0))
   let r = db.find_name_contains_case("App")
@@ -1572,7 +1572,7 @@ test "GeoDB::find_name_contains_case preserves case" {
 
 ///|
 test "GeoDB::find_name_prefix_case preserves case" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("p01", "Apple", 0.0, 0.0))
   db.insert(make_entry("p02", "app", 1.0, 1.0))
   let r = db.find_name_prefix_case("App")
@@ -1582,7 +1582,7 @@ test "GeoDB::find_name_prefix_case preserves case" {
 
 ///|
 test "GeoDB::rename and update_address work" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("p01", "A", 0.0, 0.0, "", "", [], []))
   @test.assert_eq(db.rename("p01", "NewName"), true)
   match db.get("p01") {
@@ -1609,7 +1609,7 @@ test "GeoDB::rename and update_address work" {
 
 ///|
 test "GeoDB::import_csv round-trip with to_csv" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(
     make_entry_with_addr(
       "c01",
@@ -1637,7 +1637,7 @@ test "GeoDB::import_csv round-trip with to_csv" {
   let csv = db.to_csv()
   @test.assert_eq(csv.length() > 0, true)
   // Import into a fresh DB.
-  let db2 = GeoDB::in_memory()
+  let db2 = @db.GeoDB::in_memory()
   let n = db2.import_csv(csv)
   @test.assert_eq(n, 2)
   @test.assert_eq(db2.size(), 2)
@@ -1653,7 +1653,7 @@ test "GeoDB::import_csv round-trip with to_csv" {
 
 ///|
 test "GeoDB::import_csv handles empty input" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   @test.assert_eq(db.import_csv(""), 0)
   @test.assert_eq(db.import_csv("id,name\n"), 0)
 }
@@ -1662,7 +1662,7 @@ test "GeoDB::import_csv handles empty input" {
 
 ///|
 test "GeoDB::import_geojson round-trip with to_geojson" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(
     make_entry_with_addr(
       "g01",
@@ -1690,7 +1690,7 @@ test "GeoDB::import_geojson round-trip with to_geojson" {
   let gj = db.to_geojson()
   @test.assert_eq(gj.length() > 0, true)
   // Import into a fresh DB.
-  let db2 = GeoDB::in_memory()
+  let db2 = @db.GeoDB::in_memory()
   let n = db2.import_geojson(gj)
   @test.assert_eq(n, 2)
   @test.assert_eq(db2.size(), 2)
@@ -1705,7 +1705,7 @@ test "GeoDB::import_geojson round-trip with to_geojson" {
 
 ///|
 test "GeoDB::import_geojson handles empty input" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   @test.assert_eq(db.import_geojson(""), 0)
   @test.assert_eq(db.import_geojson("{}"), 0)
   @test.assert_eq(db.import_geojson("{\"type\":\"Feature\"}"), 0)
@@ -1715,7 +1715,7 @@ test "GeoDB::import_geojson handles empty input" {
 
 ///|
 test "GeoDB::find_duplicates groups near-identical entries" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(
     make_entry_with_addr("d01", "Temple", 39.9000, 116.4000, "", "", "", []),
   )
@@ -1733,7 +1733,7 @@ test "GeoDB::find_duplicates groups near-identical entries" {
 
 ///|
 test "GeoDB::find_duplicates does not group far-apart entries" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("d01", "Park", 39.9, 116.4, "", "", "", []))
   db.insert(make_entry_with_addr("d02", "Park", 31.2, 121.5, "", "", "", []))
   let groups = db.find_duplicates(max_distance_km=1.0, max_edit_dist=2)
@@ -1744,7 +1744,7 @@ test "GeoDB::find_duplicates does not group far-apart entries" {
 
 ///|
 test "GeoDB::cluster_by_grid groups nearby entries" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(
     make_entry_with_addr("cl01", "A", 39.9000, 116.4000, "", "", "", []),
   )
@@ -1763,7 +1763,7 @@ test "GeoDB::cluster_by_grid groups nearby entries" {
 
 ///|
 test "GeoDB::cluster_by_grid on empty DB returns empty" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   let clusters = db.cluster_by_grid()
   @test.assert_eq(clusters.length(), 0)
 }
@@ -1772,7 +1772,7 @@ test "GeoDB::cluster_by_grid on empty DB returns empty" {
 
 ///|
 test "GeoDB::distance_matrix computes pairwise distances" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("m01", "A", 39.9, 116.4, "", "", "", []))
   db.insert(make_entry_with_addr("m02", "B", 31.2, 121.5, "", "", "", []))
   let matrix = db.distance_matrix(["m01", "m02"])
@@ -1790,7 +1790,7 @@ test "GeoDB::distance_matrix computes pairwise distances" {
 
 ///|
 test "GeoDB::distance_matrix with missing IDs returns 0" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("m01", "A", 39.9, 116.4, "", "", "", []))
   let matrix = db.distance_matrix(["m01", "missing"])
   @test.assert_eq(matrix.length(), 2)
@@ -1803,7 +1803,7 @@ test "GeoDB::distance_matrix with missing IDs returns 0" {
 
 ///|
 test "GeoDB::reverse_geocode finds nearest entry" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("rg01", "North", 40.0, 116.0, "", "", "", []))
   db.insert(make_entry_with_addr("rg02", "South", 31.0, 121.0, "", "", "", []))
   // Query near (39.9, 116.1) - should be closer to rg01.
@@ -1818,7 +1818,7 @@ test "GeoDB::reverse_geocode finds nearest entry" {
 
 ///|
 test "GeoDB::reverse_geocode on empty DB returns None" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   match db.reverse_geocode(39.9, 116.4) {
     None => @test.assert_eq(true, true)
     Some(_) => @test.assert_eq(true, false)
@@ -1829,7 +1829,7 @@ test "GeoDB::reverse_geocode on empty DB returns None" {
 
 ///|
 test "GeoDB::find_by_tags_all returns entries with all tags" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(
     make_entry_with_addr("ta01", "A", 0.0, 0.0, "", "", "", ["food", "cheap"]),
   )
@@ -1846,7 +1846,7 @@ test "GeoDB::find_by_tags_all returns entries with all tags" {
 
 ///|
 test "GeoDB::find_by_tags_any returns entries with any tag" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("ta01", "A", 0.0, 0.0, "", "", "", ["food"]))
   db.insert(
     make_entry_with_addr("ta02", "B", 0.0, 0.0, "", "", "", ["transport"]),
@@ -1864,7 +1864,7 @@ test "GeoDB::find_by_tags_any returns entries with any tag" {
 
 ///|
 test "GeoDB::bbox_count counts entries inside bbox" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("bb01", "A", 39.5, 116.5, "", "", "", []))
   db.insert(make_entry_with_addr("bb02", "B", 40.5, 117.5, "", "", "", []))
   db.insert(make_entry_with_addr("bb03", "C", 30.0, 120.0, "", "", "", []))
@@ -1880,7 +1880,7 @@ test "GeoDB::bbox_count counts entries inside bbox" {
 
 ///|
 test "GeoDB::find_within_radius returns nearby entries" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("wr01", "A", 39.9, 116.4, "", "", "", []))
   db.insert(
     make_entry_with_addr("wr02", "B", 39.9001, 116.4001, "", "", "", []),
@@ -1894,7 +1894,7 @@ test "GeoDB::find_within_radius returns nearby entries" {
 
 ///|
 test "GeoDB::density_map groups entries by grid" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(
     make_entry_with_addr("dm01", "A", 39.9000, 116.4000, "", "", "", []),
   )
@@ -1918,7 +1918,7 @@ test "GeoDB::density_map groups entries by grid" {
 
 ///|
 test "GeoDB::location_stddev returns zero for single entry" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("sd01", "A", 39.9, 116.4, "", "", "", []))
   let (std_lat, std_lng) = db.location_stddev()
   @test.assert_eq(std_lat, 0.0)
@@ -1927,7 +1927,7 @@ test "GeoDB::location_stddev returns zero for single entry" {
 
 ///|
 test "GeoDB::location_stddev is non-negative for multiple entries" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("sd01", "A", 39.9, 116.4, "", "", "", []))
   db.insert(make_entry_with_addr("sd02", "B", 31.2, 121.5, "", "", "", []))
   let (std_lat, std_lng) = db.location_stddev()
@@ -1937,7 +1937,7 @@ test "GeoDB::location_stddev is non-negative for multiple entries" {
 
 ///|
 test "GeoDB::province_histogram counts entries by province" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(
     make_entry_with_addr("ph01", "A", 0.0, 0.0, "北京市", "北京市", "", []),
   )
@@ -1962,7 +1962,7 @@ test "GeoDB::province_histogram counts entries by province" {
 
 ///|
 test "GeoDB::path_distance computes multi-point route distance" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("pt01", "A", 39.9, 116.4, "", "", "", []))
   db.insert(make_entry_with_addr("pt02", "B", 31.2, 121.5, "", "", "", []))
   db.insert(make_entry_with_addr("pt03", "C", 22.3, 114.1, "", "", "", []))
@@ -1982,14 +1982,14 @@ test "GeoDB::path_distance computes multi-point route distance" {
 
 ///|
 test "GeoDB::path_distance with single entry returns 0" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("pt01", "A", 39.9, 116.4, "", "", "", []))
   @test.assert_eq(db.path_distance(["pt01"]), 0.0)
 }
 
 ///|
 test "GeoDB::path_detail returns entries and distance" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("pd01", "A", 39.9, 116.4, "", "", "", []))
   db.insert(make_entry_with_addr("pd02", "B", 31.2, 121.5, "", "", "", []))
   let (d, entries) = db.path_detail(["pd01", "pd02"])
@@ -2001,7 +2001,7 @@ test "GeoDB::path_detail returns entries and distance" {
 
 ///|
 test "GeoDB::entry_geohash computes correctly" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("g01", "A", 39.9087, 116.3975, "", "", "", []))
   let gh = db.entry_geohash("g01", precision=6)
   match gh {
@@ -2018,7 +2018,7 @@ test "GeoDB::entry_geohash computes correctly" {
 
 ///|
 test "GeoDB::find_by_geohash matches exact geohash" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("g01", "A", 39.9087, 116.3975, "", "", "", []))
   // Get the geohash for this entry, then search by it.
   let gh = db.entry_geohash("g01", precision=6)
@@ -2034,7 +2034,7 @@ test "GeoDB::find_by_geohash matches exact geohash" {
 
 ///|
 test "GeoDB::find_by_geohash_prefix groups nearby entries" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("g01", "A", 39.9087, 116.3975, "", "", "", []))
   db.insert(make_entry_with_addr("g02", "B", 39.9090, 116.3980, "", "", "", []))
   db.insert(make_entry_with_addr("g03", "C", 22.3000, 114.1000, "", "", "", []))
@@ -2046,7 +2046,7 @@ test "GeoDB::find_by_geohash_prefix groups nearby entries" {
 
 ///|
 test "GeoDB::convex_hull_all returns hull points" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("ch01", "A", 0.0, 0.0, "", "", "", []))
   db.insert(make_entry_with_addr("ch02", "B", 10.0, 0.0, "", "", "", []))
   db.insert(make_entry_with_addr("ch03", "C", 0.0, 10.0, "", "", "", []))
@@ -2060,7 +2060,7 @@ test "GeoDB::convex_hull_all returns hull points" {
 
 ///|
 test "GeoDB::page_all returns correct slice" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("pg01", "A", 1.0, 1.0, "", "", "", []))
   db.insert(make_entry_with_addr("pg02", "B", 2.0, 2.0, "", "", "", []))
   db.insert(make_entry_with_addr("pg03", "C", 3.0, 3.0, "", "", "", []))
@@ -2072,7 +2072,7 @@ test "GeoDB::page_all returns correct slice" {
 
 ///|
 test "GeoDB::page_all with offset beyond size returns empty" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("pg01", "A", 1.0, 1.0, "", "", "", []))
   let page = db.page_all(10, offset=5)
   @test.assert_eq(page.length(), 0)
@@ -2080,7 +2080,7 @@ test "GeoDB::page_all with offset beyond size returns empty" {
 
 ///|
 test "GeoDB::page_results paginates any array" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("pg01", "A", 1.0, 1.0, "", "", "", []))
   db.insert(make_entry_with_addr("pg02", "B", 2.0, 2.0, "", "", "", []))
   let results = db.find_name_contains("A")
@@ -2092,7 +2092,7 @@ test "GeoDB::page_results paginates any array" {
 
 ///|
 test "GeoDB::normalize_address strips province/city suffixes" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   let addr : @types.Address = {
     country: "中国",
     province: "北京市",
@@ -2124,7 +2124,7 @@ test "GeoDB::normalize_address strips province/city suffixes" {
 
 ///|
 test "GeoDB::normalize_address on missing entry returns false" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   @test.assert_eq(db.normalize_address("nope"), false)
 }
 
@@ -2311,7 +2311,7 @@ test "average_nn_distance returns 0 for fewer than 2 points" {
 
 ///|
 test "GeoDB::convex_hull_area returns positive" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("a", "A", 0.0, 0.0, "", "", "", []))
   db.insert(make_entry_with_addr("b", "B", 0.0, 1.0, "", "", "", []))
   db.insert(make_entry_with_addr("c", "C", 1.0, 1.0, "", "", "", []))
@@ -2322,7 +2322,7 @@ test "GeoDB::convex_hull_area returns positive" {
 
 ///|
 test "GeoDB::find_in_polygon returns points inside polygon" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("inside", "I", 0.5, 0.5, "", "", "", []))
   db.insert(make_entry_with_addr("outside", "O", 5.0, 5.0, "", "", "", []))
   let poly : Array[@types.GeoPoint] = [
@@ -2338,7 +2338,7 @@ test "GeoDB::find_in_polygon returns points inside polygon" {
 
 ///|
 test "GeoDB::average_nn_distance is positive with entries" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("a", "A", 39.9, 116.4, "", "", "", []))
   db.insert(make_entry_with_addr("b", "B", 31.2, 121.5, "", "", "", []))
   db.insert(make_entry_with_addr("c", "C", 22.3, 114.1, "", "", "", []))
@@ -2348,7 +2348,7 @@ test "GeoDB::average_nn_distance is positive with entries" {
 
 ///|
 test "GeoDB::cluster_dbscan groups close points together" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("c1", "C1", 39.9000, 116.4000, "", "", "", []))
   db.insert(make_entry_with_addr("c2", "C2", 39.9001, 116.4001, "", "", "", []))
   db.insert(make_entry_with_addr("c3", "C3", 39.9002, 116.4002, "", "", "", []))
@@ -2369,8 +2369,8 @@ test "GeoDB::cluster_dbscan groups close points together" {
 /// Build 3 known clusters of 8 points each, packed inside ~10 km
 /// (±0.05° box), centered on Beijing / Shanghai / Guangzhou.
 /// Cities are 1000+ km apart so no cross-cluster neighbors exist.
-fn build_three_cluster_db() -> GeoDB {
-  let db = GeoDB::in_memory()
+fn build_three_cluster_db() -> @db.GeoDB {
+  let db = @db.GeoDB::in_memory()
   let centers : Array[(String, Double, Double)] = [
     ("bj", 39.9, 116.4),
     ("sh", 31.2, 121.5),
@@ -2411,9 +2411,9 @@ test "GeoDB::cluster_dbscan finds exactly 3 known clusters" {
   // Every cluster must have exactly 8 members sharing a city prefix.
   for c in clusters {
     @test.assert_eq(c.length(), 8)
-    let prefix = c[0].substring(start=0, end=2)
+    let prefix = c[0][:2]
     for id in c {
-      @test.assert_eq(id.substring(start=0, end=2), prefix)
+      @test.assert_eq(id[:2], prefix)
     }
   }
 }
@@ -2503,7 +2503,7 @@ test "GeoDB::kmeans separates the 3 known clusters" {
 
 ///|
 test "GeoDB::radial_density counts entries by ring" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   let center = @types.GeoPoint::make(0.0, 0.0)
   db.insert(make_entry_with_addr("near", "N", 0.001, 0.001, "", "", "", []))
   db.insert(make_entry_with_addr("mid", "M", 1.0, 1.0, "", "", "", []))
@@ -2516,7 +2516,7 @@ test "GeoDB::radial_density counts entries by ring" {
 
 ///|
 test "GeoDB::to_geojson_with_bbox produces valid feature collection" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry_with_addr("t1", "Test", 39.9, 116.4, "", "", "", []))
   let geojson = db.to_geojson_with_bbox()
   @test.assert_eq(geojson.contains("\"type\":\"FeatureCollection\""), true)
@@ -2528,7 +2528,7 @@ test "GeoDB::to_geojson_with_bbox produces valid feature collection" {
 
 ///|
 test "GeoDB::distance_histogram has correct bin count" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("h01", "A", 39.9, 116.4))
   db.insert(make_entry("h02", "B", 31.2, 121.5))
   db.insert(make_entry("h03", "C", 22.3, 114.1))
@@ -2545,7 +2545,7 @@ test "GeoDB::distance_histogram has correct bin count" {
 
 ///|
 test "GeoDB::distance_histogram handles edge case with 0 bins" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("h01", "A", 0.0, 0.0))
   let center = @types.GeoPoint::make(0.0, 0.0)
   @test.assert_eq(db.distance_histogram(center, 100.0, num_bins=0).length(), 0)
@@ -2554,7 +2554,7 @@ test "GeoDB::distance_histogram handles edge case with 0 bins" {
 
 ///|
 test "GeoDB::lat_histogram produces correct number of bins" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("h01", "A", 39.9, 116.4))
   db.insert(make_entry("h02", "B", 31.2, 121.5))
   let hist = db.lat_histogram(num_bins=4)
@@ -2568,7 +2568,7 @@ test "GeoDB::lat_histogram produces correct number of bins" {
 
 ///|
 test "GeoDB::lng_histogram produces correct number of bins" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("h01", "A", 39.9, 116.4))
   db.insert(make_entry("h02", "B", 31.2, 121.5))
   let hist = db.lng_histogram(num_bins=4)
@@ -2582,7 +2582,7 @@ test "GeoDB::lng_histogram produces correct number of bins" {
 
 ///|
 test "GeoDB::distance_summary returns non-zero on multi-entry DB" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("s01", "A", 39.9, 116.4))
   db.insert(make_entry("s02", "B", 31.2, 121.5))
   let (count, min_d, max_d, mean, median) = db.distance_summary()
@@ -2597,7 +2597,7 @@ test "GeoDB::distance_summary returns non-zero on multi-entry DB" {
 
 ///|
 test "GeoDB::distance_summary with center computes distances from point" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("s01", "A", 39.9, 116.4))
   db.insert(make_entry("s02", "B", 31.2, 121.5))
   let center = @types.GeoPoint::make(39.9, 116.4)
@@ -2607,7 +2607,7 @@ test "GeoDB::distance_summary with center computes distances from point" {
 
 ///|
 test "GeoDB::distance_summary on empty DB returns zeros" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   let (count, min_d, max_d, mean, median) = db.distance_summary()
   @test.assert_eq(count, 0)
   @test.assert_eq(min_d, 0.0)
@@ -2620,7 +2620,7 @@ test "GeoDB::distance_summary on empty DB returns zeros" {
 
 ///|
 test "GeoDB::find_in_ring returns entries in annulus" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("r01", "Near", 39.9000, 116.4000)) // ~0 km from center
   db.insert(make_entry("r02", "Mid", 39.9100, 116.4100)) // ~1.5 km from center
   db.insert(make_entry("r03", "Far", 40.5000, 117.0000)) // ~80 km from center
@@ -2633,7 +2633,7 @@ test "GeoDB::find_in_ring returns entries in annulus" {
 
 ///|
 test "GeoDB::find_in_ring handles reversed radii" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("r01", "Mid", 39.9100, 116.4100))
   let center = @types.GeoPoint::make(39.9000, 116.4000)
   // Passing (outer=10, inner=0.5) reversed should still work.
@@ -2643,7 +2643,7 @@ test "GeoDB::find_in_ring handles reversed radii" {
 
 ///|
 test "GeoDB::ring_query_summary returns distance stats" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("r01", "A", 39.9100, 116.4100))
   db.insert(make_entry("r02", "B", 39.9200, 116.4200))
   let center = @types.GeoPoint::make(39.9000, 116.4000)
@@ -2659,7 +2659,7 @@ test "GeoDB::ring_query_summary returns distance stats" {
 
 ///|
 test "GeoDB::spatial_join_nearest matches each DB entry to nearest other" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("sj01", "A", 0.0, 0.0))
   db.insert(make_entry("sj02", "B", 10.0, 10.0))
   let other : Array[@types.GeoEntry] = [
@@ -2676,14 +2676,14 @@ test "GeoDB::spatial_join_nearest matches each DB entry to nearest other" {
 
 ///|
 test "GeoDB::spatial_join_nearest on empty other returns empty" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("sj01", "A", 0.0, 0.0))
   @test.assert_eq(db.spatial_join_nearest([]).length(), 0)
 }
 
 ///|
 test "GeoDB::spatial_join_within finds pairs within distance" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("sj01", "A", 0.0, 0.0))
   db.insert(make_entry("sj02", "B", 10.0, 10.0))
   let other : Array[@types.GeoEntry] = [
@@ -2699,7 +2699,7 @@ test "GeoDB::spatial_join_within finds pairs within distance" {
 
 ///|
 test "GeoDB::spatial_join_knearest returns k per entry" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("sj01", "A", 0.0, 0.0))
   let other : Array[@types.GeoEntry] = [
     make_entry("x01", "X1", 0.001, 0.001),
@@ -2715,7 +2715,7 @@ test "GeoDB::spatial_join_knearest returns k per entry" {
 
 ///|
 test "GeoDB::spatial_join_knearest on empty other returns empty" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("sj01", "A", 0.0, 0.0))
   @test.assert_eq(db.spatial_join_knearest([], 5).length(), 0)
   @test.assert_eq(db.spatial_join_knearest([], 0).length(), 0)
@@ -2725,7 +2725,7 @@ test "GeoDB::spatial_join_knearest on empty other returns empty" {
 
 ///|
 test "GeoDB::nearest_neighbors_range returns distance range" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("nn01", "Center", 39.9000, 116.4000))
   db.insert(make_entry("nn02", "Near1", 39.9005, 116.4005)) // very close
   db.insert(make_entry("nn03", "Near2", 39.9010, 116.4010)) // slightly farther
@@ -2746,14 +2746,14 @@ test "GeoDB::nearest_neighbors_range returns distance range" {
 
 ///|
 test "GeoDB::nearest_neighbors_range on missing id returns None" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("nn01", "A", 0.0, 0.0))
   @test.assert_eq(db.nearest_neighbors_range("missing", 5) is None, true)
 }
 
 ///|
 test "GeoDB::nearest_neighbors_range on singleton DB returns None" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("nn01", "A", 0.0, 0.0))
   @test.assert_eq(db.nearest_neighbors_range("nn01", 5) is None, true)
 }
@@ -2762,7 +2762,7 @@ test "GeoDB::nearest_neighbors_range on singleton DB returns None" {
 
 ///|
 test "GeoDB::tsp_nearest visits all entries" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("a", "A", 0.0, 0.0))
   db.insert(make_entry("b", "B", 0.1, 0.0))
   db.insert(make_entry("c", "C", 10.0, 10.0))
@@ -2779,14 +2779,14 @@ test "GeoDB::tsp_nearest visits all entries" {
 
 ///|
 test "GeoDB::tsp_nearest with missing start returns None" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("a", "A", 0.0, 0.0))
   @test.assert_eq(db.tsp_nearest("missing") is None, true)
 }
 
 ///|
 test "GeoDB::kmeans produces k clusters" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("a", "A", 0.0, 0.0))
   db.insert(make_entry("b", "B", 0.1, 0.1))
   db.insert(make_entry("c", "C", 10.0, 10.0))
@@ -2797,7 +2797,7 @@ test "GeoDB::kmeans produces k clusters" {
 
 ///|
 test "GeoDB::find_bbox filters correctly" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("a", "A", 39.5, 116.5))
   db.insert(make_entry("b", "B", 41.0, 116.5))  // outside
   db.insert(make_entry("c", "C", 39.5, 118.0))  // outside lng
@@ -2808,7 +2808,7 @@ test "GeoDB::find_bbox filters correctly" {
 
 ///|
 test "GeoDB::find_in_ring uses index correctly" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("a", "A", 0.0, 0.0))
   db.insert(make_entry("b", "B", 0.0, 0.5))   // ~55 km
   db.insert(make_entry("c", "C", 0.0, 5.0))   // ~500 km
@@ -2821,7 +2821,7 @@ test "GeoDB::find_in_ring uses index correctly" {
 
 ///|
 test "GeoDB::centroid and geographic_center" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("a", "A", 0.0, 0.0))
   db.insert(make_entry("b", "B", 10.0, 10.0))
   let c = db.centroid()
@@ -2832,7 +2832,7 @@ test "GeoDB::centroid and geographic_center" {
 
 ///|
 test "GeoDB::std_dev_ellipse" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("a", "A", 0.0, 0.0))
   db.insert(make_entry("b", "B", 1.0, 0.0))
   db.insert(make_entry("c", "C", 0.0, 1.0))
@@ -2848,7 +2848,7 @@ test "GeoDB::std_dev_ellipse" {
 
 ///|
 test "GeoDB::spatial_join_nearest using temp R-tree" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("a", "A", 0.0, 0.0))
   db.insert(make_entry("b", "B", 10.0, 10.0))
   let other = [
@@ -2865,7 +2865,7 @@ test "GeoDB::spatial_join_nearest using temp R-tree" {
 
 ///|
 test "GeoDB::spatial_join_knearest temp R-tree" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("a", "A", 0.0, 0.0))
   let other = [
     make_entry("x", "X", 0.1, 0.0),
@@ -2881,13 +2881,13 @@ test "GeoDB::spatial_join_knearest temp R-tree" {
 
 ///|
 test "GeoDB::nearest_neighbors_range still works after R-tree opt" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("a", "A", 0.0, 0.0))
   db.insert(make_entry("b", "B", 0.0, 0.1))
   db.insert(make_entry("c", "C", 10.0, 10.0))
   match db.nearest_neighbors_range("a", 2) {
     None => @test.assert_eq(false, true)
-    Some((n, min_d, max_d, mean_d, median_d)) => {
+    Some((n, min_d, max_d, mean_d, _median_d)) => {
       @test.assert_eq(n >= 2, true)
       @test.assert_eq(min_d <= max_d, true)
       @test.assert_eq(mean_d > 0.0, true)
@@ -2899,7 +2899,7 @@ test "GeoDB::nearest_neighbors_range still works after R-tree opt" {
 
 ///|
 test "GeoDB::tsp_2opt produces route no worse than NN" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("a", "A", 0.0, 0.0))
   db.insert(make_entry("b", "B", 0.0, 0.1))
   db.insert(make_entry("c", "C", 10.0, 10.0))
@@ -2919,7 +2919,7 @@ test "GeoDB::tsp_2opt produces route no worse than NN" {
 
 ///|
 test "GeoDB::tsp_2opt with missing start returns None" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("a", "A", 0.0, 0.0))
   @test.assert_eq(db.tsp_2opt("missing") is None, true)
 }
@@ -2928,7 +2928,7 @@ test "GeoDB::tsp_2opt with missing start returns None" {
 
 ///|
 test "GeoDB::idw_predict basic" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("a", "A", 0.0, 0.0))
   db.insert(make_entry("b", "B", 0.0, 1.0))
   let q = @types.GeoPoint::make(0.0, 0.5)
@@ -2940,7 +2940,7 @@ test "GeoDB::idw_predict basic" {
 
 ///|
 test "GeoDB::idw_predict_knn restricts to k nearest" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("a", "A", 0.0, 0.0))
   db.insert(make_entry("b", "B", 0.0, 1.0))
   db.insert(make_entry("c", "C", 0.0, 100.0))
@@ -2958,7 +2958,7 @@ test "GeoDB::idw_predict_knn restricts to k nearest" {
 
 ///|
 test "GeoDB::concave_hull basic" {
-  let db = GeoDB::in_memory()
+  let db = @db.GeoDB::in_memory()
   db.insert(make_entry("a", "A", 0.0, 0.0))
   db.insert(make_entry("b", "B", 1.0, 0.0))
   db.insert(make_entry("c", "C", 1.0, 1.0))

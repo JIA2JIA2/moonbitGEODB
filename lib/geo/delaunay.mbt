@@ -29,12 +29,18 @@ pub(all) struct DelaunayTriangle {
   c : Int
 } derive(Eq, Debug)
 
+pub extend DelaunayTriangle with Eq::{ equal, not_equal }
+pub extend DelaunayTriangle with Debug::{ to_repr }
+
 ///|
 /// A Delaunay edge between two point indices.
 pub(all) struct DelaunayEdge {
   a : Int
   b : Int
 } derive(Eq, Debug)
+
+pub extend DelaunayEdge with Eq::{ equal, not_equal }
+pub extend DelaunayEdge with Debug::{ to_repr }
 
 ///|
 /// Compute the Delaunay triangulation of a set of planar points via the
@@ -54,7 +60,7 @@ pub fn delaunay_triangulation(
   let cells = voronoi_diagram(points, bbox)
   // Build Delaunay edges from Voronoi cell adjacencies.
   // Two sites are Delaunay neighbours iff their Voronoi cells share an edge.
-  let edges = delaunay_edges_from_voronoi(cells, n)
+  let edges = delaunay_edges_from_voronoi(cells)
   // Triangulate the Delaunay graph.
   triangulate_from_edges(edges, n)
 }
@@ -69,7 +75,7 @@ pub fn delaunay_edges(points : Array[@types.GeoPoint]) -> Array[DelaunayEdge] {
   let (min_lat, max_lat, min_lng, max_lng) = bounds(points)
   let bbox : @types.BBox = { min_lat, max_lat, min_lng, max_lng, }
   let cells = voronoi_diagram(points, bbox)
-  delaunay_edges_from_voronoi(cells, n)
+  delaunay_edges_from_voronoi(cells)
 }
 
 ///|
@@ -77,7 +83,6 @@ pub fn delaunay_edges(points : Array[@types.GeoPoint]) -> Array[DelaunayEdge] {
 /// Two sites are neighbours iff their Voronoi cells share at least one edge.
 fn delaunay_edges_from_voronoi(
   cells : Array[VoronoiCell],
-  n : Int,
 ) -> Array[DelaunayEdge] {
   let edge_set : @hashmap.HashMap[String, Bool] = @hashmap.HashMap([])
   let edges : Array[DelaunayEdge] = []
