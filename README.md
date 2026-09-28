@@ -35,7 +35,7 @@ moon run cmd sde                           # 标准差椭圆
 ## 特性
 
 - **地址解析**：支持多格式地址字符串解析，特别是针对中文地址（如"北京市海淀区颐和园路5号"）的智能行政区划识别
-- **语义地址匹配**：基于 **LightGBM 集成**（60 棵决策树，n_estimators=20×3 类，max_depth=6）的三层分类器（完全匹配/部分匹配/不匹配）。手工规则 OR-of-16 → 25 中间特征导出 → LightGBM 投票决策。在 20k 条真实中文地址标注语料上 **Agreement 75.90%**（96,423 query-candidate 对），吞吐量 ~18k pairs/s，比初始 66.98% 手工规则提升 **+8.92%**
+- **语义地址匹配**：基于 **LightGBM 集成**（60 棵决策树，n_estimators=20×3 类，max_depth=6）的三层分类器（完全匹配/部分匹配/不匹配）。25 维中间特征提取 → LightGBM 60 树投票直接决策（旧手工规则链已整体移除）。在 20k 条真实中文地址标注语料上 **Agreement 75.90%**（96,423 query-candidate 对），吞吐量 ~19k pairs/s，比初始 66.98% 手工规则提升 **+8.92%**
 - **地理运算**：内置 Haversine 距离计算、方位角计算、边界框（BBox）操作
 - **空间索引**：基于网格的空间索引（BBox 范围查询）与 R-tree（亚线性的 k 最近邻搜索与范围查询）
 - **名称索引**：支持精确匹配、前缀匹配、子串匹配、通配符匹配的名称查找
@@ -171,14 +171,14 @@ moonbitGEODB/
 | **parser** | 支持逗号分隔、制表符分隔、中文行政区划等多种地址格式的解析；核心模块 **`address_match.mbt`** 实现语义地址匹配器 — 25 维中间特征提取 + **LightGBM 集成**（60 棵树投票），在 96,423 对真实中文地址上 Agreement **75.90%**，可对数据库内地址做模糊语义检索 |
 | **index** | 网格空间索引加速 BBox 查询；R-tree（`rtree.mbt`）提供亚线性的 k 最近邻与范围查询；基于 HashMap 的名称/标签/地址索引 |
 | **persist** | 二进制编解码（codec.mbt）、GeoEntry 序列化（binary.mbt）、C FFI IO（persist_native.mbt）、原子写入与备份 |
-| **gen** | 包含 37 个主要中国城市（含真实坐标）、街道名、门牌号的随机地址生成器 |
+| **gen** | 包含 347 个中国城市（含真实坐标）、街道名、门牌号的随机地址生成器 |
 | **db** | 提供完整的数据库操作 API：增删改查、空间查询、标签聚合、持久化、备份恢复、高级分析 |
 
 ## 构建与运行
 
 ### 环境要求
 
-- MoonBit 编译器
+- MoonBit 编译器（已在 moon 0.1.20260920 / moonc v0.10.14 上验证，`moon build` 零警告零错误）
 - GCC 编译器（用于 C FFI 链接）
 - Linux/Unix 环境（用于文件系统操作）
 
@@ -688,7 +688,7 @@ $ moon run cmd dbscan 50.0 3
 
 - **评测语义地址匹配器**：`moon run cmd addr-eval testdata/data.txt 0` 输出混淆矩阵 + 各分类 precision/recall/F1
 - **构建真实空间 DB**：`moon run cmd corpus-db 500` 取前 500 条记录，自动提取城市坐标，DBSCAN 聚类持久化到 `testdata/geo_corpus.db`
-- **匹配器特征调优**：调整 `address_match.mbt` 中 FeatureBundle 内的中间特征（如 `standalone_dice_threshold`、`context_dice_threshold` 等规则引擎阈值），dump 新特征后重训 LightGBM → 观察 addr-eval 效果
+- **匹配器调优**：通过 `addr-feat-dump` 导出 FeatureBundle 中间特征后重训 LightGBM（旧手工规则阈值已随规则链一并移除），再观察 addr-eval 效果
 
 | 统计量 | 数值 |
 |--------|------|
@@ -698,7 +698,7 @@ $ moon run cmd dbscan 50.0 3
 | **完全匹配 F1** | **24.79%** (Prec 57.8%, Rec 15.8%) |
 | **部分匹配 F1** | **67.17%** (Prec 67.5%, Rec 66.8%) |
 | **不匹配 F1** | **83.66%** (Prec 80.5%, Rec 87.0%) |
-| 吞吐量 | ~18,280 pairs/s |
+| 吞吐量 | ~19,000 pairs/s |
 | 混淆矩阵 | 3×3 (Exact 948 / Partial 21,305 / None 50,934 正确) |
 
 评测命令末尾自动输出三类典型错误样本 (gold=部分→None、gold=部分→完全、gold=不→完全) 供阈值调优参考。
@@ -773,12 +773,12 @@ $ moon run cmd dbscan 50.0 3
 
 **关键设计**：
 - **tree_idx % 3 映射**：LightGBM 原生用 "交替并行树"（num_parallel_tree=3），第 i 棵树专属于第 `i % 3` 个类。实测 Python MoonBit 逐行一致（diff=0.0）
-- **纯 MoonBit if-else**：每棵树被展开为嵌套 if-else 比较，无运行时依赖。60 棵树 / 1860 个 leaf → 7527 行代码
-- **吞吐**：~18,266 pairs/s（规则单用 ~24k，LGBM 慢 ~24%，换 +6.79% 准确性）
+- **纯 MoonBit if-else**：每棵树被展开为嵌套 if-else 比较，无运行时依赖。60 棵树 / 1860 个 leaf → 约 7500 行代码
+- **吞吐**：~19,000 pairs/s（规则单用 ~24k，LGBM 慢 ~24%，换 +6.79% 准确性）
 
 ### 优化历程
 
-三轮优化将 Agreement 从 66.98% 提升到 **75.90%**（**+8.92%，多判对 6,553 对**）：
+前三轮优化将 Agreement 从 66.98% 提升到 **75.90%**（**+8.92%，多判对 6,553 对**）：
 
 **第一轮（阈值调优）**：加强 E1 上下文门控、E2 dice 0.15→0.35、P7 新增 house_conflict 分支、降低 P1b/P6/P7 dice 阈值。消除了 1,018 个 P→Exact 误报。Agreement → **68.37% (+1.39%)**。
 
@@ -795,6 +795,8 @@ $ moon run cmd dbscan 50.0 3
 - **sklearn Decision Tree 基线**：depth=20, 999 节点，full-data **75.89%**。手工规则 OR-of-16 完全无法捕捉 `road_b(0.23-0.50) + feat(≥0.30)` 这种非线性特征交互（road_b 特征重要性 34%，手工规则几乎不使用）
 - **LightGBM 最终方案**：n_estimators=20, max_depth=6, lr=0.3, min_child_samples=50, 60 棵树，7527 行 MoonBit if-else 代码。5-split honest test **75.21% ± 0.41%**，比单树稳定 +0.79%
 - Full-data 最终 Agreement **75.90%**（LGBM 75.90 vs 单树 75.89 微涨，但泛化更好）
+
+**第四轮（规则引擎下线，零行为变化）**：LightGBM 集成落地后，手工规则的输出（`exact`/`partial`）实际已不参与最终决策。本轮删除整条手工规则链（E1–E7、P1–P9）及仅服务于规则的中间变量、辅助函数与阈值常量（`standalone_dice_threshold`/`context_dice_threshold` 等），`match_address` 直接输出 60 树集成结果。Agreement 维持 **75.90%（73,187/96,423）**，339 个测试全部通过；同时适配新版 MoonBit 工具链，构建零警告。
 
 **Honest train/test split 对比**：
 
