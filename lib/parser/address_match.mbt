@@ -39,6 +39,8 @@ pub impl Show for MatchLevel with fn output(self, logger) {
   })
 }
 
+pub extend MatchLevel with Show::{ to_string, output }
+
 ///|
 /// Chinese label text used in the JSONL corpus.
 pub fn MatchLevel::from_label(label : String) -> MatchLevel {
@@ -464,7 +466,7 @@ fn codes_to_string_free(codes : Array[Int], consumed : Array[Bool],
   let sb : StringBuilder = StringBuilder()
   let mut i = start
   while i < end {
-    if not(consumed[i]) {
+    if !(consumed[i]) {
       let code = codes[i]
       match cn_numeral(code) {
         Some(d) =>
@@ -478,7 +480,7 @@ fn codes_to_string_free(codes : Array[Int], consumed : Array[Bool],
 }
 
 fn push_unique(arr : Array[String], s : String) -> Unit {
-  if s.length() > 0 && not(arr.contains(s)) {
+  if s.length() > 0 && !(arr.contains(s)) {
     arr.push(s)
   }
 }
@@ -506,7 +508,7 @@ fn count_free_cjk(codes : Array[Int], consumed : Array[Bool], start : Int,
   let mut k = start
   let mut count = 0
   while k < end {
-    if is_cjk_code(codes[k]) && not(consumed[k]) {
+    if is_cjk_code(codes[k]) && !(consumed[k]) {
       count = count + 1
     }
     k = k + 1
@@ -582,7 +584,7 @@ fn tokenize_address(norm : String) -> AddrTokens {
           break
         }
       }
-      if not(matched) {
+      if !(matched) {
         for suf in detail_suffixes {
           let slen = suf.length()
           if j + slen <= n && slice_eq(codes, j, suf) {
@@ -599,7 +601,7 @@ fn tokenize_address(norm : String) -> AddrTokens {
         let mut span_start = j
         while span_start > 0 &&
           (is_digit_code(codes[span_start - 1]) ||
-            cn_numeral(codes[span_start - 1]) is Some) {
+            cn_numeral(codes[span_start - 1]) is Some(_)) {
           span_start = span_start - 1
         }
         let mut m = span_start
@@ -624,7 +626,7 @@ fn tokenize_address(norm : String) -> AddrTokens {
     while s > 0 && is_digit_code(codes[s - 1]) {
       s = s - 1
     }
-    if not(consumed[s]) {
+    if !(consumed[s]) {
       let val = codes_to_string(codes, s, n)
       push_unique(struct_nums, val + "号")
       let mut m = s
@@ -658,7 +660,7 @@ fn tokenize_address(norm : String) -> AddrTokens {
   let mut cut = 0
   let mut p = 0
   while p < n {
-    if not(is_cjk_code(codes[p])) {
+    if !(is_cjk_code(codes[p])) {
       p = p + 1
       continue
     }
@@ -671,7 +673,7 @@ fn tokenize_address(norm : String) -> AddrTokens {
         // One intervening direction char is allowed: 君山西路,
         // 佳苑南街.
         if cat == cat_feature && slen == 1 && p + slen < n &&
-          not(consumed[p + slen]) {
+          !(consumed[p + slen]) {
           let after = codes[p + slen]
           let after2 = if p + slen + 1 < n {
             codes[p + slen + 1]
@@ -712,7 +714,7 @@ fn tokenize_address(norm : String) -> AddrTokens {
         // Clamp the window over number spans / non-CJK fragments so
         // tokens never begin with "232号" or digits inside a name.
         while tok_start < p &&
-          (consumed[tok_start] || not(is_cjk_code(codes[tok_start]))) {
+          (consumed[tok_start] || !(is_cjk_code(codes[tok_start]))) {
           tok_start = tok_start + 1
         }
         let tok = codes_to_string_free(codes, consumed, tok_start, p + slen)
@@ -722,7 +724,7 @@ fn tokenize_address(norm : String) -> AddrTokens {
         let weak_empty = cat == cat_feature && slen == 1 && tok_start >= p
         // POI tokens entirely before a landmark marker are dropped.
         let before_landmark = landmark_at < n && p + slen <= landmark_at
-        if not(weak_empty) && not(cat == cat_feature && before_landmark) {
+        if !(weak_empty) && !(cat == cat_feature && before_landmark) {
           if cat == cat_road {
             push_unique(roads, tok)
           } else if cat == cat_town {
@@ -739,9 +741,9 @@ fn tokenize_address(norm : String) -> AddrTokens {
             } else {
               0
             }
-            if core.length() >= 2 && not(core.contains("治")) &&
-              not(core.contains("壮")) && not(core.contains("回")) &&
-              not(core.contains("维")) && head != ('内').to_int() &&
+            if core.length() >= 2 && !(core.contains("治")) &&
+              !(core.contains("壮")) && !(core.contains("回")) &&
+              !(core.contains("维")) && head != ('内').to_int() &&
               head != ('外').to_int() {
               push_unique(admins, core)
             }
@@ -751,7 +753,7 @@ fn tokenize_address(norm : String) -> AddrTokens {
           // number tails (602号楼2单元1层) can't form fake names.
           // Gaps before a landmark marker contain only references.
           if count_free_cjk(codes, consumed, cut, tok_start) >= 3 &&
-            not(landmark_at < n && tok_start <= landmark_at) {
+            !(landmark_at < n && tok_start <= landmark_at) {
             push_unique(names, cjk_only_free(codes, consumed, cut, tok_start))
           }
           let mut k = tok_start
@@ -805,7 +807,7 @@ fn cjk_only_free(codes : Array[Int], consumed : Array[Bool], start : Int,
   let sb = StringBuilder()
   let mut i = start
   while i < end {
-    if is_cjk_code(codes[i]) && not(consumed[i]) {
+    if is_cjk_code(codes[i]) && !(consumed[i]) {
       ignore(sb.write_char(codes[i].unsafe_to_char()))
     }
     i = i + 1
@@ -851,7 +853,7 @@ fn dice_bigrams(a : Array[Int], b : Array[Int]) -> Double {
   let aset : @hashmap.HashMap[Int, Bool] = @hashmap.HashMap([])
   let mut inter = 0
   for g in a {
-    if not(aset.contains(g)) {
+    if !(aset.contains(g)) {
       aset.set(g, true)
       if cset.contains(g) {
         inter = inter + 1
@@ -948,10 +950,10 @@ fn city_cores(text : String) -> Array[String] {
       if before != ('超').to_int() && before != ('城').to_int() &&
         before != ('省').to_int() {
         let core = codes_to_string(codes, s, i)
-        if not(core.contains("治")) && not(core.contains("壮")) &&
-          not(core.contains("回")) && not(core.contains("维")) &&
-          not(core.contains("彝")) && not(core.contains("苗")) &&
-          not(core.contains("侗")) && not(core.contains("瑶")) &&
+        if !(core.contains("治")) && !(core.contains("壮")) &&
+          !(core.contains("回")) && !(core.contains("维")) &&
+          !(core.contains("彝")) && !(core.contains("苗")) &&
+          !(core.contains("侗")) && !(core.contains("瑶")) &&
           core.length() >= 2 {
           push_unique(res, core)
         }
@@ -965,7 +967,7 @@ fn city_cores(text : String) -> Array[String] {
 
 /// Two-character POI suffixes strong enough that a 6+ char token with
 /// such a suffix identifies a unique place (近铁城市广场 / 百家湖东花园).
-let strong_feat_suffixes = [
+let strong_feat_suffixes : ReadOnlyArray[String] = [
   "大厦", "广场", "市场", "公寓", "花园", "家园", "酒店", "宾馆",
   "医院", "学校", "学院", "大学", "公司", "银行", "饭店", "公园",
   "基地", "中心", "新村", "新区", "小区", "步行街", "风景区",
@@ -976,10 +978,6 @@ let strong_feat_suffixes = [
 /// 栋/幢/座/号楼/单元 identify buildings/units.
 fn is_house_num(tok : String) -> Bool {
   tok.has_suffix("号")
-}
-
-fn is_unit_num(tok : String) -> Bool {
-  tok.has_suffix("单元")
 }
 
 fn is_main_building_num(tok : String) -> Bool {
@@ -1012,7 +1010,7 @@ fn recall_filtered(query : Array[String], candidate : Array[String],
 
 /// Weak, generic single-character POI suffixes (village / garden / hill):
 /// a short token with one of these is only a partial signal.
-let weak_feat_ends = ["村", "苑", "城", "府", "馆", "店", "寺", "园", "山"]
+let weak_feat_ends : ReadOnlyArray[String] = ["村", "苑", "城", "府", "馆", "店", "寺", "园", "山"]
 
 /// Residential-community suffixes: two different communities of this
 /// kind sharing an address are distinct entities (百家湖东花园 vs
@@ -1591,15 +1589,13 @@ fn match_norm_ex(
     }
     hit
   }
-
-  // Query names a house number that the candidate lacks, and the query
+// Query names a house number that the candidate lacks, and the query
   // has no main building to anchor identity on: suspicious cross-region
   // name coincidence (藤桥永宁村124号 vs 海宁市永宁村).
-  let house_missing = q_has_house && !c_has_house && !q_has_main
+  let house_missing = q_has_house && !(c_has_house) && !(q_has_main)
 
   let q_has_roads = tq.roads.length() > 0
   let c_has_roads = tc.roads.length() > 0
-
 
   // Bidirectional road recall: a query road also matches when the
   // candidate road is a substring of it (裕华东岗路 vs 东岗路).
@@ -1608,8 +1604,6 @@ fn match_norm_ex(
   let town_hit = token_any_hit(tq.towns, tc.towns)
   let admin_hit = token_any_hit(tq.admins, tc.admins)
   let context_ok = road_hit || town_hit || admin_hit
-
-
 
   // Name overlap for conflict suppression: raw nested containment, a
   // 3+ char common substring after stripping generic category tails,
@@ -1637,7 +1631,7 @@ fn match_norm_ex(
       // Core of the query feature appears verbatim in the candidate text
       // across token boundaries. Catches 大鸿城壹号 vs 大鸿城.
       let qcore = core_of_poi(qf)
-      if !feat_overlap && qcore.length() >= 3 {
+if !(feat_overlap) && qcore.length() >= 3 {
         if poi_blob.contains(qcore) {
           feat_overlap = true
         }
@@ -1664,20 +1658,19 @@ fn match_norm_ex(
   // Different explicit house numbers on both sides (9号 vs 9-1号 is a
   // prefix relation, not a conflict).
   let house_conflict = q_has_house && c_has_house && house < 1.0 &&
-    !house_prefix
+!(house_prefix)
 
   // A foreign city marker (海宁市 / 泰兴市) absent from the query with
   // no shared context means the shared village/POI name is a coincidence
   // of different regions (藤桥永宁村 vs 海宁市永宁村 -> none).
   let mut foreign_city = false
   for cc in city_cores(nc) {
-    if !nq.contains(cc) {
+if !(nq.contains(cc)) {
       foreign_city = true
       break
     }
   }
-  let veto = foreign_city && !context_ok && dice < 0.35
-
+let veto = foreign_city && !(context_ok) && dice < 0.35
 
   let q_structured = tq.struct_nums.length() > 0 ||
     tq.detail_nums.length() > 0
@@ -1719,13 +1712,12 @@ fn match_norm_ex(
   let jw_sim_dice = jw_sim * dice
   let jaccard_tok_dice = jaccard_tok * dice
 
-
   let final_level = match_by_ensemble(
     dice, road_b, feature, name,
-    admin_hit, road_hit, town_hit, context_ok,
+    admin_hit, town_hit, context_ok,
     house, house_conflict, veto,
     q_structured, c_structured, feat_overlap,
-    weak_core_exact, fuzzy_poi_overlap, reverse_poi_overlap,
+    fuzzy_poi_overlap, reverse_poi_overlap,
     road_conflict, main_hit, house_missing, foreign_city,
     tq.roads.length().to_double(), tc.roads.length().to_double(),
     tq.features.length().to_double(), tc.features.length().to_double(),
@@ -1804,33 +1796,38 @@ pub fn parse_match_record(line : String) -> AddrMatchRecord? {
   let j = @json.parse(trimmed) catch {
     _ => return None
   }
-  let text_id = match j.value("text_id") {
-    Some(v) => v.as_string().unwrap_or("")
-    None => return None
+  let obj = match j {
+    Object(o) => o
+    _ => return None
   }
-  let query = match j.value("query") {
-    Some(v) => v.as_string().unwrap_or("")
-    None => return None
+  let text_id = match obj.get("text_id") {
+    Some(String(s)) => s
+    _ => return None
   }
-  let arr = match j.value("candidate") {
-    Some(v) => v.as_array().unwrap_or([])
-    None => []
+  let query = match obj.get("query") {
+    Some(String(s)) => s
+    _ => return None
+  }
+  let arr = match obj.get("candidate") {
+    Some(Array(a)) => a
+    _ => []
   }
   let candidates : Array[AddrCandidate] = []
   for item in arr {
-    match item.value("text") {
-      Some(tv) =>
-        match tv.as_string() {
-          Some(text) => {
-            let label = match item.value("label") {
-              Some(lv) => lv.as_string().unwrap_or("不匹配")
-              None => "不匹配"
+    match item {
+      Object(io) => {
+        match io.get("text") {
+          Some(String(text)) => {
+            let label = match io.get("label") {
+              Some(String(lv)) => MatchLevel::from_label(lv)
+              _ => MatchLevel::None
             }
-            candidates.push({ text, level: MatchLevel::from_label(label) })
+            candidates.push({ text, level: label })
           }
-          None => ()
+          _ => ()
         }
-      None => ()
+      }
+      _ => ()
     }
   }
   Some({ text_id, query, candidates })
@@ -1854,10 +1851,10 @@ fn to_dbl(b: Bool) -> Double { if b { 1.0 } else { 0.0 } }
 
 pub fn match_by_ensemble(
   dice: Double, road_b: Double, feat: Double, name: Double,
-  admin_hit: Bool, road_hit: Bool, town_hit: Bool, context_ok: Bool,
+  admin_hit: Bool, town_hit: Bool, context_ok: Bool,
   house: Double, house_conflict: Bool, veto: Bool,
   q_structured: Bool, c_structured: Bool, feat_overlap: Bool,
-  weak_core_exact: Bool, fuzzy_poi_overlap: Bool, reverse_poi_overlap: Bool,
+  fuzzy_poi_overlap: Bool, reverse_poi_overlap: Bool,
   road_conflict: Bool, main_hit: Bool, house_missing: Bool, foreign_city: Bool,
   q_roads_d: Double, c_roads_d: Double, q_feats_d: Double, c_feats_d: Double,
   score: Double,

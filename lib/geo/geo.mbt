@@ -637,6 +637,9 @@ pub(all) struct VoronoiCell {
   polygon : Array[@types.GeoPoint]
 } derive(Eq, Debug)
 
+pub extend VoronoiCell with Eq::{ equal, not_equal }
+pub extend VoronoiCell with Debug::{ to_repr }
+
 ///|
 /// Compute the Voronoi diagram of a set of points within a bounding box.
 /// Uses iterative half-plane clipping (O(n²) per cell, O(n³) total).
@@ -796,6 +799,8 @@ pub(all) struct KMeansCluster {
   center : @types.GeoPoint
   members : Array[Int] // indices into the original point array
 } derive(Debug)
+
+pub extend KMeansCluster with Debug::{ to_repr }
 
 ///|
 /// Compute the centroid (arithmetic mean lat/lng) of a point array.
@@ -1033,6 +1038,8 @@ pub(all) struct MoranIResult {
   n : Int
 } derive(Debug)
 
+pub extend MoranIResult with Debug::{ to_repr }
+
 ///|
 /// Compute Moran's I spatial autocorrelation statistic for a set of
 /// points with numeric attribute values. Uses an inverse-distance-weighted
@@ -1189,6 +1196,8 @@ pub(all) struct StdDevEllipse {
   eccentricity : Double // sqrt(1 - (b/a)²), 0 = circle, 1 = line
 } derive(Debug)
 
+pub extend StdDevEllipse with Debug::{ to_repr }
+
 ///|
 /// Compute the Standard Deviation Ellipse of a point set.
 /// Projects lat/lng to a local km coordinate system using equirectangular
@@ -1230,7 +1239,6 @@ pub fn std_dev_ellipse(points : Array[@types.GeoPoint]) -> StdDevEllipse? {
   // Solve 2x2 eigenvalue problem for the ellipse axes.
   // Eigenvalues of [[sxx, sxy], [sxy, syy]].
   let trace = sxx + syy
-  let det = sxx * syy - sxy * sxy
   let diff = sqrt((sxx - syy) * (sxx - syy) + 4.0 * sxy * sxy)
   let lambda1 = (trace + diff) / 2.0
   let lambda2 = (trace - diff) / 2.0

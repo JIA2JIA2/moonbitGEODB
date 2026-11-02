@@ -21,6 +21,8 @@ pub(all) struct GeoDB {
   mut voronoi_dirty : Bool // true when entries changed
 } derive(Debug)
 
+pub extend GeoDB with Debug::{ to_repr }
+
 ///|
 /// Create an empty in-memory database (no auto-persistence).
 pub fn GeoDB::in_memory() -> GeoDB {
@@ -1594,7 +1596,7 @@ pub fn GeoDB::import_csv(self : GeoDB, csv : String) -> Int {
   let mut n = 0
   let mut i = 1
   while i < lines.length() {
-    let line = lines[i].to_string()
+    let line = lines[i].to_owned()
     if line.trim().length() == 0 {
       i = i + 1
       continue
@@ -1639,7 +1641,7 @@ fn parse_csv_row(line : String) -> @types.GeoEntry? {
     let parts = tag_str.split(";").collect()
     let out : Array[String] = []
     for p in parts {
-      out.push(p.to_string())
+      out.push(p.to_owned())
     }
     out
   }
@@ -1696,7 +1698,7 @@ fn parse_csv_fields(line : String) -> Array[String] {
       }
       i = i + 1
     } else if c == ',' {
-      out.push(line.substring(start~, end=i).to_string())
+      out.push(line[start:i].to_owned())
       i = i + 1
       start = i
     } else if c == '"' {
@@ -1708,7 +1710,7 @@ fn parse_csv_fields(line : String) -> Array[String] {
       i = i + 1
     }
   }
-  out.push(line.substring(start~, end=n).to_string())
+  out.push(line[start:n].to_owned())
   out
 }
 
@@ -1780,11 +1782,11 @@ fn try_import_geojson_feature(j : Json) -> @types.GeoEntry? {
             Some(Array(coords)) =>
               if coords.length() >= 2 {
                 match coords[0] {
-                  Number(v) => lng = v
+                  Number(v, ..) => lng = v
                   _ => ()
                 }
                 match coords[1] {
-                  Number(v) => lat = v
+                  Number(v, ..) => lat = v
                   _ => ()
                 }
               } else {
@@ -2369,7 +2371,7 @@ pub fn GeoDB::page_all(
 ///|
 /// Return paginated results from a search query.
 pub fn GeoDB::page_results(
-  self : GeoDB,
+  _self : GeoDB,
   results : Array[@types.GeoEntry],
   limit : Int,
   offset? : Int = 0,
@@ -2726,15 +2728,8 @@ fn strip_admin_suffix(name : String) -> String {
     "地区",
   ]
   for s in suffixes {
-    if name.length() > s.length() {
-      let suffix = name
-        .substring(start=name.length() - s.length(), end=name.length())
-        .to_string()
-      if suffix == s {
-        return name
-          .substring(start=0, end=name.length() - s.length())
-          .to_string()
-      }
+    if name.length() > s.length() && name.has_suffix(s) {
+      return name[:name.length() - s.length()].to_owned()
     }
   }
   name
@@ -2997,6 +2992,8 @@ pub(all) struct SpatialJoinPair {
   distance_km : Double
 } derive(Debug)
 
+pub extend SpatialJoinPair with Debug::{ to_repr }
+
 ///| For every entry in this DB, find the closest entry from the provided
 
 ///|
@@ -3045,7 +3042,7 @@ fn build_rtree_for(entries : Array[@types.GeoEntry]) -> TempJoinIndex {
 }
 
 ///| Lightweight (rtree + entries map) pair used for spatial_join_*.
-struct TempJoinIndex {
+priv struct TempJoinIndex {
   rtree : @index.RTree
   entries : @hashmap.HashMap[String, @types.GeoEntry]
 }
@@ -3405,6 +3402,8 @@ pub(all) struct DBKMeansCluster {
   members : Array[@types.GeoEntry]
 } derive(Debug)
 
+pub extend DBKMeansCluster with Debug::{ to_repr }
+
 ///|
 pub fn GeoDB::kmeans(
   self : GeoDB,
@@ -3679,6 +3678,8 @@ pub(all) struct RouteStop {
   entry : @types.GeoEntry
   cum_distance_km : Double // cumulative distance from start to this stop
 } derive(Debug)
+
+pub extend RouteStop with Debug::{ to_repr }
 
 ///| Solve a small TSP using the greedy nearest-neighbor heuristic,
 

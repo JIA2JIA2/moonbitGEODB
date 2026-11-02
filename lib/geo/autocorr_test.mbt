@@ -8,10 +8,10 @@ fn ac_pt(lat : Double, lng : Double) -> @types.GeoPoint {
 
 ///|
 test "normal_cdf - standard values" {
-  @test.assert_eq(normal_cdf(0.0) > 0.4999 && normal_cdf(0.0) < 0.5001, true)
-  @test.assert_eq(normal_cdf(1.96) > 0.9749 && normal_cdf(1.96) < 0.9751, true)
+  @test.assert_eq(@geo.normal_cdf(0.0) > 0.4999 && @geo.normal_cdf(0.0) < 0.5001, true)
+  @test.assert_eq(@geo.normal_cdf(1.96) > 0.9749 && @geo.normal_cdf(1.96) < 0.9751, true)
   @test.assert_eq(
-    normal_cdf(-1.96) > 0.0249 && normal_cdf(-1.96) < 0.0251,
+    @geo.normal_cdf(-1.96) > 0.0249 && @geo.normal_cdf(-1.96) < 0.0251,
     true,
   )
 }
@@ -27,8 +27,8 @@ test "morans_i_test - strong positive clustering" {
     vals.push(if i < 10 { 10.0 } else { 0.0 })
     i = i + 1
   }
-  let w = knn_weights(pts, k=4)
-  match morans_i_test(pts, vals, w) {
+  let w = @geo.knn_weights(pts, k=4)
+  match @geo.morans_i_test(pts, vals, w) {
     None => @test.assert_eq(true, false)
     Some(r) => {
       @test.assert_eq(r.i > 0.3, true)
@@ -49,8 +49,8 @@ test "morans_i_test - checkerboard dispersion is negative" {
     vals.push(if i % 2 == 0 { 0.0 } else { 1.0 })
     i = i + 1
   }
-  let w = knn_weights(pts, k=2)
-  match morans_i_test(pts, vals, w) {
+  let w = @geo.knn_weights(pts, k=2)
+  match @geo.morans_i_test(pts, vals, w) {
     None => @test.assert_eq(true, false)
     Some(r) => {
       @test.assert_eq(r.i < 0.0, true)
@@ -62,9 +62,9 @@ test "morans_i_test - checkerboard dispersion is negative" {
 ///|
 test "morans_i_test - degenerate inputs return None" {
   let pts = [ac_pt(0.0, 0.0), ac_pt(0.0, 1.0), ac_pt(1.0, 0.0)]
-  let w = knn_weights(pts, k=1)
+  let w = @geo.knn_weights(pts, k=1)
   // Fewer than 4 observations.
-  @test.assert_eq(morans_i_test(pts, [1.0, 2.0, 3.0], w) is None, true)
+  @test.assert_eq(@geo.morans_i_test(pts, [1.0, 2.0, 3.0], w) is None, true)
   // Zero variance.
   let pts4 = [
     ac_pt(0.0, 0.0),
@@ -72,8 +72,8 @@ test "morans_i_test - degenerate inputs return None" {
     ac_pt(1.0, 0.0),
     ac_pt(1.0, 1.0),
   ]
-  let w4 = knn_weights(pts4, k=2)
-  @test.assert_eq(morans_i_test(pts4, [5.0, 5.0, 5.0, 5.0], w4) is None, true)
+  let w4 = @geo.knn_weights(pts4, k=2)
+  @test.assert_eq(@geo.morans_i_test(pts4, [5.0, 5.0, 5.0, 5.0], w4) is None, true)
 }
 
 ///|
@@ -99,8 +99,8 @@ test "getis_ord_gi_star - detects the central hotspot" {
   // Grid spacing is 1 degree ≈ 111 km. 120 km covers orthogonal neighbours
   // (~111 km) but not diagonal (~141 km), so the centre sees only the
   // cross-shaped high-value neighbours.
-  let w = distance_weights(pts, radius_km=120.0)
-  let results = getis_ord_gi_star(pts, vals, w, threshold=0.5)
+  let w = @geo.distance_weights(pts, radius_km=120.0)
+  let results = @geo.getis_ord_gi_star(pts, vals, w, threshold=0.5)
   @test.assert_eq(results.length(), 9)
   // Centre is index 4 (row 1, col 1); corner (0,0) is index 0.
   @test.assert_eq(results[4].gi_star > 0.5, true)
@@ -111,8 +111,8 @@ test "getis_ord_gi_star - detects the central hotspot" {
 ///|
 test "getis_ord_gi_star - zero variance yields no hotspots" {
   let pts = [ac_pt(0.0, 0.0), ac_pt(0.0, 1.0), ac_pt(1.0, 0.0), ac_pt(1.0, 1.0)]
-  let w = distance_weights(pts, radius_km=200.0)
-  let results = getis_ord_gi_star(pts, [3.0, 3.0, 3.0, 3.0], w)
+  let w = @geo.distance_weights(pts, radius_km=200.0)
+  let results = @geo.getis_ord_gi_star(pts, [3.0, 3.0, 3.0, 3.0], w)
   @test.assert_eq(results.length(), 0)
 }
 
@@ -127,8 +127,8 @@ test "local_morans - HH and LL clusters typed correctly" {
     vals.push(if i < 10 { 10.0 } else { 0.0 })
     i = i + 1
   }
-  let w = knn_weights(pts, k=4)
-  let results = local_morans(pts, vals, w, threshold=1.5)
+  let w = @geo.knn_weights(pts, k=4)
+  let results = @geo.local_morans(pts, vals, w, threshold=1.5)
   @test.assert_eq(results.length(), 20)
   // Index 2 sits deep inside the high block -> HH.
   @test.assert_eq(results[2].cluster, "HH")
@@ -139,7 +139,7 @@ test "local_morans - HH and LL clusters typed correctly" {
 ///|
 test "knn_weights - symmetric and includes self" {
   let pts = [ac_pt(0.0, 0.0), ac_pt(0.0, 1.0), ac_pt(0.0, 2.0), ac_pt(0.0, 3.0)]
-  let w = knn_weights(pts, k=1)
+  let w = @geo.knn_weights(pts, k=1)
   @test.assert_eq(w.length(), 4)
   let mut i = 0
   while i < 4 {
@@ -163,7 +163,7 @@ test "knn_weights - symmetric and includes self" {
 ///|
 test "distance_weights - threshold filtering" {
   let pts = [ac_pt(0.0, 0.0), ac_pt(0.0, 1.0), ac_pt(0.0, 5.0)]
-  let w = distance_weights(pts, radius_km=200.0)
+  let w = @geo.distance_weights(pts, radius_km=200.0)
   // Points 0 and 1 are ~111 km apart; point 2 is ~555 km away.
   @test.assert_eq(w[0].length(), 2)
   @test.assert_eq(w[2].length(), 1) // only self

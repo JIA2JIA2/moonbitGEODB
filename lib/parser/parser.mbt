@@ -9,6 +9,11 @@ pub(all) suberror ParseError {
   BadCoordinate(String)
 } derive(Eq, Debug, ToJson, FromJson)
 
+pub extend ParseError with Eq::{ equal, not_equal }
+pub extend ParseError with Debug::{ to_repr }
+pub extend ParseError with ToJson::{ to_json }
+pub extend ParseError with @moonbitlang/core/json.FromJson::{ from_json }
+
 ///|
 /// Human-readable representation of a parse error.
 pub impl Show for ParseError with fn output(self, logger) {
@@ -22,6 +27,8 @@ pub impl Show for ParseError with fn output(self, logger) {
         $|BadCoordinate(\{s.escape()})
   }
 }
+
+pub extend ParseError with Show::{ to_string, output }
 
 ///|
 /// A parsed address field layout: which input segment goes to which field.

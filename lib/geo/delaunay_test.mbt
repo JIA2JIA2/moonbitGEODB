@@ -9,7 +9,7 @@ fn dt_pt(lat : Double, lng : Double) -> @types.GeoPoint {
 ///|
 test "delaunay_triangulation - 3 points forms 1 triangle" {
   let pts = [dt_pt(0.0, 0.0), dt_pt(1.0, 0.0), dt_pt(0.0, 1.0)]
-  let tris = delaunay_triangulation(pts)
+  let tris = @geo.delaunay_triangulation(pts)
   @test.assert_eq(tris.length(), 1)
   let t = tris[0]
   @test.assert_eq(t.a < 3, true)
@@ -21,7 +21,7 @@ test "delaunay_triangulation - 3 points forms 1 triangle" {
 ///|
 test "delaunay_edges - unique edges" {
   let pts = [dt_pt(0.0, 0.0), dt_pt(1.0, 0.0), dt_pt(0.0, 1.0)]
-  let edges = delaunay_edges(pts)
+  let edges = @geo.delaunay_edges(pts)
   // Triangle has 3 edges.
   @test.assert_eq(edges.length(), 3)
   // All edges should be unique.

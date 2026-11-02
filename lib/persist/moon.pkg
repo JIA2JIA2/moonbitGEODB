@@ -1,7 +1,6 @@
 import {
   "moonbitlang/core/builtin",
   "moonbitlang/core/encoding/utf8",
-  "moonbitlang/core/result",
   "moonbitlang/core/test",
   "JIA2JIA2/moonbitgeodb/lib/types",
 }

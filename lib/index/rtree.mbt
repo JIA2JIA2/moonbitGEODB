@@ -24,6 +24,9 @@ pub(all) struct RTreeNode {
   mut parent : Int?
 } derive(Eq, Debug)
 
+pub extend RTreeNode with Eq::{ equal, not_equal }
+pub extend RTreeNode with Debug::{ to_repr }
+
 ///|
 /// An incrementally updatable R-tree over entry ids. `points` maps an entry id
 /// to its location; `nodes` stores tree nodes by id.
@@ -35,6 +38,9 @@ pub(all) struct RTree {
   max_entries : Int
   min_entries : Int
 } derive(Eq, Debug)
+
+pub extend RTree with Eq::{ equal, not_equal }
+pub extend RTree with Debug::{ to_repr }
 
 ///|
 /// Create an empty R-tree. `max_entries` controls the fan-out (default 8);

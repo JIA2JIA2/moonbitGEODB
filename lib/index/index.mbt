@@ -34,6 +34,9 @@ pub(all) struct Index {
   mut cached_entries : Array[@types.GeoEntry]? // cached entries snapshot
 } derive(Eq, Debug)
 
+pub extend Index with Eq::{ equal, not_equal }
+pub extend Index with Debug::{ to_repr }
+
 ///|
 /// Default grid cell size: 0.1° (~11 km at the equator).
 pub let default_cell_size : Double = 0.1
