@@ -77,6 +77,36 @@ test "Index::find_name_prefix" {
 }
 
 ///|
+test "Index::find_name_prefix sorted cache and boundaries" {
+  let idx = @index.Index::new()
+  idx.insert(make_entry("p01", "App", 0.0, 0.0))
+  idx.insert(make_entry("p02", "Apple", 0.0, 0.0))
+  idx.insert(make_entry("p03", "Application", 0.0, 0.0))
+  idx.insert(make_entry("p04", "Apricot", 0.0, 0.0))
+  idx.insert(make_entry("p05", "Banana", 0.0, 0.0))
+  @test.assert_eq(idx.find_name_prefix("app").length(), 3)
+  @test.assert_eq(idx.find_name_prefix("APP").length(), 3)
+  @test.assert_eq(idx.find_name_prefix("appl").length(), 2)
+  @test.assert_eq(idx.find_name_prefix("ap").length(), 4)
+  @test.assert_eq(idx.find_name_prefix("ban").length(), 1)
+  @test.assert_eq(idx.find_name_prefix("banana split").length(), 0)
+  @test.assert_eq(idx.find_name_prefix("z").length(), 0)
+}
+
+///|
+test "Index::find_name_prefix cache invalidates on insert and remove" {
+  let idx = @index.Index::new()
+  idx.insert(make_entry("p01", "Apple", 0.0, 0.0))
+  @test.assert_eq(idx.find_name_prefix("app").length(), 1)
+  idx.insert(make_entry("p02", "Application", 0.0, 0.0))
+  @test.assert_eq(idx.find_name_prefix("app").length(), 2)
+  ignore(idx.remove("p01"))
+  @test.assert_eq(idx.find_name_prefix("app").length(), 1)
+  ignore(idx.remove("p02"))
+  @test.assert_eq(idx.find_name_prefix("app").length(), 0)
+}
+
+///|
 test "Index::find_name_contains" {
   let idx = @index.Index::new()
   idx.insert(make_entry("p01", "Tiananmen Square", 39.9, 116.4))

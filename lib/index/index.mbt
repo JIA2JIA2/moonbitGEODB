@@ -32,6 +32,7 @@ pub(all) struct Index {
   rtree : RTree // R-tree for sub-linear KNN / range queries
   mut cached_bbox : @types.BBox? // cached combined bbox
   mut cached_entries : Array[@types.GeoEntry]? // cached entries snapshot
+  mut name_keys_cache : Array[String]? // sorted lowercase name keys for prefix queries
 } derive(Eq, Debug)
 
 pub extend Index with Eq::{ equal, not_equal }
@@ -61,6 +62,7 @@ pub fn Index::new(cell_size? : Double = default_cell_size) -> Index {
     rtree: RTree::new(),
     cached_bbox: None,
     cached_entries: None,
+    name_keys_cache: None,
   }
 }
 
@@ -155,6 +157,7 @@ pub fn Index::insert(self : Index, entry : @types.GeoEntry) -> Unit {
   // Invalidate caches.
   self.cached_bbox = None
   self.cached_entries = None
+  self.name_keys_cache = None
 }
 
 ///|
@@ -231,6 +234,7 @@ pub fn Index::bulk_insert(self : Index, entries : Array[@types.GeoEntry]) -> Uni
   // Invalidate caches once at the end.
   self.cached_bbox = None
   self.cached_entries = None
+  self.name_keys_cache = None
 }
 
 ///|
@@ -345,6 +349,7 @@ pub fn Index::remove(self : Index, id : String) -> @types.GeoEntry? {
       // Invalidate caches.
       self.cached_bbox = None
       self.cached_entries = None
+      self.name_keys_cache = None
       Some(entry)
     }
   }
@@ -512,8 +517,39 @@ pub fn Index::find_by_name(
 }
 
 ///|
+/// Lower bound (first index whose key is >= target) in a sorted key array.
+fn lower_bound(keys : Array[String], target : String) -> Int {
+  let mut lo = 0
+  let mut hi = keys.length()
+  while lo < hi {
+    let mid = (lo + hi) / 2
+    if keys[mid].view().lexical_compare(target.view()) < 0 {
+      lo = mid + 1
+    } else {
+      hi = mid
+    }
+  }
+  lo
+}
+
+///|
+/// Return the sorted lowercase name keys, rebuilding the cache on demand.
+fn Index::get_sorted_name_keys(self : Index) -> Array[String] {
+  match self.name_keys_cache {
+    Some(keys) => keys
+    None => {
+      let keys = self.by_name.keys().collect()
+      keys.sort_by(fn(a, b) { a.view().lexical_compare(b.view()) })
+      self.name_keys_cache = Some(keys)
+      keys
+    }
+  }
+}
+
+///|
 /// Prefix (case-insensitive) name lookup. Returns entries whose name starts
-/// with the given prefix.
+/// with the given prefix. Uses a lazily built sorted key index and binary
+/// search, so the query is O(log m + k) instead of scanning every entry.
 pub fn Index::find_name_prefix(
   self : Index,
   prefix : String,
@@ -522,11 +558,25 @@ pub fn Index::find_name_prefix(
   if p.length() == 0 {
     return []
   }
+  let keys = self.get_sorted_name_keys()
+  let mut i = lower_bound(keys, p)
   let out : Array[@types.GeoEntry] = []
-  for entry in self.entries.values() {
-    if entry.name.to_lower().has_prefix(p) {
-      out.push(entry)
+  while i < keys.length() {
+    let key = keys[i]
+    if !key.has_prefix(p) {
+      break
     }
+    match self.by_name.get(key) {
+      Some(ids) =>
+        for id in ids {
+          match self.entries.get(id) {
+            Some(e) => out.push(e)
+            None => ()
+          }
+        }
+      None => ()
+    }
+    i = i + 1
   }
   out
 }
