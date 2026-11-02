@@ -3,5 +3,6 @@ import {
   "moonbitlang/core/string",
   "moonbitlang/core/json",
   "moonbitlang/core/hashmap",
+  "moonbitlang/core/test",
   "JIA2JIA2/moonbitgeodb/lib/types",
 }
