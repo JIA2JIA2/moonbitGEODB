@@ -118,6 +118,7 @@ moon run cmd sde                           # 标准差椭圆
 | `find_sorted_by_distance` | O(n log n) 全扫描 | O(log n) R-tree 最近邻 | 1000x+ |
 | `find_nearest_pairs` | O(n² log n²) 全对排序 | O(n log k) R-tree 分批 | 100x+ |
 | `find_nearby` | O(m log m) 全排序 | O(m log k) 堆维护 | 大候选集显著 |
+| `find_name_prefix` | O(n) 全表扫描 + 每条 `to_lower` | O(log m + k) 排序键缓存 + 二分查找 | 大库显著 |
 | `compute_bbox` | O(n) 每次 | O(1) 缓存 | 多次调用显著 |
 | `voronoi` | O(n³) 每次 | O(n³) 缓存 | 2x+ |
 | `voronoi_neighbors` | O(n³·\|a\|·\|b\|) | O(n³·(\|a\|+\|b\|)) | 邻居查询显著 |
@@ -136,11 +137,12 @@ moon run cmd sde                           # 标准差椭圆
 | TSP 2-opt | **49,548** | **406,937** | O(n²·rounds)，实测亚线性 | edge 数组 + 0 HashMap |
 | **Moran's I KNN** | 27,748 | 634,763 | **O(n·k·log n) ✓** | 真 R-tree KNN + 行标准化 |
 | **Kriging (k=12)** | 8,184 | 40,882 | O(n·log n + k²) | R-tree KNN + 变异函数 |
+| **corpus-db (真实地址)** | 25,156 (200条) | 281,983 (2000条) | ~O(n) ✓ | geocode + bulk_insert |
 
 运行命令：`moon run cmd benchmark [N]`（默认 N=1000）
 
 **缓存策略**：
-- `Index` 层：`compute_bbox` 和 `to_array` 结果在 `insert`/`remove` 时失效
+- `Index` 层：`compute_bbox`、`to_array` 和 name 前缀查询的排序键缓存均在 `insert`/`remove` 时失效
 - `GeoDB` 层：Voronoi 图结果在 `insert`/`remove` 时失效
 
 **R-tree 索引**：

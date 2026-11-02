@@ -25,3 +25,6 @@ _build/*
 .arts*/*
 .code*/*
 .repos*/*
+
+# MoonBit generated interface files
+*.generated.mbti

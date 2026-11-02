@@ -670,6 +670,7 @@ test "GeoDB::to_bytes and from_bytes round-trip" {
 }
 
 ///|
+#cfg(target="native")
 test "GeoDB::save_to and open round-trip" {
   let path = "/tmp/geodb_test_save_load.db"
   let db = @db.GeoDB::in_memory()
@@ -702,6 +703,7 @@ test "GeoDB::open on missing file yields empty db" {
 }
 
 ///|
+#cfg(target="native")
 test "GeoDB::backup and restore round-trip" {
   let path = "/tmp/geodb_test_backup.db"
   let db = @db.GeoDB::in_memory()
@@ -730,6 +732,7 @@ test "GeoDB::backup and restore round-trip" {
 }
 
 ///|
+#cfg(target="native")
 test "GeoDB::check integrity" {
   let path = "/tmp/geodb_test_check.db"
   let db = @db.GeoDB::in_memory()
