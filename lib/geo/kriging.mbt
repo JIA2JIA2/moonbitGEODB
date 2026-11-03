@@ -151,7 +151,7 @@ pub fn empirical_variogram(
     }
   } else {
     // 随机采样不超过 max_pairs 对（大 n 时从 O(n²) 降到 O(max_pairs)）。
-    let rand = @random.Rand::new()
+    let rand = @random.Rand()
     let mut sampled = 0
     while sampled < max_pairs {
       let i = rand.int(limit=n)

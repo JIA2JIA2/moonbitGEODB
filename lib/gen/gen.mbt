@@ -886,7 +886,7 @@ fn gen_entry_with(
 ///|
 /// Generate a random GeoEntry with a Chinese address (convenience, standalone RNG).
 pub fn gen_entry(id_prefix? : String = "addr") -> @types.GeoEntry {
-  let rand = @random.Rand::new()
+  let rand = @random.Rand()
   gen_entry_with(rand, id_prefix~)
 }
 
@@ -912,7 +912,7 @@ pub fn all_province_names() -> Array[String] {
 ///|
 /// Generate an array of N random Chinese address entries (shared RNG for diversity).
 pub fn gen_batch(n : Int) -> Array[@types.GeoEntry] {
-  let rand = @random.Rand::new()
+  let rand = @random.Rand()
   let out : Array[@types.GeoEntry] = []
   for _ in 0..<n {
     out.push(gen_entry_with(rand, id_prefix="addr"))
@@ -962,7 +962,7 @@ test "gen_db creates in-memory DB with entries" {
 
 ///|
 test "gen_entry addresses are diverse" {
-  let rand = @random.Rand::new()
+  let rand = @random.Rand()
   let seen_provinces : @hashmap.HashMap[String, Bool] = @hashmap.HashMap(
     [],
     capacity=32,
@@ -1014,7 +1014,7 @@ fn lookup_city_coord(text : String) -> (Double, Double) {
 /// text, with a tiny random jitter so DBSCAN can cluster near-duplicates.
 pub fn corpus_db(records : Array[@parser.AddrMatchRecord]) -> @db.GeoDB {
   let db = @db.GeoDB::in_memory()
-  let rand = @random.Rand::new()
+  let rand = @random.Rand()
   let mut idx = 0
   for rec in records {
     let (qlat, qlng) = lookup_city_coord(rec.query)

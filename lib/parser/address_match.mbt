@@ -914,7 +914,7 @@ fn token_any_hit(query : Array[String], candidate : Array[String]) -> Bool {
 /// on purpose: a bare district often legitimately contains the query.
 fn city_cores(text : String) -> Array[String] {
   // Fast path: if text contains neither 市 nor 县, no city core exists.
-  if not(text.contains("市")) && not(text.contains("县")) {
+  if !text.contains("市") && !text.contains("县") {
     return []
   }
   let codes : Array[Int] = []
@@ -1232,7 +1232,7 @@ fn jaro_winkler_codes(ca : Array[Int], cb : Array[Int]) -> Double {
     let hi0 = i + search_range
     let hi = if hi0 < lb - 1 { hi0 } else { lb - 1 }
     for j in low..=hi {
-      if not(flags_b[j]) && ca[i] == cb[j] {
+      if !flags_b[j] && ca[i] == cb[j] {
         flags_a[i] = true
         flags_b[j] = true
         matches = matches + 1
@@ -1248,7 +1248,7 @@ fn jaro_winkler_codes(ca : Array[Int], cb : Array[Int]) -> Double {
   let mut k = 0
   for i in 0..<la {
     if flags_a[i] {
-      while not(flags_b[k]) {
+      while !flags_b[k] {
         k = k + 1
       }
       if ca[i] != cb[k] {
@@ -1860,7 +1860,7 @@ pub fn match_by_ensemble(
   score: Double,
   // 新特征
   edit_dist_norm: Double, jw_sim: Double, jaccard_tok: Double,
-  lcs_ratio: Double, tok_overlap: Double,
+  lcs_ratio: Double, _tok_overlap: Double,
   dice_house_recall: Double, dice_feat: Double, dice_road_b: Double, dice_name: Double,
   house_recall_feat: Double, house_recall_road_b: Double, feat_road_b: Double,
   dice_admin_hit: Double, dice_road_hit: Double, dice_town_hit: Double,

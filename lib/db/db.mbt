@@ -1950,7 +1950,7 @@ fn parse_csv_row(line : String) -> @types.GeoEntry? {
     return None
   }
   let entry_id = if id.length() == 0 {
-    let rand = @random.Rand::new()
+    let rand = @random.Rand()
     "csv_" + rand.int(limit=1000000).to_string()
   } else {
     id
@@ -2110,7 +2110,7 @@ fn try_import_geojson_feature(j : Json) -> @types.GeoEntry? {
         _ => ""
       }
       let entry_id = if id.length() == 0 {
-        let rand = @random.Rand::new()
+        let rand = @random.Rand()
         "gj_" + rand.int(limit=1000000).to_string()
       } else {
         id
