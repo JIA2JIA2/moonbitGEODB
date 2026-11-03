@@ -1127,7 +1127,6 @@ pub fn GeoDB::to_json(self : GeoDB) -> String {
 ///|
 /// Serialize one entry directly, avoiding an intermediate Json tree.
 fn entry_to_json_string(e : @types.GeoEntry) -> String {
-  let a = e.address
   let p = e.location
   "{" +
   "\"id\":\"" +
@@ -1136,7 +1135,23 @@ fn entry_to_json_string(e : @types.GeoEntry) -> String {
   "\"name\":\"" +
   escape_json_string(e.name) +
   "\"," +
-  "\"address\":{" +
+  "\"address\":" +
+  address_to_json_string(e.address) +
+  "," +
+  "\"location\":{\"lat\":" +
+  p.lat.to_string() +
+  ",\"lng\":" +
+  p.lng.to_string() +
+  "}," +
+  "\"tags\":" +
+  string_array_to_json(e.tags) +
+  "}"
+}
+
+///|
+/// Serialize an address directly, avoiding an intermediate Json tree.
+fn address_to_json_string(a : @types.Address) -> String {
+  "{" +
   "\"country\":\"" +
   escape_json_string(a.country) +
   "\"," +
@@ -1157,14 +1172,7 @@ fn entry_to_json_string(e : @types.GeoEntry) -> String {
   "\"," +
   "\"detail\":\"" +
   escape_json_string(a.detail) +
-  "\"}," +
-  "\"location\":{\"lat\":" +
-  p.lat.to_string() +
-  ",\"lng\":" +
-  p.lng.to_string() +
-  "}," +
-  "\"tags\":" +
-  string_array_to_json(e.tags) +
+  "\"" +
   "}"
 }
 
@@ -1218,39 +1226,33 @@ fn try_import_json_value(j : Json) -> @types.GeoEntry? {
 /// Each entry becomes a Feature with a Point geometry and an id + name +
 /// address + tags properties object. Compliant with RFC 7946.
 pub fn GeoDB::to_geojson(self : GeoDB) -> String {
-  let lines : Array[String] = []
-  lines.push("{\"type\":\"FeatureCollection\",\"features\":[")
   let entries = self.all()
+  let sb = StringBuilder(size_hint=entries.length() * 256 + 64)
+  sb.write_string("{\"type\":\"FeatureCollection\",\"features\":[")
   let mut i = 0
   for e in entries {
     if i > 0 {
-      lines.push(",")
+      sb.write_char(',')
     }
-    let props = [
-      "\"id\":\"" + escape_json_string(e.id) + "\"",
-      "\"name\":\"" + escape_json_string(e.name) + "\"",
-      "\"address\":" + e.address.to_json().stringify(),
-      "\"tags\":" + string_array_to_json(e.tags),
-    ].join(",")
-    let feature = "{" +
-      "\"type\":\"Feature\"," +
-      "\"geometry\":{" +
-      "\"type\":\"Point\"," +
-      "\"coordinates\":[" +
-      e.location.lng.to_string() +
-      "," +
-      e.location.lat.to_string() +
-      "]" +
-      "}," +
-      "\"properties\":{" +
-      props +
-      "}" +
-      "}"
-    lines.push(feature)
+    sb.write_string(
+      "{\"type\":\"Feature\",\"geometry\":{\"type\":\"Point\",\"coordinates\":[",
+    )
+    sb.write_string(e.location.lng.to_string())
+    sb.write_char(',')
+    sb.write_string(e.location.lat.to_string())
+    sb.write_string("]},\"properties\":{\"id\":\"")
+    sb.write_string(escape_json_string(e.id))
+    sb.write_string("\",\"name\":\"")
+    sb.write_string(escape_json_string(e.name))
+    sb.write_string("\",\"address\":")
+    sb.write_string(address_to_json_string(e.address))
+    sb.write_string(",\"tags\":")
+    sb.write_string(string_array_to_json(e.tags))
+    sb.write_string("}}")
     i = i + 1
   }
-  lines.push("]}")
-  lines.join("")
+  sb.write_string("]}")
+  sb.to_string()
 }
 
 ///|
@@ -1349,6 +1351,27 @@ pub fn GeoDB::find_name_pattern(
   let entries = self.all()
   let names = self.index.lowered_names()
   let results : Array[@types.GeoEntry] = []
+  let literal = longest_literal(p)
+  if literal.length() >= 3 {
+    // A wildcard pattern can only match names containing its longest literal
+    // run, so the 3-gram index provides a safe candidate set.
+    let candidates = self.index.find_name_contains(literal)
+    if candidates.length() == 0 {
+      return results
+    }
+    let ids : @hashmap.HashMap[String, Bool] = @hashmap.HashMap([])
+    for c in candidates {
+      ids[c.id] = true
+    }
+    let mut i = 0
+    while i < entries.length() && i < names.length() {
+      if ids.contains(entries[i].id) && simple_wildcard_match(names[i], p) {
+        results.push(entries[i])
+      }
+      i = i + 1
+    }
+    return results
+  }
   let mut i = 0
   while i < entries.length() && i < names.length() {
     if simple_wildcard_match(names[i], p) {
@@ -1357,6 +1380,32 @@ pub fn GeoDB::find_name_pattern(
     i = i + 1
   }
   results
+}
+
+///|
+/// Longest run of literal (non-wildcard) characters in a pattern.
+fn longest_literal(pattern : String) -> String {
+  let sb = StringBuilder()
+  let mut best = ""
+  let mut best_len = 0
+  let mut cur_len = 0
+  for c in pattern {
+    if c == '*' || c == '?' {
+      if cur_len > best_len {
+        best = sb.to_string()
+        best_len = cur_len
+      }
+      sb.reset()
+      cur_len = 0
+    } else {
+      sb.write_char(c)
+      cur_len = cur_len + 1
+    }
+  }
+  if cur_len > best_len {
+    best = sb.to_string()
+  }
+  best
 }
 
 ///|
@@ -2684,48 +2733,46 @@ pub fn GeoDB::radial_density(
 /// Export all entries as a GeoJSON FeatureCollection with bbox.
 pub fn GeoDB::to_geojson_with_bbox(self : GeoDB) -> String {
   let entries = self.all()
-  let features : Array[String] = []
+  let sb = StringBuilder(size_hint=entries.length() * 300 + 96)
+  sb.write_string(
+    "{\"type\":\"FeatureCollection\",\"totalFeatures\":" +
+    entries.length().to_string() +
+    ",\"features\":[",
+  )
+  let mut i = 0
   for e in entries {
+    if i > 0 {
+      sb.write_char(',')
+    }
     let gh = @geo.geohash_encode(e.location.lat, e.location.lng, 8)
     let bbox = @geo.geohash_to_bbox(gh)
-    let props = [
-      "\"id\":\"" + escape_json_string(e.id) + "\"",
-      "\"name\":\"" + escape_json_string(e.name) + "\"",
-      "\"address\":" + e.address.to_json().stringify(),
-      "\"tags\":" + string_array_to_json(e.tags),
-      "\"bbox\":[" +
-      bbox.min_lng.to_string() +
-      "," +
-      bbox.min_lat.to_string() +
-      "," +
-      bbox.max_lng.to_string() +
-      "," +
-      bbox.max_lat.to_string() +
-      "]",
-    ].join(",")
-    let feature = "{" +
-      "\"type\":\"Feature\"," +
-      "\"geometry\":{" +
-      "\"type\":\"Point\"," +
-      "\"coordinates\":[" +
-      e.location.lng.to_string() +
-      "," +
-      e.location.lat.to_string() +
-      "]" +
-      "}," +
-      "\"properties\":{" +
-      props +
-      "}" +
-      "}"
-    features.push(feature)
+    sb.write_string(
+      "{\"type\":\"Feature\",\"geometry\":{\"type\":\"Point\",\"coordinates\":[",
+    )
+    sb.write_string(e.location.lng.to_string())
+    sb.write_char(',')
+    sb.write_string(e.location.lat.to_string())
+    sb.write_string("]},\"properties\":{\"id\":\"")
+    sb.write_string(escape_json_string(e.id))
+    sb.write_string("\",\"name\":\"")
+    sb.write_string(escape_json_string(e.name))
+    sb.write_string("\",\"address\":")
+    sb.write_string(address_to_json_string(e.address))
+    sb.write_string(",\"tags\":")
+    sb.write_string(string_array_to_json(e.tags))
+    sb.write_string(",\"bbox\":[")
+    sb.write_string(bbox.min_lng.to_string())
+    sb.write_char(',')
+    sb.write_string(bbox.min_lat.to_string())
+    sb.write_char(',')
+    sb.write_string(bbox.max_lng.to_string())
+    sb.write_char(',')
+    sb.write_string(bbox.max_lat.to_string())
+    sb.write_string("]}}")
+    i = i + 1
   }
-  let features_str = features.join(",")
-  let result = "{\"type\":\"FeatureCollection\",\"totalFeatures\":" +
-    entries.length().to_string() +
-    ",\"features\":[" +
-    features_str +
-    "]}"
-  result
+  sb.write_string("]}")
+  sb.to_string()
 }
 
 ///|
@@ -3627,6 +3674,13 @@ fn build_knn_weights(
   if n == 0 {
     return []
   }
+  match db.index.cached_knn_weights {
+    Some(weights) =>
+      if db.index.cached_knn_k == k {
+        return weights
+      }
+    None => ()
+  }
   let id_to_idx : @hashmap.HashMap[String, Int] = @hashmap.HashMap([])
   let mut i = 0
   while i < n {
@@ -3687,6 +3741,8 @@ fn build_knn_weights(
     weights.push(row)
     i = i + 1
   }
+  db.index.cached_knn_k = k
+  db.index.cached_knn_weights = Some(weights)
   weights
 }
 

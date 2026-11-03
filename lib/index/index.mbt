@@ -34,6 +34,8 @@ pub(all) struct Index {
   mut cached_bbox : @types.BBox? // cached combined bbox
   mut cached_entries : Array[@types.GeoEntry]? // cached entries snapshot
   mut cached_lower_names : Array[String]? // lowercased names aligned with cached_entries
+  mut cached_knn_weights : Array[Array[Int]]? // cached mutual-kNN adjacency
+  mut cached_knn_k : Int // k value for cached_knn_weights
   mut name_keys_cache : Array[String]? // sorted lowercase name keys for prefix queries
 } derive(Eq, Debug)
 
@@ -66,6 +68,8 @@ pub fn Index::new(cell_size? : Double = default_cell_size) -> Index {
     cached_bbox: None,
     cached_entries: None,
     cached_lower_names: None,
+    cached_knn_weights: None,
+    cached_knn_k: -1,
     name_keys_cache: None,
   }
 }
@@ -92,6 +96,7 @@ pub fn Index::clear(self : Index) -> Unit {
   self.cached_bbox = None
   self.cached_entries = None
   self.cached_lower_names = None
+  self.cached_knn_weights = None
   self.name_keys_cache = None
 }
 
@@ -187,6 +192,7 @@ pub fn Index::insert(self : Index, entry : @types.GeoEntry) -> Unit {
   self.cached_bbox = None
   self.cached_entries = None
   self.cached_lower_names = None
+  self.cached_knn_weights = None
   self.name_keys_cache = None
 }
 
@@ -274,6 +280,7 @@ pub fn Index::bulk_insert(self : Index, entries : Array[@types.GeoEntry]) -> Uni
   self.cached_bbox = None
   self.cached_entries = None
   self.cached_lower_names = None
+  self.cached_knn_weights = None
   self.name_keys_cache = None
 }
 
@@ -395,6 +402,7 @@ pub fn Index::remove(self : Index, id : String) -> @types.GeoEntry? {
       self.cached_bbox = None
       self.cached_entries = None
       self.cached_lower_names = None
+      self.cached_knn_weights = None
       self.name_keys_cache = None
       Some(entry)
     }

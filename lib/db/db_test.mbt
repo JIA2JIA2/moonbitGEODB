@@ -3026,3 +3026,46 @@ test "GeoDB::to_csv quotes fields with comma/quote/newline" {
   let csv = db.to_csv()
   @test.assert_eq(csv.contains("\"A,B\"\"C\nD\""), true)
 }
+
+///|
+test "GeoDB::morans_i_test caches knn weights and invalidates on write" {
+  let db = @db.GeoDB::in_memory()
+  db.insert(make_entry("m1", "A", 0.0, 0.0))
+  db.insert(make_entry("m2", "B", 0.0, 1.0))
+  db.insert(make_entry("m3", "C", 1.0, 0.0))
+  db.insert(make_entry("m4", "D", 1.0, 1.0))
+  let vals = [1.0, 2.0, 3.0, 4.0]
+  let r1 = db.morans_i_test(vals, k=2)
+  let r2 = db.morans_i_test(vals, k=2)
+  match (r1, r2) {
+    (Some(a), Some(b)) => {
+      @test.assert_eq(a.i, b.i)
+      @test.assert_eq(a.z_score, b.z_score)
+      @test.assert_eq(a.n, 4)
+    }
+    _ => @test.assert_eq(true, false)
+  }
+  db.insert(make_entry("m5", "E", 2.0, 2.0))
+  match db.morans_i_test([1.0, 2.0, 3.0, 4.0, 5.0], k=2) {
+    Some(c) => @test.assert_eq(c.n, 5)
+    None => @test.assert_eq(true, false)
+  }
+  ignore(db.remove("m5"))
+  match db.morans_i_test(vals, k=2) {
+    Some(d) => @test.assert_eq(d.n, 4)
+    None => @test.assert_eq(true, false)
+  }
+}
+
+///|
+test "GeoDB::find_name_pattern prefilters with literal n-grams" {
+  let db = @db.GeoDB::in_memory()
+  db.insert(make_entry("p01", "北京市海淀区颐和园路", 39.9, 116.4))
+  db.insert(make_entry("p02", "上海市浦东新区世纪大道", 31.2, 121.5))
+  db.insert(make_entry("p03", "北京路", 39.9, 116.4))
+  let r = db.find_name_pattern("*海淀区*")
+  @test.assert_eq(r.length(), 1)
+  @test.assert_eq(r[0].id, "p01")
+  @test.assert_eq(db.find_name_pattern("*不存在*").length(), 0)
+  @test.assert_eq(db.find_name_pattern("北京*").length(), 2)
+}

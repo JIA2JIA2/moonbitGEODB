@@ -3598,6 +3598,12 @@ fn run_benchmark(n : Int) -> Unit {
   let t_mt = @bench.monotonic_clock_end(t_mt0)
   println("  Moran test:      " + t_mt.to_string() + " us")
 
+  // Second call hits the cached mutual-kNN weights.
+  let t_mt2_0 = @bench.monotonic_clock_start()
+  let _mt2 = db.morans_i_test(kvals, k=8)
+  let t_mt2 = @bench.monotonic_clock_end(t_mt2_0)
+  println("  Moran test 2:    " + t_mt2.to_string() + " us")
+
   // IDW through the DB API (R-tree kNN instead of full scan).
   let t_idw0 = @bench.monotonic_clock_start()
   let _idw = db.idw_predict_knn(
@@ -3637,6 +3643,12 @@ fn run_benchmark(n : Int) -> Unit {
   let _cl = db.find_name_contains(sample_name)
   let t_cl = @bench.monotonic_clock_end(t_cl0)
   println("  Name contains L: " + t_cl.to_string() + " us")
+
+  // Wildcard query with a long literal run, prefiltered by the 3-gram index.
+  let t_pat0 = @bench.monotonic_clock_start()
+  let _pat = db.find_name_pattern("*" + sample_name + "*")
+  let t_pat = @bench.monotonic_clock_end(t_pat0)
+  println("  Name pattern:    " + t_pat.to_string() + " us")
 
   // Fuzzy name search (length-pruned Levenshtein).
   let t_fuzzy0 = @bench.monotonic_clock_start()
@@ -3709,6 +3721,14 @@ fn run_benchmark(n : Int) -> Unit {
   let _json = db.to_json()
   let t_json = @bench.monotonic_clock_end(t_json0)
   println("  Export JSON:     " + t_json.to_string() + " us")
+  let t_gj0 = @bench.monotonic_clock_start()
+  let _gj = db.to_geojson()
+  let t_gj = @bench.monotonic_clock_end(t_gj0)
+  println("  Export GeoJSON:  " + t_gj.to_string() + " us")
+  let t_gjb0 = @bench.monotonic_clock_start()
+  let _gjb = db.to_geojson_with_bbox()
+  let t_gjb = @bench.monotonic_clock_end(t_gjb0)
+  println("  Export GJ bbox:  " + t_gjb.to_string() + " us")
 
   println("  ---")
   let us_per_entry = t_build / n.to_double()
