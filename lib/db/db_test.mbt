@@ -3278,3 +3278,34 @@ test "GeoDB::kmeans_elbow uses warm start" {
     i = i + 1
   }
 }
+
+///|
+test "GeoDB::import_json handles structural chars inside strings" {
+  let db = @db.GeoDB::in_memory()
+  db.insert(make_entry("j1", "A]B,C{D", 0.0, 0.0))
+  db.insert(make_entry("j2", "E\"F\\G", 1.0, 1.0))
+  let json = db.to_json()
+  let db2 = @db.GeoDB::in_memory()
+  @test.assert_eq(db2.import_json(json), 2)
+  match db2.get("j1") {
+    Some(e) => @test.assert_eq(e.name, "A]B,C{D")
+    None => @test.assert_eq(true, false)
+  }
+  match db2.get("j2") {
+    Some(e) => @test.assert_eq(e.name, "E\"F\\G")
+    None => @test.assert_eq(true, false)
+  }
+}
+
+///|
+test "GeoDB::find_name_fuzzy uses length buckets" {
+  let db = @db.GeoDB::in_memory()
+  db.insert(make_entry("f1", "apple", 0.0, 0.0))
+  db.insert(make_entry("f2", "apples", 1.0, 1.0))
+  db.insert(make_entry("f3", "banana", 2.0, 2.0))
+  @test.assert_eq(db.find_name_fuzzy("apple", max_distance=1).length(), 2)
+  ignore(db.remove("f2"))
+  @test.assert_eq(db.find_name_fuzzy("apple", max_distance=1).length(), 1)
+  db.insert(make_entry("f4", "appla", 3.0, 3.0))
+  @test.assert_eq(db.find_name_fuzzy("apple", max_distance=1).length(), 2)
+}

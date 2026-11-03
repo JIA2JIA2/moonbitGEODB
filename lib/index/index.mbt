@@ -25,6 +25,8 @@ pub(all) struct Index {
   coarse_lng_cells : Int // 360 / coarse_cell_size
   mut by_name : @hashmap.HashMap[String, Array[String]]
   mut by_ngram : @hashmap.HashMap[String, Array[String]] // 3-gram substring index
+  by_bigram : @hashmap.HashMap[String, Array[String]] // 2-gram substring index
+  by_name_len : @hashmap.HashMap[Int, Array[String]] // code-point length -> ids
   by_tag : @hashmap.HashMap[String, Array[String]]
   by_province : @hashmap.HashMap[String, Array[String]]
   by_city : @hashmap.HashMap[String, Array[String]]
@@ -63,6 +65,8 @@ pub fn Index::new(cell_size? : Double = default_cell_size) -> Index {
     coarse_lng_cells,
     by_name: @hashmap.HashMap([]),
     by_ngram: @hashmap.HashMap([]),
+    by_bigram: @hashmap.HashMap([]),
+    by_name_len: @hashmap.HashMap([]),
     by_tag: @hashmap.HashMap([]),
     by_province: @hashmap.HashMap([]),
     by_city: @hashmap.HashMap([]),
@@ -96,6 +100,8 @@ pub fn Index::clear(self : Index) -> Unit {
   self.coarse_grid.clear()
   self.by_name.clear()
   self.by_ngram.clear()
+  self.by_bigram.clear()
+  self.by_name_len.clear()
   self.by_tag.clear()
   self.by_province.clear()
   self.by_city.clear()
@@ -161,12 +167,23 @@ pub fn Index::insert(self : Index, entry : @types.GeoEntry) -> Unit {
       None => self.by_name[name_key] = [entry.id]
       Some(arr) => arr.push(entry.id)
     }
-    for gram in name_ngrams(name_key) {
+    for gram in name_ngrams(name_key, ngram_size) {
       match self.by_ngram.get(gram) {
         None => self.by_ngram[gram] = [entry.id]
         Some(arr) => arr.push(entry.id)
       }
     }
+    for gram in name_ngrams(name_key, 2) {
+      match self.by_bigram.get(gram) {
+        None => self.by_bigram[gram] = [entry.id]
+        Some(arr) => arr.push(entry.id)
+      }
+    }
+  }
+  let name_len = code_point_len(name_key)
+  match self.by_name_len.get(name_len) {
+    None => self.by_name_len[name_len] = [entry.id]
+    Some(arr) => arr.push(entry.id)
   }
   // Tag index.
   for tag in entry.tags {
@@ -252,12 +269,23 @@ pub fn Index::bulk_insert(self : Index, entries : Array[@types.GeoEntry]) -> Uni
         None => self.by_name[name_key] = [entry.id]
         Some(arr) => arr.push(entry.id)
       }
-      for gram in name_ngrams(name_key) {
+      for gram in name_ngrams(name_key, ngram_size) {
         match self.by_ngram.get(gram) {
           None => self.by_ngram[gram] = [entry.id]
           Some(arr) => arr.push(entry.id)
         }
       }
+      for gram in name_ngrams(name_key, 2) {
+        match self.by_bigram.get(gram) {
+          None => self.by_bigram[gram] = [entry.id]
+          Some(arr) => arr.push(entry.id)
+        }
+      }
+    }
+    let name_len = code_point_len(name_key)
+    match self.by_name_len.get(name_len) {
+      None => self.by_name_len[name_len] = [entry.id]
+      Some(arr) => arr.push(entry.id)
     }
     // Tags.
     for tag in entry.tags {
@@ -382,7 +410,7 @@ pub fn Index::remove(self : Index, id : String) -> @types.GeoEntry? {
             }
           None => ()
         }
-        for gram in name_ngrams(name_key) {
+        for gram in name_ngrams(name_key, ngram_size) {
           match self.by_ngram.get(gram) {
             Some(arr) =>
               if remove_id_in_place(arr, id) && arr.length() == 0 {
@@ -391,6 +419,23 @@ pub fn Index::remove(self : Index, id : String) -> @types.GeoEntry? {
             None => ()
           }
         }
+        for gram in name_ngrams(name_key, 2) {
+          match self.by_bigram.get(gram) {
+            Some(arr) =>
+              if remove_id_in_place(arr, id) && arr.length() == 0 {
+                ignore(self.by_bigram.remove(gram))
+              }
+            None => ()
+          }
+        }
+      }
+      let name_len = code_point_len(name_key)
+      match self.by_name_len.get(name_len) {
+        Some(arr) =>
+          if remove_id_in_place(arr, id) && arr.length() == 0 {
+            ignore(self.by_name_len.remove(name_len))
+          }
+        None => ()
       }
       // Drop from tag indexes.
       for tag in entry.tags {
@@ -739,20 +784,30 @@ pub fn Index::find_name_prefix_case(
 }
 
 ///|
+/// Number of Unicode code points in a string.
+fn code_point_len(s : String) -> Int {
+  let mut n = 0
+  for _ in s {
+    n = n + 1
+  }
+  n
+}
+
+///|
 /// Number of code points per n-gram used by the substring index.
 let ngram_size : Int = 3
 
 ///|
 /// Distinct overlapping n-grams (by code point) of a lowercase name.
-fn name_ngrams(name : String) -> Array[String] {
+fn name_ngrams(name : String, size : Int) -> Array[String] {
   let len = name.length()
   let out : Array[String] = []
-  if len < ngram_size {
+  if size < 1 || len < size {
     return out
   }
   let mut i = 0
-  while i + ngram_size <= len {
-    let g = name[i:i + ngram_size].to_owned()
+  while i + size <= len {
+    let g = name[i:i + size].to_owned()
     let mut dup = false
     for existing in out {
       if existing == g {
@@ -778,8 +833,13 @@ pub fn Index::find_name_contains(
   if n.length() == 0 {
     return []
   }
-  let out : Array[@types.GeoEntry] = []
-  let grams = name_ngrams(n)
+let out : Array[@types.GeoEntry] = []
+  let use_bigram = n.length() == 2
+  let grams = if use_bigram {
+    name_ngrams(n, 2)
+  } else {
+    name_ngrams(n, ngram_size)
+  }
   if grams.length() == 0 {
     // Too short for n-grams: fall back to the cached lowercase-name scan.
     let entries = self.to_array()
@@ -797,7 +857,12 @@ pub fn Index::find_name_contains(
   // no match. Otherwise choose the smallest list as the candidate set.
   let mut best : Array[String]? = None
   for gram in grams {
-    match self.by_ngram.get(gram) {
+    let posting = if use_bigram {
+      self.by_bigram.get(gram)
+    } else {
+      self.by_ngram.get(gram)
+    }
+    match posting {
       None => return []
       Some(ids) =>
         match best {
@@ -821,6 +886,36 @@ pub fn Index::find_name_contains(
           None => ()
         }
       }
+  }
+  out
+}
+
+///|
+/// Entries whose lowercased name code-point length is within
+/// `[len - max_dist, len + max_dist]`.
+pub fn Index::name_length_candidates(
+  self : Index,
+  len : Int,
+  max_dist : Int,
+) -> Array[@types.GeoEntry] {
+  let out : Array[@types.GeoEntry] = []
+  let mut l = len - max_dist
+  if l < 0 {
+    l = 0
+  }
+  let upper = len + max_dist
+  while l <= upper {
+    match self.by_name_len.get(l) {
+      Some(ids) =>
+        for id in ids {
+          match self.entries.get(id) {
+            Some(e) => out.push(e)
+            None => ()
+          }
+        }
+      None => ()
+    }
+    l = l + 1
   }
   out
 }

@@ -565,3 +565,17 @@ test "Index::find_name_contains deduplicates repeated n-grams" {
   @test.assert_eq(idx.find_name_contains("aaa").length(), 2)
   @test.assert_eq(idx.find_name_contains("aaaa").length(), 1)
 }
+
+///|
+test "Index::find_name_contains handles two-character needles" {
+  let idx = @index.Index::new()
+  idx.insert(make_entry("p01", "北京市海淀区", 0.0, 0.0))
+  idx.insert(make_entry("p02", "上海市浦东新区", 1.0, 1.0))
+  @test.assert_eq(idx.find_name_contains("海淀").length(), 1)
+  @test.assert_eq(idx.find_name_contains("海").length(), 2)
+  @test.assert_eq(idx.find_name_contains("新区").length(), 1)
+  ignore(idx.remove("p02"))
+  @test.assert_eq(idx.find_name_contains("新区").length(), 0)
+  idx.insert(make_entry("p03", "天津新区", 2.0, 2.0))
+  @test.assert_eq(idx.find_name_contains("新区").length(), 1)
+}

@@ -3667,6 +3667,12 @@ fn run_benchmark(n : Int) -> Unit {
   let t_contains = @bench.monotonic_clock_end(t_contains0)
   println("  Name contains:   " + t_contains.to_string() + " us")
 
+  // Two-character needle: the 2-gram index narrows the candidate set.
+  let t_c20 = @bench.monotonic_clock_start()
+  let _c2 = db.find_name_contains("新区")
+  let t_c2 = @bench.monotonic_clock_end(t_c20)
+  println("  Name contains 2: " + t_c2.to_string() + " us")
+
   // Long needle: the 3-gram index narrows the candidate set.
   let sample_name = db.all()[0].name
   let t_cl0 = @bench.monotonic_clock_start()

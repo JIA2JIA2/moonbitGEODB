@@ -996,18 +996,10 @@ pub fn GeoDB::find_name_fuzzy(
   let q_chars = chars_of(q)
   let q_len = q_chars.length()
   let results : Array[(@types.GeoEntry, Int)] = []
-  for e in self.all() {
+  let candidates = self.index.name_length_candidates(q_len, max_distance)
+  for e in candidates {
     let name = e.name.to_lower()
     let name_chars = chars_of(name)
-    let name_len = name_chars.length()
-    let diff = if name_len > q_len {
-      name_len - q_len
-    } else {
-      q_len - name_len
-    }
-    if diff > max_distance {
-      continue
-    }
     let dist = levenshtein_distance_chars(name_chars, q_chars)
     if dist <= max_distance {
       results.push((e, dist))
@@ -1270,6 +1262,63 @@ fn address_to_json_string(a : @types.Address) -> String {
 }
 
 ///|
+/// Split a top-level JSON array into element substrings without building the
+/// whole Json tree. Returns [] when the input is not a top-level array.
+fn split_top_level_array(json : String) -> Array[String] {
+  let out : Array[String] = []
+  let n = json.length()
+  let mut i = 0
+  while i < n {
+    let c = json.get_char(i).unwrap()
+    if c != ' ' && c != '\n' && c != '\r' && c != '\t' {
+      break
+    }
+    i = i + 1
+  }
+  if i >= n || json.get_char(i).unwrap() != '[' {
+    return out
+  }
+  i = i + 1
+  let mut depth = 0
+  let mut in_str = false
+  let mut escaped = false
+  let mut start = i
+  while i < n {
+    let c = json.get_char(i).unwrap()
+    if in_str {
+      if escaped {
+        escaped = false
+      } else if c == '\\' {
+        escaped = true
+      } else if c == '"' {
+        in_str = false
+      }
+    } else if c == '"' {
+      in_str = true
+    } else if c == '{' || c == '[' {
+      depth = depth + 1
+    } else if c == '}' || c == ']' {
+      if c == ']' && depth == 0 {
+        let part = json[start:i].to_owned()
+        if part.trim().length() > 0 {
+          out.push(part)
+        }
+        return out
+      }
+      depth = depth - 1
+    } else if c == ',' && depth == 0 {
+      let part = json[start:i].to_owned()
+      if part.trim().length() > 0 {
+        out.push(part)
+      }
+      start = i + 1
+    }
+    i = i + 1
+  }
+  out
+}
+
+///|
 /// Import entries from a JSON string (array of GeoEntry objects).
 /// Returns the number of entries successfully imported.
 /// Entries already present (by id) are replaced.
@@ -1279,7 +1328,29 @@ pub fn GeoDB::import_json(self : GeoDB, json : String) -> Int {
   if trimmed.length() == 0 || trimmed == "[]" {
     return 0
   }
-  // Parse top-level JSON.
+  // Fast path: parse array elements one at a time so peak memory is bounded
+  // by the largest single entry instead of the whole Json tree.
+  let parts = split_top_level_array(trimmed)
+  if parts.length() > 0 {
+    let to_insert : Array[@types.GeoEntry] = []
+    for part in parts {
+      try {
+        let item = @json.parse(part)
+        match try_import_json_value(item) {
+          None => ()
+          Some(entry) => to_insert.push(entry)
+        }
+      } catch {
+        _ => ()
+      }
+    }
+    let n = to_insert.length()
+    if n > 0 {
+      ignore(self.insert_batch(to_insert))
+    }
+    return n
+  }
+  // Fallback: single top-level object / non-array input.
   let j = @json.parse(trimmed) catch { _ => return 0 }
   // Expect an array at top level.
   match j {
