@@ -66,6 +66,12 @@ pub fn copy_file(
 }
 
 ///|
+/// Append raw binary content to a file. Not available on non-native backends.
+pub fn append_bytes(_path : String, _content : Bytes) -> Result[Unit, String] {
+  Err("file IO not available on this backend")
+}
+
+///|
 /// Atomically write binary content to file. Not available on non-native backends.
 pub fn atomic_save_bytes(
   _path : String,

@@ -231,3 +231,36 @@ MOONBIT_FFI_EXPORT int32_t geodb_copy_file(
     free(dst);
     return rc;
 }
+
+MOONBIT_FFI_EXPORT int32_t geodb_append_file(
+    moonbit_bytes_t path_bytes, int32_t path_len,
+    moonbit_bytes_t content_bytes, int32_t content_len
+) {
+    if (path_len < 0 || content_len < 0) {
+        return -1;
+    }
+    char *path = (char *)malloc((size_t)path_len + 1);
+    if (path == NULL) {
+        return -1;
+    }
+    memcpy(path, path_bytes, (size_t)path_len);
+    path[path_len] = '\0';
+    FILE *f = fopen(path, "ab");
+    free(path);
+    if (f == NULL) {
+        return -1;
+    }
+    size_t to_write = (size_t)content_len;
+    size_t written = (to_write == 0) ? 0 : fwrite(content_bytes, 1, to_write, f);
+    int err = ferror(f);
+    if (fflush(f) != 0) {
+        err = 1;
+    }
+    if (fclose(f) != 0) {
+        err = 1;
+    }
+    if (err || written != to_write) {
+        return -1;
+    }
+    return 0;
+}

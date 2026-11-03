@@ -3069,3 +3069,101 @@ test "GeoDB::find_name_pattern prefilters with literal n-grams" {
   @test.assert_eq(db.find_name_pattern("*不存在*").length(), 0)
   @test.assert_eq(db.find_name_pattern("北京*").length(), 2)
 }
+
+// ---- WAL / incremental persistence (native only) ----
+
+#cfg(target="native")
+test "GeoDB::auto_save writes WAL and replays on open" {
+  let path = "/tmp/geodb_wal_replay.db"
+  ignore(@persist.remove_file(path))
+  @persist.clear_wal(path)
+  let db = @db.GeoDB::open(path, auto_save=true)
+  db.insert(make_entry("w1", "A", 1.0, 2.0))
+  db.insert(make_entry("w2", "B", 3.0, 4.0))
+  @test.assert_eq(@persist.file_exists(@persist.wal_path(path)), true)
+  @test.assert_eq(@persist.file_exists(path), false)
+  let db2 = @db.GeoDB::open(path, auto_save=true)
+  @test.assert_eq(db2.size(), 2)
+  @test.assert_eq(db2.get("w2") is Some(_), true)
+  ignore(db2.remove("w1"))
+  let db3 = @db.GeoDB::open(path)
+  @test.assert_eq(db3.size(), 1)
+  @test.assert_eq(db3.get("w1") is None, true)
+  match db3.save() {
+    Ok(_) => ()
+    Err(e) => @test.assert_eq(e, "")
+  }
+  @test.assert_eq(@persist.file_exists(@persist.wal_path(path)), false)
+  let db4 = @db.GeoDB::open(path)
+  @test.assert_eq(db4.size(), 1)
+  ignore(@persist.remove_file(path))
+  @persist.clear_wal(path)
+}
+
+#cfg(target="native")
+test "GeoDB::open ignores a truncated WAL tail" {
+  let path = "/tmp/geodb_wal_torn.db"
+  ignore(@persist.remove_file(path))
+  @persist.clear_wal(path)
+  let db = @db.GeoDB::open(path, auto_save=true)
+  db.insert(make_entry("t1", "A", 1.0, 2.0))
+  db.insert(make_entry("t2", "B", 3.0, 4.0))
+  match @persist.load_bytes(@persist.wal_path(path)) {
+    Err(_) => @test.assert_eq(true, false)
+    Ok(data) => {
+      let truncated = @persist.bytes_slice(data, 0, data.length() - 3)
+      ignore(@persist.save_bytes(@persist.wal_path(path), truncated))
+    }
+  }
+  let db2 = @db.GeoDB::open(path)
+  @test.assert_eq(db2.size(), 1)
+  @test.assert_eq(db2.get("t1") is Some(_), true)
+  ignore(@persist.remove_file(path))
+  @persist.clear_wal(path)
+}
+
+#cfg(target="native")
+test "GeoDB::backup compacts WAL and restore clears it" {
+  let path = "/tmp/geodb_wal_backup.db"
+  ignore(@persist.remove_file(path))
+  ignore(@persist.remove_file(path + ".bak"))
+  @persist.clear_wal(path)
+  let db = @db.GeoDB::open(path, auto_save=true)
+  db.insert(make_entry("b1", "A", 1.0, 2.0))
+  match db.backup() {
+    Err(_) => @test.assert_eq(true, false)
+    Ok(_) => ()
+  }
+  @test.assert_eq(@persist.file_exists(@persist.wal_path(path)), false)
+  db.insert(make_entry("b2", "B", 3.0, 4.0))
+  @test.assert_eq(db.size(), 2)
+  match db.restore() {
+    Err(_) => @test.assert_eq(true, false)
+    Ok(_) => @test.assert_eq(db.size(), 1)
+  }
+  @test.assert_eq(@persist.file_exists(@persist.wal_path(path)), false)
+  let db2 = @db.GeoDB::open(path)
+  @test.assert_eq(db2.size(), 1)
+  ignore(@persist.remove_file(path))
+  ignore(@persist.remove_file(path + ".bak"))
+  @persist.clear_wal(path)
+}
+
+#cfg(target="native")
+test "GeoDB::insert_batch compacts to snapshot instead of WAL" {
+  let path = "/tmp/geodb_wal_batch.db"
+  ignore(@persist.remove_file(path))
+  @persist.clear_wal(path)
+  let db = @db.GeoDB::open(path, auto_save=true)
+  let entries : Array[@types.GeoEntry] = [
+    make_entry("c1", "A", 1.0, 2.0),
+    make_entry("c2", "B", 3.0, 4.0),
+  ]
+ignore(db.insert_batch(entries))
+  @test.assert_eq(@persist.file_exists(@persist.wal_path(path)), false)
+  @test.assert_eq(@persist.file_exists(path), true)
+  let db2 = @db.GeoDB::open(path)
+  @test.assert_eq(db2.size(), 2)
+  ignore(@persist.remove_file(path))
+  @persist.clear_wal(path)
+}

@@ -14,6 +14,7 @@ pub(all) struct GeoDB {
   mut path : String? // file path for save/load; None = in-memory only
   index : @index.Index
   next_seq : @ref.Ref[Int]
+  wal_ops : @ref.Ref[Int] // number of records currently in the WAL
   mut created_at : Int64
   mut updated_at : Int64
   mut auto_save : Bool
@@ -30,6 +31,7 @@ pub fn GeoDB::in_memory() -> GeoDB {
     path: None,
     index: @index.Index::new(),
     next_seq: @ref.Ref(0),
+    wal_ops: @ref.Ref(0),
     created_at: 0L,
     updated_at: 0L,
     auto_save: false,
@@ -48,6 +50,7 @@ pub fn GeoDB::open(path : String, auto_save? : Bool = false) -> GeoDB {
     path: Some(path),
     index: @index.Index::new(),
     next_seq: @ref.Ref(0),
+    wal_ops: @ref.Ref(0),
     created_at: if now > 0 {
       now
     } else {
@@ -65,6 +68,25 @@ pub fn GeoDB::open(path : String, auto_save? : Bool = false) -> GeoDB {
       db.updated_at = updated_at
     }
     Err(_) => () // treat missing/corrupt file as empty DB
+  }
+  // Replay the write-ahead log on top of the snapshot.
+  let records = @persist.load_wal(path)
+  for r in records {
+    if r.op == @persist.wal_op_upsert {
+      match r.entry {
+        Some(e) => db.index.insert(e)
+        None => ()
+      }
+    } else {
+      ignore(db.index.remove(r.id))
+    }
+  }
+  db.wal_ops.val = records.length()
+  if records.length() > 0 {
+    let wal_mtime = @persist.file_mtime(@persist.wal_path(path))
+    if wal_mtime > 0 {
+      db.updated_at = wal_mtime
+    }
   }
   db
 }
@@ -89,7 +111,7 @@ pub fn GeoDB::insert(self : GeoDB, entry : @types.GeoEntry) -> Unit {
   self.index.insert(entry)
   self.voronoi_dirty = true
   if self.auto_save {
-    ignore(self.save())
+    self.log_upsert(entry)
   }
 }
 
@@ -189,7 +211,7 @@ pub fn GeoDB::remove(self : GeoDB, id : String) -> @types.GeoEntry? {
   if result != None {
     self.voronoi_dirty = true
     if self.auto_save {
-      ignore(self.save())
+      self.log_delete(id)
     }
   }
   result
@@ -287,8 +309,56 @@ pub fn GeoDB::from_bytes(self : GeoDB, data : Bytes) -> Result[Unit, String] {
       self.index.bulk_insert(entries)
       self.created_at = created_at
       self.updated_at = updated_at
+      match self.path {
+        Some(p) => {
+          @persist.clear_wal(p)
+          self.wal_ops.val = 0
+        }
+        None => ()
+      }
       Ok(())
     }
+  }
+}
+
+///|
+/// Number of WAL records after which an automatic full snapshot is written.
+let wal_compact_threshold : Int = 1024
+
+///|
+fn GeoDB::log_upsert(self : GeoDB, entry : @types.GeoEntry) -> Unit {
+  match self.path {
+    None => ()
+    Some(p) =>
+      match @persist.append_wal_upsert(p, entry) {
+        Ok(_) => self.after_wal_append(p)
+        Err(_) => ignore(self.save())
+      }
+  }
+}
+
+///|
+fn GeoDB::log_delete(self : GeoDB, id : String) -> Unit {
+  match self.path {
+    None => ()
+    Some(p) =>
+      match @persist.append_wal_delete(p, id) {
+        Ok(_) => self.after_wal_append(p)
+        Err(_) => ignore(self.save())
+      }
+  }
+}
+
+///|
+fn GeoDB::after_wal_append(self : GeoDB, p : String) -> Unit {
+  let n = self.wal_ops.val + 1
+  self.wal_ops.val = n
+  let mtime = @persist.file_mtime(@persist.wal_path(p))
+  if mtime > 0 {
+    self.updated_at = mtime
+  }
+  if n >= wal_compact_threshold {
+    ignore(self.save())
   }
 }
 
@@ -300,12 +370,19 @@ pub fn GeoDB::save(self : GeoDB) -> Result[Unit, String] {
     Some(p) => {
       let now = @persist.file_mtime(p)
       self.updated_at = if now > 0 { now } else { 0L }
-      @persist.atomic_save_entries(
+      match @persist.atomic_save_entries(
         p,
         self.all(),
         self.created_at,
         self.updated_at,
-      )
+      ) {
+        Err(e) => Err(e)
+        Ok(_) => {
+          @persist.clear_wal(p)
+          self.wal_ops.val = 0
+          Ok(())
+        }
+      }
     }
   }
 }
@@ -315,16 +392,29 @@ pub fn GeoDB::save(self : GeoDB) -> Result[Unit, String] {
 pub fn GeoDB::save_to(self : GeoDB, path : String) -> Result[Unit, String] {
   let now = @persist.file_mtime(path)
   self.updated_at = if now > 0 { now } else { 0L }
+  let is_backing = match self.path {
+    Some(p) => p == path
+    None => true
+  }
   match self.path {
     None => self.path = Some(path)
     Some(_) => ()
   }
-  @persist.atomic_save_entries(
+  match @persist.atomic_save_entries(
     path,
     self.all(),
     self.created_at,
     self.updated_at,
-  )
+  ) {
+    Err(e) => Err(e)
+    Ok(_) => {
+      @persist.clear_wal(path)
+      if is_backing {
+        self.wal_ops.val = 0
+      }
+      Ok(())
+    }
+  }
 }
 
 ///|
@@ -332,7 +422,11 @@ pub fn GeoDB::save_to(self : GeoDB, path : String) -> Result[Unit, String] {
 pub fn GeoDB::backup(self : GeoDB) -> Result[String, String] {
   match self.path {
     None => Err("no backing path to backup")
-    Some(p) => @persist.create_backup(p)
+    Some(p) =>
+      match self.save() {
+        Err(e) => Err("backup failed: \{e}")
+        Ok(_) => @persist.create_backup(p)
+      }
   }
 }
 
@@ -352,6 +446,8 @@ pub fn GeoDB::restore(self : GeoDB) -> Result[Unit, String] {
               self.index.bulk_insert(entries)
               self.created_at = created_at
               self.updated_at = updated_at
+              @persist.clear_wal(p)
+              self.wal_ops.val = 0
               Ok(())
             }
           }
@@ -742,7 +838,10 @@ pub fn GeoDB::update_location(
 ) -> Bool {
   let ok = self.index.update_location(id, new_location)
   if ok && self.auto_save {
-    ignore(self.save())
+    match self.get(id) {
+      Some(e) => self.log_upsert(e)
+      None => ()
+    }
   }
   ok
 }
@@ -752,7 +851,10 @@ pub fn GeoDB::update_location(
 pub fn GeoDB::update_name(self : GeoDB, id : String, new_name : String) -> Bool {
   let ok = self.index.update_name(id, new_name)
   if ok && self.auto_save {
-    ignore(self.save())
+    match self.get(id) {
+      Some(e) => self.log_upsert(e)
+      None => ()
+    }
   }
   ok
 }
@@ -790,7 +892,7 @@ pub fn GeoDB::add_tag(self : GeoDB, id : String, tag : String) -> Bool {
       new_entry.tags.push(tag)
       self.index.insert(new_entry)
       if self.auto_save {
-        ignore(self.save())
+        self.log_upsert(new_entry)
       }
       true
     }
@@ -823,7 +925,7 @@ pub fn GeoDB::remove_tag(self : GeoDB, id : String, tag : String) -> Bool {
       new_entry.tags = new_tags
       self.index.insert(new_entry)
       if self.auto_save {
-        ignore(self.save())
+        self.log_upsert(new_entry)
       }
       true
     }
@@ -1527,7 +1629,7 @@ pub fn GeoDB::update_address(
       new_entry.tags = entry.tags
       self.index.insert(new_entry)
       if self.auto_save {
-        ignore(self.save())
+        self.log_upsert(new_entry)
       }
       true
     }

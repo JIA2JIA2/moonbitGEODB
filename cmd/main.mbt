@@ -3520,6 +3520,30 @@ fn run_benchmark(n : Int) -> Unit {
   println("  Loaded entries: " + reopened.size().to_string())
   ignore(@persist.remove_file(bench_path))
 
+  // Write-ahead-log path: 100 single-entry writes with auto_save enabled.
+  let wal_bench_path = "/tmp/moonbitgeodb_bench_wal_" + n.to_string() + ".db"
+  ignore(@persist.remove_file(wal_bench_path))
+  @persist.clear_wal(wal_bench_path)
+  let wdb = @db.GeoDB::open(wal_bench_path, auto_save=true)
+  let t_wal0 = @bench.monotonic_clock_start()
+  let mut wi = 0
+  while wi < 100 {
+    wdb.insert(
+      @types.GeoEntry::make(
+        "w" + wi.to_string(),
+        "W",
+        @types.Address::empty(),
+        @types.GeoPoint::make(0.0, 0.0),
+      ),
+    )
+    wi = wi + 1
+  }
+  let t_wal = @bench.monotonic_clock_end(t_wal0)
+  println("  WAL insert x100: " + t_wal.to_string() + " us")
+  ignore(wdb.save())
+  @persist.clear_wal(wal_bench_path)
+  ignore(@persist.remove_file(wal_bench_path))
+
   // BBox query (over Beijing area)
   let t1 = @bench.monotonic_clock_start()
   let _bbox_res = db.find_bbox(39.0, 40.0, 116.0, 117.0)

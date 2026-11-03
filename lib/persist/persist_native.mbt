@@ -183,6 +183,33 @@ pub fn copy_file(src_path : String, dst_path : String) -> Result[Unit, String] {
 }
 
 ///|
+/// FFI: append content bytes to the file at path. Returns 0 on success, -1 on error.
+#borrow(path, content)
+extern "c" fn ffi_append_file(
+  path : Bytes,
+  path_len : Int,
+  content : Bytes,
+  content_len : Int,
+) -> Int = "geodb_append_file"
+
+///|
+/// Append raw binary `content` to the file at `path` (creating it if needed).
+pub fn append_bytes(path : String, content : Bytes) -> Result[Unit, String] {
+  let path_bytes = @utf8.encode(path)
+  let rc = ffi_append_file(
+    path_bytes,
+    path_bytes.length(),
+    content,
+    content.length(),
+  )
+  if rc == 0 {
+    Ok(())
+  } else {
+    Err("failed to append binary file: \{path}")
+  }
+}
+
+///|
 /// Atomically write binary content to file: writes to .tmp first, then renames.
 pub fn atomic_save_bytes(
   path : String,
