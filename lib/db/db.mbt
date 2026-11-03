@@ -3044,39 +3044,129 @@ pub fn GeoDB::lng_histogram(
 
 ///|
 /// Returns (count, min_km, max_km, mean_km, median_km).
+///|
+/// Maximum entry count for exact all-pairs statistics when no center is given.
+let distance_summary_exact_limit : Int = 500
+
+///|
+/// Number of sampled pairs used above the exact limit.
+let distance_summary_sample_pairs : Int = 200000
+
+///|
+/// Returns (count, min_km, max_km, mean_km, median_km).
+/// With more than `distance_summary_exact_limit` entries and no center,
+/// min/max stay exact (R-tree / convex hull) while mean/median are estimated
+/// from a deterministic sample to keep memory bounded.
 pub fn GeoDB::distance_summary(
   self : GeoDB,
   center? : @types.GeoPoint? = None,
 ) -> (Int, Double, Double, Double, Double) {
-  let distances : Array[Double] = []
   match center {
+    Some(c) => distance_summary_from_center(self, c)
     None => {
-      // Pairwise distances between all entries.
       let entries = self.all()
-      let n = entries.length()
-      let mut i = 0
-      while i < n {
-        let mut j = i + 1
-        while j < n {
-          distances.push(
-            @geo.haversine(entries[i].location, entries[j].location),
-          )
-          j = j + 1
-        }
-        i = i + 1
+      if entries.length() < 2 {
+        return (0, 0.0, 0.0, 0.0, 0.0)
+      }
+      if entries.length() <= distance_summary_exact_limit {
+        distance_summary_exact(entries)
+      } else {
+        distance_summary_sampled(self, entries)
       }
     }
-    Some(c) =>
-      for e in self.all() {
-        distances.push(@geo.haversine(c, e.location))
-      }
   }
+}
+
+///|
+fn distance_summary_from_center(
+  db : GeoDB,
+  c : @types.GeoPoint,
+) -> (Int, Double, Double, Double, Double) {
+  let distances : Array[Double] = []
+  for e in db.all() {
+    distances.push(@geo.haversine(c, e.location))
+  }
+  summarize_distances(distances)
+}
+
+///|
+fn distance_summary_exact(
+  entries : Array[@types.GeoEntry],
+) -> (Int, Double, Double, Double, Double) {
+  let distances : Array[Double] = []
+  let n = entries.length()
+  let mut i = 0
+  while i < n {
+    let mut j = i + 1
+    while j < n {
+      distances.push(
+        @geo.haversine(entries[i].location, entries[j].location),
+      )
+      j = j + 1
+    }
+    i = i + 1
+  }
+  summarize_distances(distances)
+}
+
+///|
+fn distance_summary_sampled(
+  db : GeoDB,
+  entries : Array[@types.GeoEntry],
+) -> (Int, Double, Double, Double, Double) {
+  let n = entries.length()
+  let count = n * (n - 1) / 2
+  if count <= distance_summary_sample_pairs {
+    // The sample budget covers every pair, so exact statistics are cheap.
+    return distance_summary_exact(entries)
+  }
+  let min_d = match db.find_nearest_pairs(1) {
+    [] => 0.0
+    pairs => pairs[0].2
+  }
+  let max_d = match db.compute_max_distance() {
+    None => 0.0
+    Some((_, _, d)) => d
+  }
+  let target = if count < distance_summary_sample_pairs {
+    count
+  } else {
+    distance_summary_sample_pairs
+  }
+  let samples : Array[Double] = []
+  let mut state : UInt64 = n.to_uint64()
+  while samples.length() < target {
+    state = (state * (1103515245 : UInt64) + (12345 : UInt64)) &
+      (0x7fffffff : UInt64)
+    let i = state.to_int() % n
+    state = (state * (1103515245 : UInt64) + (12345 : UInt64)) &
+      (0x7fffffff : UInt64)
+    let j = state.to_int() % n
+    if i != j {
+      samples.push(@geo.haversine(entries[i].location, entries[j].location))
+    }
+  }
+  let (_, _, _, mean, median) = summarize_distances(samples)
+  (count, min_d, max_d, mean, median)
+}
+
+///|
+fn summarize_distances(
+  distances : Array[Double],
+) -> (Int, Double, Double, Double, Double) {
   let count = distances.length()
   if count == 0 {
     return (0, 0.0, 0.0, 0.0, 0.0)
   }
-  // Sort for median.
-  distances.sort_by(fn(a, b) { if a < b { -1 } else if a > b { 1 } else { 0 } })
+  distances.sort_by(fn(a, b) {
+    if a < b {
+      -1
+    } else if a > b {
+      1
+    } else {
+      0
+    }
+  })
   let mut total = 0.0
   let mut min_d = distances[0]
   let mut max_d = distances[0]

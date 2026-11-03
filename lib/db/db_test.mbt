@@ -3167,3 +3167,32 @@ ignore(db.insert_batch(entries))
   ignore(@persist.remove_file(path))
   @persist.clear_wal(path)
 }
+
+///|
+test "GeoDB::distance_summary bounds memory on large sets" {
+  let db = @db.GeoDB::in_memory()
+  let entries : Array[@types.GeoEntry] = []
+  let mut i = 0
+  while i < 2100 {
+    let lat = (i % 100).to_double() * 0.1
+    let lng = ((i / 100) % 21).to_double() * 0.1
+    entries.push(
+      @types.GeoEntry::make(
+        "s" + i.to_string(),
+        "S",
+        @types.Address::empty(),
+        @types.GeoPoint::make(lat, lng),
+      ),
+    )
+    i = i + 1
+  }
+  db.bulk_insert(entries)
+  let (count, min_d, max_d, mean, median) = db.distance_summary()
+  @test.assert_eq(count, 2100 * 2099 / 2)
+  @test.assert_eq(min_d >= 0.0, true)
+  @test.assert_eq(max_d > min_d, true)
+  @test.assert_eq(mean >= min_d, true)
+  @test.assert_eq(mean <= max_d, true)
+  @test.assert_eq(median >= min_d, true)
+  @test.assert_eq(median <= max_d, true)
+}

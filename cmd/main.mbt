@@ -3705,6 +3705,12 @@ fn run_benchmark(n : Int) -> Unit {
   let t_matrix = @bench.monotonic_clock_end(t_matrix0)
   println("  Distance matrix: " + t_matrix.to_string() + " us")
 
+  // All-pairs distance statistics (exact below 2000 entries).
+  let t_ds0 = @bench.monotonic_clock_start()
+  let _ds = db.distance_summary()
+  let t_ds = @bench.monotonic_clock_end(t_ds0)
+  println("  Distance summary: " + t_ds.to_string() + " us")
+
   // Geohash 3x3 neighbourhood resolved through the spatial index.
   if all_entries.length() > 0 {
     let gh = @geo.geohash_encode(
