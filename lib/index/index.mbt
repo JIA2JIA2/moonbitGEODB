@@ -37,6 +37,9 @@ pub(all) struct Index {
   mut cached_knn_weights : Array[Array[Int]]? // cached mutual-kNN adjacency
   mut cached_knn_k : Int // k value for cached_knn_weights
   mut name_keys_cache : Array[String]? // sorted lowercase name keys for prefix queries
+  mut sorted_case_entries : Array[@types.GeoEntry]? // case-sensitive name-sorted entries
+  mut geohash_cache_stale : Bool // true when geohash_cache must be rebuilt
+  geohash_cache : @hashmap.HashMap[String, String] // id -> precision-8 geohash
 } derive(Eq, Debug)
 
 pub extend Index with Eq::{ equal, not_equal }
@@ -71,6 +74,9 @@ pub fn Index::new(cell_size? : Double = default_cell_size) -> Index {
     cached_knn_weights: None,
     cached_knn_k: -1,
     name_keys_cache: None,
+    sorted_case_entries: None,
+    geohash_cache_stale: true,
+    geohash_cache: @hashmap.HashMap([]),
   }
 }
 
@@ -93,11 +99,16 @@ pub fn Index::clear(self : Index) -> Unit {
   self.by_city.clear()
   self.by_district.clear()
   self.rtree.clear()
+  self.geohash_cache.clear()
   self.cached_bbox = None
   self.cached_entries = None
   self.cached_lower_names = None
   self.cached_knn_weights = None
   self.name_keys_cache = None
+  self.sorted_case_entries = None
+  self.geohash_cache_stale = true
+  self.sorted_case_entries = None
+  self.geohash_cache_stale = true
 }
 
 ///|
@@ -194,6 +205,8 @@ pub fn Index::insert(self : Index, entry : @types.GeoEntry) -> Unit {
   self.cached_lower_names = None
   self.cached_knn_weights = None
   self.name_keys_cache = None
+  self.sorted_case_entries = None
+  self.geohash_cache_stale = true
 }
 
 ///|
@@ -293,6 +306,8 @@ pub fn Index::bulk_insert(self : Index, entries : Array[@types.GeoEntry]) -> Uni
   self.cached_lower_names = None
   self.cached_knn_weights = None
   self.name_keys_cache = None
+  self.sorted_case_entries = None
+  self.geohash_cache_stale = true
 }
 
 ///|
@@ -415,6 +430,8 @@ pub fn Index::remove(self : Index, id : String) -> @types.GeoEntry? {
       self.cached_lower_names = None
       self.cached_knn_weights = None
       self.name_keys_cache = None
+      self.sorted_case_entries = None
+  self.geohash_cache_stale = true
       Some(entry)
     }
   }
@@ -589,7 +606,7 @@ fn lower_bound(keys : Array[String], target : String) -> Int {
   let mut hi = keys.length()
   while lo < hi {
     let mid = (lo + hi) / 2
-    if keys[mid].view().lexical_compare(target.view()) < 0 {
+    if keys[mid][:].lexical_compare(target[:]) < 0 {
       lo = mid + 1
     } else {
       hi = mid
@@ -605,7 +622,7 @@ fn Index::get_sorted_name_keys(self : Index) -> Array[String] {
     Some(keys) => keys
     None => {
       let keys = self.by_name.keys().collect()
-      keys.sort_by(fn(a, b) { a.view().lexical_compare(b.view()) })
+      keys.sort_by(fn(a, b) { a[:].lexical_compare(b[:]) })
       self.name_keys_cache = Some(keys)
       keys
     }
@@ -642,6 +659,66 @@ pub fn Index::find_name_prefix(
         }
       None => ()
     }
+    i = i + 1
+  }
+  out
+}
+
+///|
+/// Lower bound (first index whose name is >= target) in name-sorted entries.
+fn lower_bound_entries(
+  entries : Array[@types.GeoEntry],
+  target : String,
+) -> Int {
+  let mut lo = 0
+  let mut hi = entries.length()
+  while lo < hi {
+    let mid = (lo + hi) / 2
+    if entries[mid].name[:].lexical_compare(target[:]) < 0 {
+      lo = mid + 1
+    } else {
+      hi = mid
+    }
+  }
+  lo
+}
+
+///|
+/// Return entries sorted by their original-case name, rebuilding on demand.
+fn Index::get_sorted_case_entries(self : Index) -> Array[@types.GeoEntry] {
+  match self.sorted_case_entries {
+    Some(arr) => arr
+    None => {
+      let base = self.to_array()
+      let arr : Array[@types.GeoEntry] = []
+      for e in base {
+        arr.push(e)
+      }
+      arr.sort_by(fn(a, b) { a.name[:].lexical_compare(b.name[:]) })
+      self.sorted_case_entries = Some(arr)
+      arr
+    }
+  }
+}
+
+///|
+/// Case-sensitive prefix lookup using a name-sorted cache and binary search.
+pub fn Index::find_name_prefix_case(
+  self : Index,
+  prefix : String,
+) -> Array[@types.GeoEntry] {
+  if prefix.length() == 0 {
+    return self.to_array()
+  }
+  let entries = self.get_sorted_case_entries()
+  let mut i = lower_bound_entries(entries, prefix)
+  let out : Array[@types.GeoEntry] = []
+  while i < entries.length() {
+    let name = entries[i].name
+    if !name.has_prefix(prefix) {
+      break
+    }
+    out.push(entries[i])
     i = i + 1
   }
   out
@@ -820,10 +897,14 @@ pub fn Index::find_by_all_tags(
 ///|
 /// in `entry_tags` (compared case-insensitively).
 fn check_all_tags(entry_tags : Array[String], tags : Array[String]) -> Bool {
+  let lower : Array[String] = []
+  for et in entry_tags {
+    lower.push(et.to_lower())
+  }
   for t in tags {
     let mut found = false
-    for et in entry_tags {
-      if et.to_lower() == t {
+    for et in lower {
+      if et == t {
         found = true
         break
       }
@@ -840,24 +921,27 @@ fn check_all_tags(entry_tags : Array[String], tags : Array[String]) -> Bool {
 ///|
 /// size (so that the most selective tag is checked first).
 fn sort_tag_list(tags : Array[String], idx : Index) -> Array[String] {
-  let out = tags
-  out.sort_by(fn(a, b) {
-    let la = match idx.by_tag.get(a) {
+  let sized : Array[(String, Int)] = []
+  for t in tags {
+    let n = match idx.by_tag.get(t) {
       Some(arr) => arr.length()
       None => 0
     }
-    let lb = match idx.by_tag.get(b) {
-      Some(arr) => arr.length()
-      None => 0
-    }
-    if la < lb {
+    sized.push((t, n))
+  }
+  sized.sort_by(fn(a, b) {
+    if a.1 < b.1 {
       -1
-    } else if la > lb {
+    } else if a.1 > b.1 {
       1
     } else {
       0
     }
   })
+  let out : Array[String] = []
+  for p in sized {
+    out.push(p.0)
+  }
   out
 }
 

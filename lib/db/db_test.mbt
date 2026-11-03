@@ -2748,6 +2748,42 @@ test "GeoDB::nearest_neighbors_range returns distance range" {
 }
 
 ///|
+test "GeoDB::find_name_prefix_case refreshes after write" {
+  let db = @db.GeoDB::in_memory()
+  db.insert(make_entry("p01", "Apple", 0.0, 0.0))
+  db.insert(make_entry("p02", "Application", 1.0, 1.0))
+  @test.assert_eq(db.find_name_prefix_case("App").length(), 2)
+  db.insert(make_entry("p03", "Apricot", 2.0, 2.0))
+  @test.assert_eq(db.find_name_prefix_case("Ap").length(), 3)
+  ignore(db.remove("p01"))
+  @test.assert_eq(db.find_name_prefix_case("App").length(), 1)
+  @test.assert_eq(db.find_name_prefix_case("app").length(), 0)
+}
+
+///|
+test "GeoDB::to_geojson_with_bbox refreshes geohash cache" {
+  let db = @db.GeoDB::in_memory()
+  db.insert(make_entry("p01", "A", 39.9, 116.4))
+  let g1 = db.to_geojson_with_bbox()
+  @test.assert_eq(g1.contains("\"bbox\":["), true)
+  db.insert(make_entry("p02", "B", 31.2, 121.5))
+  let g2 = db.to_geojson_with_bbox()
+  @test.assert_eq(g2.contains("totalFeatures\":2"), true)
+  ignore(db.remove("p01"))
+  let g3 = db.to_geojson_with_bbox()
+  @test.assert_eq(g3.contains("totalFeatures\":1"), true)
+}
+
+///|
+test "GeoDB::match_addresses caches repeated names" {
+  let db = @db.GeoDB::in_memory()
+  db.insert(make_entry("a1", "北京市海淀区颐和园路", 39.9, 116.4))
+  db.insert(make_entry("a2", "北京市海淀区颐和园路", 39.8, 116.3))
+  let r = db.match_addresses("北京市海淀区颐和园路", limit=10)
+  @test.assert_eq(r.length(), 2)
+}
+
+///|
 test "GeoDB::nearest_neighbors_range on missing id returns None" {
   let db = @db.GeoDB::in_memory()
   db.insert(make_entry("nn01", "A", 0.0, 0.0))

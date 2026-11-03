@@ -130,29 +130,10 @@ pub fn bbox_intersect(a : @types.BBox, b : @types.BBox) -> @types.BBox? {
 // ---- Geohash encoding / decoding ----
 
 ///|
-/// Geohash base32 characters.
-let geohash_chars : String = "0123456789bcdefghjkmnpqrstuvwxyz"
-
-///|
 let geohash_char_array : Array[String] = [
   "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "b", "c", "d", "e", "f", "g",
   "h", "j", "k", "m", "n", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
 ]
-
-///|
-fn byte_to_string(b : Char) -> String {
-  // Convert a Char to its 1-character string by looking up in the geohash array.
-  let code = b.to_int()
-  let chars = geohash_chars
-  let mut i = 0
-  while i < chars.length() {
-    if chars[i].to_int() == code {
-      return geohash_char_array[i]
-    }
-    i = i + 1
-  }
-  ""
-}
 
 ///|
 /// Encode a (lat, lng) pair into a Geohash string of given precision.
@@ -220,8 +201,8 @@ pub fn geohash_decode(hash : String) -> @types.GeoPoint {
   let mut is_even = true
   let mut i = 0
   while i < hash.length() {
-    let ch = byte_to_string(hash.get_char(i).unwrap())
-    let cd = geohash_decode_char(ch)
+    let ch = hash.get_char(i).unwrap()
+    let cd = geohash_decode_char_code(ch)
     let mut mask = 16
     while mask >= 1 {
       if is_even {
@@ -250,13 +231,28 @@ pub fn geohash_decode(hash : String) -> @types.GeoPoint {
 }
 
 ///|
-fn geohash_decode_char(ch : String) -> Int {
-  let mut i = 0
-  while i < geohash_char_array.length() {
-    if geohash_char_array[i] == ch {
-      return i
-    }
-    i = i + 1
+fn geohash_decode_char_code(c : Char) -> Int {
+  let code = c.to_int()
+  if code >= 48 && code <= 57 {
+    return code - 48
+  }
+  if code >= 98 && code <= 104 {
+    return 10 + code - 98
+  }
+  if code == 106 {
+    return 17
+  }
+  if code == 107 {
+    return 18
+  }
+  if code == 109 {
+    return 19
+  }
+  if code == 110 {
+    return 20
+  }
+  if code >= 112 && code <= 122 {
+    return 21 + code - 112
   }
   0
 }

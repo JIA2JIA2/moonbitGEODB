@@ -350,13 +350,9 @@ fn GeoDB::log_delete(self : GeoDB, id : String) -> Unit {
 }
 
 ///|
-fn GeoDB::after_wal_append(self : GeoDB, p : String) -> Unit {
+fn GeoDB::after_wal_append(self : GeoDB, _p : String) -> Unit {
   let n = self.wal_ops.val + 1
   self.wal_ops.val = n
-  let mtime = @persist.file_mtime(@persist.wal_path(p))
-  if mtime > 0 {
-    self.updated_at = mtime
-  }
   if n >= wal_compact_threshold {
     ignore(self.save())
   }
@@ -1057,8 +1053,16 @@ pub fn GeoDB::match_addresses(
 ) -> Array[(@types.GeoEntry, @parser.MatchResult)] {
   let prepared = @parser.prepare_query(query)
   let results : Array[(@types.GeoEntry, @parser.MatchResult)] = []
+  let cache : @hashmap.HashMap[String, @parser.MatchResult] = @hashmap.HashMap([])
   for e in self.all() {
-    let (r, _) = @parser.match_address_prepared(prepared, e.name)
+    let r = match cache.get(e.name) {
+      Some(r) => r
+      None => {
+        let (r, _) = @parser.match_address_prepared(prepared, e.name)
+        cache[e.name] = r
+        r
+      }
+    }
     match r.level {
       None => ()
       _ => results.push((e, r))
@@ -1431,13 +1435,7 @@ pub fn GeoDB::find_name_prefix_case(
   self : GeoDB,
   prefix : String,
 ) -> Array[@types.GeoEntry] {
-  let results : Array[@types.GeoEntry] = []
-  for e in self.all() {
-    if e.name.has_prefix(prefix) {
-      results.push(e)
-    }
-  }
-  results
+  self.index.find_name_prefix_case(prefix)
 }
 
 ///|
@@ -2835,6 +2833,10 @@ pub fn GeoDB::radial_density(
 /// Export all entries as a GeoJSON FeatureCollection with bbox.
 pub fn GeoDB::to_geojson_with_bbox(self : GeoDB) -> String {
   let entries = self.all()
+  if self.index.geohash_cache_stale {
+    self.index.geohash_cache.clear()
+    self.index.geohash_cache_stale = false
+  }
   let sb = StringBuilder(size_hint=entries.length() * 300 + 96)
   sb.write_string(
     "{\"type\":\"FeatureCollection\",\"totalFeatures\":" +
@@ -2846,7 +2848,14 @@ pub fn GeoDB::to_geojson_with_bbox(self : GeoDB) -> String {
     if i > 0 {
       sb.write_char(',')
     }
-    let gh = @geo.geohash_encode(e.location.lat, e.location.lng, 8)
+    let gh = match self.index.geohash_cache.get(e.id) {
+      Some(g) => g
+      None => {
+        let g = @geo.geohash_encode(e.location.lat, e.location.lng, 8)
+        self.index.geohash_cache[e.id] = g
+        g
+      }
+    }
     let bbox = @geo.geohash_to_bbox(gh)
     sb.write_string(
       "{\"type\":\"Feature\",\"geometry\":{\"type\":\"Point\",\"coordinates\":[",

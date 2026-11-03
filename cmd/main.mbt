@@ -3655,6 +3655,12 @@ fn run_benchmark(n : Int) -> Unit {
   let t_prefix = @bench.monotonic_clock_end(t_prefix0)
   println("  Name prefix:     " + t_prefix.to_string() + " us")
 
+  // Case-sensitive name prefix query (name-sorted cache + binary search).
+  let t_pc0 = @bench.monotonic_clock_start()
+  let _pc = db.find_name_prefix_case("北")
+  let t_pc = @bench.monotonic_clock_end(t_pc0)
+  println("  Name prefix case:" + t_pc.to_string() + " us")
+
   // Name substring query (single char falls back to a full scan).
   let t_contains0 = @bench.monotonic_clock_start()
   let _contains = db.find_name_contains("路")
