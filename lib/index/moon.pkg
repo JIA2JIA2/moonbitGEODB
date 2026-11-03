@@ -1,7 +1,6 @@
 import {
   "moonbitlang/core/builtin",
   "moonbitlang/core/hashmap",
-  "moonbitlang/core/math",
   "moonbitlang/core/priority_queue",
   "JIA2JIA2/moonbitgeodb/lib/types",
   "JIA2JIA2/moonbitgeodb/lib/geo",

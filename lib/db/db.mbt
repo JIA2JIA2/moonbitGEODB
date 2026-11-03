@@ -246,15 +246,17 @@ pub fn GeoDB::find_nearby(
   radius_km~ : Double,
   limit? : Int = 10,
 ) -> Array[(@types.GeoEntry, Double)] {
-  let pairs = self.index.find_within_distance(point, radius_km)
+  if limit <= 0 {
+    return []
+  }
+  // The nearest `limit` entries are sufficient: any entry outside that set is
+  // farther than all of them, so it cannot enter the top-limit result.
+  let raw = self.index.query_nearest(point, limit)
   let out : Array[(@types.GeoEntry, Double)] = []
-  let mut i = 0
-  for p in pairs {
-    if i >= limit {
-      break
+  for p in raw {
+    if p.1 <= radius_km {
+      out.push(p)
     }
-    out.push(p)
-    i = i + 1
   }
   out
 }
@@ -503,29 +505,10 @@ pub fn GeoDB::compute_center(self : GeoDB) -> (@types.GeoPoint, Int)? {
 /// Compute the total bounding box of all entries.
 /// Returns (bbox, entry_count) or None if DB is empty.
 pub fn GeoDB::compute_bbox(self : GeoDB) -> (@types.BBox, Int)? {
-  let entries = self.all()
-  if entries.length() == 0 {
-    return None
+  match self.index.compute_bbox() {
+    None => None
+    Some(bbox) => Some((bbox, self.index.size()))
   }
-  let mut min_lat = 90.0
-  let mut max_lat = -90.0
-  let mut min_lng = 180.0
-  let mut max_lng = -180.0
-  for e in entries {
-    if e.location.lat < min_lat {
-      min_lat = e.location.lat
-    }
-    if e.location.lat > max_lat {
-      max_lat = e.location.lat
-    }
-    if e.location.lng < min_lng {
-      min_lng = e.location.lng
-    }
-    if e.location.lng > max_lng {
-      max_lng = e.location.lng
-    }
-  }
-  Some(({ min_lat, max_lat, min_lng, max_lng, }, entries.length()))
 }
 
 ///|
@@ -853,8 +836,11 @@ pub fn GeoDB::remove_tag(self : GeoDB, id : String, tag : String) -> Bool {
 /// Compute the Levenshtein (edit) distance between two strings.
 /// A smaller value means the strings are more similar.
 pub fn levenshtein_distance(a : String, b : String) -> Int {
-  let ca = chars_of(a)
-  let cb = chars_of(b)
+  levenshtein_distance_chars(chars_of(a), chars_of(b))
+}
+
+///|
+fn levenshtein_distance_chars(ca : Array[Int], cb : Array[Int]) -> Int {
   let na = ca.length()
   let nb = cb.length()
   if na == 0 {
@@ -922,9 +908,22 @@ pub fn GeoDB::find_name_fuzzy(
   max_distance? : Int = 2,
 ) -> Array[(@types.GeoEntry, Int)] {
   let q = query.to_lower()
+  let q_chars = chars_of(q)
+  let q_len = q_chars.length()
   let results : Array[(@types.GeoEntry, Int)] = []
   for e in self.all() {
-    let dist = levenshtein_distance(e.name.to_lower(), q)
+    let name = e.name.to_lower()
+    let name_chars = chars_of(name)
+    let name_len = name_chars.length()
+    let diff = if name_len > q_len {
+      name_len - q_len
+    } else {
+      q_len - name_len
+    }
+    if diff > max_distance {
+      continue
+    }
+    let dist = levenshtein_distance_chars(name_chars, q_chars)
     if dist <= max_distance {
       results.push((e, dist))
     }
@@ -998,40 +997,64 @@ pub fn GeoDB::match_addresses(
 /// Columns: id, name, lat, lng, country, province, city, district,
 /// street, detail, postal_code, tags (semicolon-separated).
 pub fn GeoDB::to_csv(self : GeoDB) -> String {
-  let lines : Array[String] = []
-  lines.push(
+  let entries = self.all()
+  let sb = StringBuilder(size_hint=entries.length() * 96 + 80)
+  sb.write_string(
     "id,name,lat,lng,country,province,city,district,street,detail,postal_code,tags",
   )
-  for e in self.all() {
-    let tag_str = e.tags.join(";")
-    let row = [
-      escape_csv(e.id),
-      escape_csv(e.name),
-      e.location.lat.to_string(),
-      e.location.lng.to_string(),
-      escape_csv(e.address.country),
-      escape_csv(e.address.province),
-      escape_csv(e.address.city),
-      escape_csv(e.address.district),
-      escape_csv(e.address.street),
-      escape_csv(e.address.detail),
-      escape_csv(e.address.postal_code),
-      escape_csv(tag_str),
-    ].join(",")
-    lines.push(row)
+  for e in entries {
+    sb.write_char('\n')
+    sb.write_string(escape_csv(e.id))
+    sb.write_char(',')
+    sb.write_string(escape_csv(e.name))
+    sb.write_char(',')
+    sb.write_string(e.location.lat.to_string())
+    sb.write_char(',')
+    sb.write_string(e.location.lng.to_string())
+    sb.write_char(',')
+    sb.write_string(escape_csv(e.address.country))
+    sb.write_char(',')
+    sb.write_string(escape_csv(e.address.province))
+    sb.write_char(',')
+    sb.write_string(escape_csv(e.address.city))
+    sb.write_char(',')
+    sb.write_string(escape_csv(e.address.district))
+    sb.write_char(',')
+    sb.write_string(escape_csv(e.address.street))
+    sb.write_char(',')
+    sb.write_string(escape_csv(e.address.detail))
+    sb.write_char(',')
+    sb.write_string(escape_csv(e.address.postal_code))
+    sb.write_char(',')
+    sb.write_string(escape_csv(e.tags.join(";")))
   }
-  lines.join("\n")
+  sb.to_string()
 }
 
 ///|
 /// Escape a value for CSV: wrap in quotes if it contains comma, quote, or newline.
 fn escape_csv(s : String) -> String {
-  let needs_quote = s.contains(",") || s.contains("\"") || s.contains("\n")
+  let mut needs_quote = false
+  for c in s {
+    if c == ',' || c == '"' || c == '\n' {
+      needs_quote = true
+      break
+    }
+  }
   if !needs_quote {
     return s
   }
-  let escaped = s.replace(old="\"", new="\"\"")
-  "\"\{escaped}\""
+  let sb = StringBuilder(size_hint=s.length() + 2)
+  sb.write_char('"')
+  for c in s {
+    if c == '"' {
+      sb.write_string("\"\"")
+    } else {
+      sb.write_char(c)
+    }
+  }
+  sb.write_char('"')
+  sb.to_string()
 }
 
 // ---- Batch operations ----
@@ -1092,13 +1115,57 @@ pub fn GeoDB::to_json(self : GeoDB) -> String {
   let entries = self.all()
   let parts : Array[String] = []
   for e in entries {
-    parts.push(e.to_json().stringify())
+    parts.push(entry_to_json_string(e))
   }
   if parts.length() == 0 {
     "[]"
   } else {
     "[" + parts.join(",") + "]"
   }
+}
+
+///|
+/// Serialize one entry directly, avoiding an intermediate Json tree.
+fn entry_to_json_string(e : @types.GeoEntry) -> String {
+  let a = e.address
+  let p = e.location
+  "{" +
+  "\"id\":\"" +
+  escape_json_string(e.id) +
+  "\"," +
+  "\"name\":\"" +
+  escape_json_string(e.name) +
+  "\"," +
+  "\"address\":{" +
+  "\"country\":\"" +
+  escape_json_string(a.country) +
+  "\"," +
+  "\"province\":\"" +
+  escape_json_string(a.province) +
+  "\"," +
+  "\"city\":\"" +
+  escape_json_string(a.city) +
+  "\"," +
+  "\"district\":\"" +
+  escape_json_string(a.district) +
+  "\"," +
+  "\"street\":\"" +
+  escape_json_string(a.street) +
+  "\"," +
+  "\"postal_code\":\"" +
+  escape_json_string(a.postal_code) +
+  "\"," +
+  "\"detail\":\"" +
+  escape_json_string(a.detail) +
+  "\"}," +
+  "\"location\":{\"lat\":" +
+  p.lat.to_string() +
+  ",\"lng\":" +
+  p.lng.to_string() +
+  "}," +
+  "\"tags\":" +
+  string_array_to_json(e.tags) +
+  "}"
 }
 
 ///|
@@ -1188,12 +1255,28 @@ pub fn GeoDB::to_geojson(self : GeoDB) -> String {
 
 ///|
 fn escape_json_string(s : String) -> String {
-  s
-  .replace(old="\\", new="\\\\")
-  .replace(old="\"", new="\\\"")
-  .replace(old="\n", new="\\n")
-  .replace(old="\r", new="\\r")
-  .replace(old="\t", new="\\t")
+  let mut needs_escape = false
+  for c in s {
+    if c == '\\' || c == '"' || c == '\n' || c == '\r' || c == '\t' {
+      needs_escape = true
+      break
+    }
+  }
+  if !needs_escape {
+    return s
+  }
+  let sb = StringBuilder(size_hint=s.length())
+  for c in s {
+    match c {
+      '\\' => sb.write_string("\\\\")
+      '"' => sb.write_string("\\\"")
+      '\n' => sb.write_string("\\n")
+      '\r' => sb.write_string("\\r")
+      '\t' => sb.write_string("\\t")
+      _ => sb.write_char(c)
+    }
+  }
+  sb.to_string()
 }
 
 ///|

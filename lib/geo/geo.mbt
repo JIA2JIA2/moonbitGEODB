@@ -38,8 +38,34 @@ pub fn haversine(p1 : @types.GeoPoint, p2 : @types.GeoPoint) -> Double {
   let dlng = to_rad(p2.lng - p1.lng)
   let a = sq(@math.sin(dlat / 2.0)) +
     @math.cos(lat1) * @math.cos(lat2) * sq(@math.sin(dlng / 2.0))
-  let c = 2.0 * @math.atan2(sqrt(a), sqrt(1.0 - a))
-  earth_radius_km * c
+  let clamped = if a > 1.0 {
+    1.0
+  } else if a < 0.0 {
+    0.0
+  } else {
+    a
+  }
+  earth_radius_km * 2.0 * @math.asin(sqrt(clamped))
+}
+
+///|
+/// Straight-line chord distance (km) between two points (`2R·sin(θ/2)`),
+/// computed directly from the Haversine intermediate value.
+pub fn chord_distance(p1 : @types.GeoPoint, p2 : @types.GeoPoint) -> Double {
+  let lat1 = to_rad(p1.lat)
+  let lat2 = to_rad(p2.lat)
+  let dlat = to_rad(p2.lat - p1.lat)
+  let dlng = to_rad(p2.lng - p1.lng)
+  let a = sq(@math.sin(dlat / 2.0)) +
+    @math.cos(lat1) * @math.cos(lat2) * sq(@math.sin(dlng / 2.0))
+  let clamped = if a > 1.0 {
+    1.0
+  } else if a < 0.0 {
+    0.0
+  } else {
+    a
+  }
+  2.0 * earth_radius_km * sqrt(clamped)
 }
 
 ///|

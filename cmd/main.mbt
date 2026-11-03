@@ -3538,6 +3538,16 @@ fn run_benchmark(n : Int) -> Unit {
   let t_within = @bench.monotonic_clock_end(t3)
   println("  Within 100km:   " + t_within.to_string() + " us")
 
+  // Top-limit nearby query (R-tree kNN + radius filter).
+  let t_nb0 = @bench.monotonic_clock_start()
+  let _nearby = db.find_nearby(
+    @types.GeoPoint::make(39.9, 116.4),
+    radius_km=100.0,
+    limit=10,
+  )
+  let t_nb = @bench.monotonic_clock_end(t_nb0)
+  println("  Nearby top10:    " + t_nb.to_string() + " us")
+
   // K-Means (k=3)
   let t4 = @bench.monotonic_clock_start()
   let _km = db.kmeans(3)
@@ -3621,6 +3631,12 @@ fn run_benchmark(n : Int) -> Unit {
   let t_contains = @bench.monotonic_clock_end(t_contains0)
   println("  Name contains:   " + t_contains.to_string() + " us")
 
+  // Fuzzy name search (length-pruned Levenshtein).
+  let t_fuzzy0 = @bench.monotonic_clock_start()
+  let _fuzzy = db.find_name_fuzzy("北京", max_distance=2)
+  let t_fuzzy = @bench.monotonic_clock_end(t_fuzzy0)
+  println("  Name fuzzy:      " + t_fuzzy.to_string() + " us")
+
   // Global nearest pairs (top-k via R-tree).
   let t_pairs0 = @bench.monotonic_clock_start()
   let _pairs = db.find_nearest_pairs(10)
@@ -3665,11 +3681,27 @@ fn run_benchmark(n : Int) -> Unit {
   let t_max = @bench.monotonic_clock_end(t_max0)
   println("  Max distance:    " + t_max.to_string() + " us")
 
+  // Combined bbox (cached in the index).
+  let t_cb0 = @bench.monotonic_clock_start()
+  let _cb = db.compute_bbox()
+  let t_cb = @bench.monotonic_clock_end(t_cb0)
+  println("  Compute bbox:    " + t_cb.to_string() + " us")
+
   // Semantic address matching (prepared query reused for all candidates).
   let t_match0 = @bench.monotonic_clock_start()
   let _matched = db.match_addresses("北京市海淀区颐和园路", limit=10)
   let t_match = @bench.monotonic_clock_end(t_match0)
   println("  Address match:   " + t_match.to_string() + " us")
+
+  // CSV / JSON export (single-pass escaping).
+  let t_csv0 = @bench.monotonic_clock_start()
+  let _csv = db.to_csv()
+  let t_csv = @bench.monotonic_clock_end(t_csv0)
+  println("  Export CSV:      " + t_csv.to_string() + " us")
+  let t_json0 = @bench.monotonic_clock_start()
+  let _json = db.to_json()
+  let t_json = @bench.monotonic_clock_end(t_json0)
+  println("  Export JSON:     " + t_json.to_string() + " us")
 
   println("  ---")
   let us_per_entry = t_build / n.to_double()

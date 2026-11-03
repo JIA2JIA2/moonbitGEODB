@@ -3003,3 +3003,26 @@ test "GeoDB::find_nearest_pairs enumerates every pair exactly once" {
     i = i + 1
   }
 }
+
+///|
+test "GeoDB::to_json escapes special characters and round-trips" {
+  let db = @db.GeoDB::in_memory()
+  let name = "A\"B\\C\nD\tE\rF"
+  db.insert(make_entry_with_addr("x1", name, 1.0, 2.0, "", "", "", []))
+  let json = db.to_json()
+  @test.assert_eq(json.contains("\\\""), true)
+  let db2 = @db.GeoDB::in_memory()
+  @test.assert_eq(db2.import_json(json), 1)
+  match db2.get("x1") {
+    None => @test.assert_eq(true, false)
+    Some(e) => @test.assert_eq(e.name, name)
+  }
+}
+
+///|
+test "GeoDB::to_csv quotes fields with comma/quote/newline" {
+  let db = @db.GeoDB::in_memory()
+  db.insert(make_entry_with_addr("x1", "A,B\"C\nD", 1.0, 2.0, "", "", "", []))
+  let csv = db.to_csv()
+  @test.assert_eq(csv.contains("\"A,B\"\"C\nD\""), true)
+}

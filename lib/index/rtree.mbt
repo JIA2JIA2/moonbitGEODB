@@ -572,6 +572,10 @@ fn RTree::search_node(
 fn bbox_chord_distance(p : @types.GeoPoint, b : @types.BBox) -> Double {
   let lat = clamp(p.lat, b.min_lat, b.max_lat)
   let lng = clamp(p.lng, b.min_lng, b.max_lng)
+  // Query inside the bbox: the lower bound is exactly zero.
+  if lat == p.lat && lng == p.lng {
+    return 0.0
+  }
   chord_distance(p, @types.GeoPoint::make(lat, lng))
 }
 
@@ -579,9 +583,7 @@ fn bbox_chord_distance(p : @types.GeoPoint, b : @types.BBox) -> Double {
 /// Straight-line chord distance (km) between two points, via the Haversine
 /// angular distance: `2R * sin(theta / 2)`.
 fn chord_distance(p1 : @types.GeoPoint, p2 : @types.GeoPoint) -> Double {
-  let d = @geo.haversine(p1, p2)
-  let half = d / (2.0 * @geo.earth_radius_km)
-  2.0 * @geo.earth_radius_km * @math.sin(half)
+  @geo.chord_distance(p1, p2)
 }
 
 ///|
