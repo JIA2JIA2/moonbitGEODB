@@ -3412,3 +3412,49 @@ test "persist::load_snapshot rejects missing file" {
     Ok(_) => @test.assert_eq(true, false)
   }
 }
+
+///|
+test "GeoDB::find_nearest_pairs matches brute force top-k" {
+  let db = @db.GeoDB::in_memory()
+  let entries : Array[@types.GeoEntry] = []
+  let mut i = 0
+  while i < 30 {
+    entries.push(
+      make_entry(
+        "p" + i.to_string(),
+        "P",
+        (i % 6).to_double() * 0.5,
+        (i / 6).to_double() * 0.5,
+      ),
+    )
+    i = i + 1
+  }
+  db.bulk_insert(entries)
+  let got = db.find_nearest_pairs(5)
+  @test.assert_eq(got.length(), 5)
+  let all = db.all()
+  let distances : Array[Double] = []
+  let mut a = 0
+  while a < all.length() {
+    let mut b = a + 1
+    while b < all.length() {
+      distances.push(@geo.haversine(all[a].location, all[b].location))
+      b = b + 1
+    }
+    a = a + 1
+  }
+  distances.sort_by(fn(x, y) {
+    if x < y {
+      -1
+    } else if x > y {
+      1
+    } else {
+      0
+    }
+  })
+  let mut m = 0
+  while m < 5 {
+    @test.assert_eq(got[m].2, distances[m])
+    m = m + 1
+  }
+}

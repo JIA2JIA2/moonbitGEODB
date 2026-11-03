@@ -1739,6 +1739,48 @@ pub fn GeoDB::find_in_bbox_strict(
 /// Each pair is returned as (entry_a, entry_b, distance_km).
 /// Pairs are sorted by ascending distance; the same pair is reported
 /// only once (canonical order by id).
+///|
+/// Insert a pair into a distance-sorted top-k buffer, returning the current
+/// k-th distance (or +inf while the buffer is not full).
+fn insert_pair_top_k(
+  best : Array[(@types.GeoEntry, @types.GeoEntry, Double)],
+  a : @types.GeoEntry,
+  b : @types.GeoEntry,
+  d : Double,
+  k : Int,
+) -> Double {
+  let inf = 1.7976931348623157e+308
+  if best.length() < k {
+    best.push((a, b, d))
+    if best.length() == k {
+      best.sort_by(fn(x, y) {
+        if x.2 < y.2 {
+          -1
+        } else if x.2 > y.2 {
+          1
+        } else {
+          0
+        }
+      })
+      return best[k - 1].2
+    }
+    return inf
+  }
+  if d < best[k - 1].2 {
+    best[k - 1] = (a, b, d)
+    let mut j = k - 1
+    while j > 0 && best[j - 1].2 > best[j].2 {
+      let tmp = best[j - 1]
+      best[j - 1] = best[j]
+      best[j] = tmp
+      j = j - 1
+    }
+    return best[k - 1].2
+  }
+  best[k - 1].2
+}
+
+///|
 pub fn GeoDB::find_nearest_pairs(
   self : GeoDB,
   k : Int,
@@ -1747,9 +1789,24 @@ pub fn GeoDB::find_nearest_pairs(
     return []
   }
   let entries = self.all()
-  let pairs : Array[(@types.GeoEntry, @types.GeoEntry, Double)] = []
+  let best : Array[(@types.GeoEntry, @types.GeoEntry, Double)] = []
   let seen : @hashmap.HashMap[String, Bool] = @hashmap.HashMap([])
+  let inf = 1.7976931348623157e+308
+  let mut cutoff = inf
   for a in entries {
+    // Cheap probe: when even the nearest neighbour is farther than the current
+    // k-th pair distance, this point cannot contribute to the global top-k.
+    let probe = self.index.query_nearest(a.location, 2)
+    let mut nearest_d = inf
+    for p in probe {
+      if p.0.id != a.id {
+        nearest_d = p.1
+        break
+      }
+    }
+    if nearest_d > cutoff {
+      continue
+    }
     let neighbors = self.index.query_nearest(a.location, k + 1)
     for pair in neighbors {
       let b = pair.0
@@ -1763,11 +1820,12 @@ pub fn GeoDB::find_nearest_pairs(
       }
       if !seen.contains(key) {
         seen[key] = true
-        pairs.push((a, b, pair.1))
+        cutoff = insert_pair_top_k(best, a, b, pair.1, k)
       }
     }
   }
-  pairs.sort_by(fn(x, y) {
+  // If fewer than k pairs exist, the buffer may not be sorted yet.
+  best.sort_by(fn(x, y) {
     if x.2 < y.2 {
       -1
     } else if x.2 > y.2 {
@@ -1776,16 +1834,7 @@ pub fn GeoDB::find_nearest_pairs(
       0
     }
   })
-  let out : Array[(@types.GeoEntry, @types.GeoEntry, Double)] = []
-  let mut m = 0
-  for p in pairs {
-    if m >= k {
-      break
-    }
-    out.push(p)
-    m = m + 1
-  }
-  out
+  best
 }
 
 ///|
