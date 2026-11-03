@@ -99,6 +99,17 @@ pub fn RTree::insert(
 }
 
 ///|
+/// Insert an id that is known not to be present, skipping the duplicate check.
+pub fn RTree::insert_new(
+  self : RTree,
+  id : String,
+  point : @types.GeoPoint,
+) -> Unit {
+  self.points[id] = point
+  self.insert_entry(id, point)
+}
+
+///|
 /// Sort-tile-recursive bulk load for an empty tree. Existing points fall back
 /// to per-entry insertion. The resulting nodes use the same layout (leaf
 /// entries, child ids, parent links, bbox) as incremental insertion, so

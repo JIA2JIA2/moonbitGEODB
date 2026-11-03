@@ -579,18 +579,7 @@ pub fn GeoDB::list_districts(self : GeoDB) -> Array[String] {
 /// Compute the geographic center (average lat/lng) of all entries.
 /// Returns (center_point, entry_count) or None if DB is empty.
 pub fn GeoDB::compute_center(self : GeoDB) -> (@types.GeoPoint, Int)? {
-  let entries = self.all()
-  if entries.length() == 0 {
-    return None
-  }
-  let mut sum_lat = 0.0
-  let mut sum_lng = 0.0
-  for e in entries {
-    sum_lat = sum_lat + e.location.lat
-    sum_lng = sum_lng + e.location.lng
-  }
-  let n = entries.length().to_double()
-  Some((@types.GeoPoint::make(sum_lat / n, sum_lng / n), entries.length()))
+  self.index.compute_center()
 }
 
 ///|
@@ -777,19 +766,17 @@ pub fn GeoDB::summary(self : GeoDB) -> String {
     Some((_, _, d)) => lines.push("Max distance: " + d.to_string() + " km")
   }
 
-  let provinces = self.list_provinces()
-  if provinces.length() > 0 {
-    lines.push("Provinces (" + provinces.length().to_string() + "):")
-    let prov_dist = self.province_distribution()
+  let prov_dist = self.province_distribution()
+  if prov_dist.length() > 0 {
+    lines.push("Provinces (" + prov_dist.length().to_string() + "):")
     for pair in prov_dist {
       lines.push("  " + pair.0 + ": " + pair.1.to_string() + " entries")
     }
   }
 
-  let tags = self.list_tags()
-  if tags.length() > 0 {
-    lines.push("Tags (" + tags.length().to_string() + "):")
-    let tag_dist = self.tag_distribution()
+  let tag_dist = self.tag_distribution()
+  if tag_dist.length() > 0 {
+    lines.push("Tags (" + tag_dist.length().to_string() + "):")
     for pair in tag_dist {
       lines.push("  " + pair.0 + ": " + pair.1.to_string() + " entries")
     }
@@ -3730,10 +3717,21 @@ pub fn GeoDB::kmeans_elbow(self : GeoDB, max_k : Int) -> Array[(Int, Double)] {
   let mut k = 1
   let n = entries.length()
   let limit = if max_k > n { n } else { max_k }
+  let mut prev_centers : Array[@types.GeoPoint] = []
   while k <= limit {
-    let clusters = @geo.kmeans(pts, k)
+    let init = if k > 1 && prev_centers.length() > 0 {
+      Some(prev_centers)
+    } else {
+      None
+    }
+    let clusters = @geo.kmeans(pts, k, init~)
     let inertia = @geo.kmeans_inertia(pts, clusters)
     results.push((k, inertia))
+    let centers : Array[@types.GeoPoint] = []
+    for c in clusters {
+      centers.push(c.center)
+    }
+    prev_centers = centers
     k = k + 1
   }
   results

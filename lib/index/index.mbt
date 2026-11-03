@@ -18,13 +18,13 @@
 pub let coarse_cell_size : Double = 0.5
 
 pub(all) struct Index {
-  entries : @hashmap.HashMap[String, @types.GeoEntry]
+  mut entries : @hashmap.HashMap[String, @types.GeoEntry]
   grid : @hashmap.HashMap[Int, Array[String]] // fine grid, cell_size=0.1°
   lng_cells : Int // 360 / cell_size
   coarse_grid : @hashmap.HashMap[Int, Array[String]] // coarse grid, cell_size=0.5°
   coarse_lng_cells : Int // 360 / coarse_cell_size
-  by_name : @hashmap.HashMap[String, Array[String]]
-  by_ngram : @hashmap.HashMap[String, Array[String]] // 3-gram substring index
+  mut by_name : @hashmap.HashMap[String, Array[String]]
+  mut by_ngram : @hashmap.HashMap[String, Array[String]] // 3-gram substring index
   by_tag : @hashmap.HashMap[String, Array[String]]
   by_province : @hashmap.HashMap[String, Array[String]]
   by_city : @hashmap.HashMap[String, Array[String]]
@@ -32,6 +32,7 @@ pub(all) struct Index {
   cell_size : Double // degrees (fine grid size)
   rtree : RTree // R-tree for sub-linear KNN / range queries
   mut cached_bbox : @types.BBox? // cached combined bbox
+  mut cached_center : @types.GeoPoint? // cached centroid
   mut cached_entries : Array[@types.GeoEntry]? // cached entries snapshot
   mut cached_lower_names : Array[String]? // lowercased names aligned with cached_entries
   mut cached_knn_weights : Array[Array[Int]]? // cached mutual-kNN adjacency
@@ -39,7 +40,7 @@ pub(all) struct Index {
   mut name_keys_cache : Array[String]? // sorted lowercase name keys for prefix queries
   mut sorted_case_entries : Array[@types.GeoEntry]? // case-sensitive name-sorted entries
   mut geohash_cache_stale : Bool // true when geohash_cache must be rebuilt
-  geohash_cache : @hashmap.HashMap[String, String] // id -> precision-8 geohash
+  mut geohash_cache : @hashmap.HashMap[String, String] // id -> precision-8 geohash
 } derive(Eq, Debug)
 
 pub extend Index with Eq::{ equal, not_equal }
@@ -69,6 +70,7 @@ pub fn Index::new(cell_size? : Double = default_cell_size) -> Index {
     cell_size,
     rtree: RTree::new(),
     cached_bbox: None,
+    cached_center: None,
     cached_entries: None,
     cached_lower_names: None,
     cached_knn_weights: None,
@@ -101,6 +103,7 @@ pub fn Index::clear(self : Index) -> Unit {
   self.rtree.clear()
   self.geohash_cache.clear()
   self.cached_bbox = None
+  self.cached_center = None
   self.cached_entries = None
   self.cached_lower_names = None
   self.cached_knn_weights = None
@@ -198,9 +201,10 @@ pub fn Index::insert(self : Index, entry : @types.GeoEntry) -> Unit {
     }
   }
   // R-tree spatial index.
-  self.rtree.insert(entry.id, entry.location)
+  self.rtree.insert_new(entry.id, entry.location)
   // Invalidate caches.
   self.cached_bbox = None
+  self.cached_center = None
   self.cached_entries = None
   self.cached_lower_names = None
   self.cached_knn_weights = None
@@ -215,6 +219,14 @@ pub fn Index::insert(self : Index, entry : @types.GeoEntry) -> Unit {
 /// in a loop for large N. Assumes entries have distinct ids (last-wins if
 /// duplicates exist).
 pub fn Index::bulk_insert(self : Index, entries : Array[@types.GeoEntry]) -> Unit {
+  // Pre-size the hot maps when loading into an empty index.
+  if self.entries.length() == 0 && self.rtree.size() == 0 {
+    let cap = entries.length()
+    self.entries = @hashmap.HashMap([], capacity=cap)
+    self.by_name = @hashmap.HashMap([], capacity=cap)
+    self.by_ngram = @hashmap.HashMap([], capacity=cap * 4)
+    self.geohash_cache = @hashmap.HashMap([], capacity=cap)
+  }
   // Phase 1: HashMap of entries + all non-spatial indexes in one pass.
   for entry in entries {
     if self.entries.contains(entry.id) {
@@ -302,6 +314,7 @@ pub fn Index::bulk_insert(self : Index, entries : Array[@types.GeoEntry]) -> Uni
   }
   // Invalidate caches once at the end.
   self.cached_bbox = None
+  self.cached_center = None
   self.cached_entries = None
   self.cached_lower_names = None
   self.cached_knn_weights = None
@@ -426,6 +439,7 @@ pub fn Index::remove(self : Index, id : String) -> @types.GeoEntry? {
       ignore(self.rtree.remove(id))
       // Invalidate caches.
       self.cached_bbox = None
+      self.cached_center = None
       self.cached_entries = None
       self.cached_lower_names = None
       self.cached_knn_weights = None
@@ -1129,6 +1143,31 @@ pub fn Index::contains_point(self : Index, point : @types.GeoPoint) -> Bool {
   match self.compute_bbox() {
     None => false
     Some(bbox) => @geo.bbox_contains(bbox, point)
+  }
+}
+
+///|
+/// Compute the centroid of all entries. Uses a cached value when available;
+/// the cache is invalidated on insert/remove.
+pub fn Index::compute_center(self : Index) -> (@types.GeoPoint, Int)? {
+  match self.cached_center {
+    Some(c) => Some((c, self.size()))
+    None => {
+      let entries = self.to_array()
+      if entries.length() == 0 {
+        return None
+      }
+      let mut sum_lat = 0.0
+      let mut sum_lng = 0.0
+      for e in entries {
+        sum_lat = sum_lat + e.location.lat
+        sum_lng = sum_lng + e.location.lng
+      }
+      let n = entries.length().to_double()
+      let center = @types.GeoPoint::make(sum_lat / n, sum_lng / n)
+      self.cached_center = Some(center)
+      Some((center, entries.length()))
+    }
   }
 }
 

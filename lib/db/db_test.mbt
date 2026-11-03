@@ -3232,3 +3232,49 @@ test "GeoDB::distance_summary bounds memory on large sets" {
   @test.assert_eq(median >= min_d, true)
   @test.assert_eq(median <= max_d, true)
 }
+
+///|
+test "GeoDB::compute_center refreshes after write" {
+  let db = @db.GeoDB::in_memory()
+  db.insert(make_entry("c1", "A", 0.0, 0.0))
+  match db.compute_center() {
+    Some((c, n)) => {
+      @test.assert_eq(n, 1)
+      @test.assert_eq(c.lat, 0.0)
+    }
+    None => @test.assert_eq(true, false)
+  }
+  db.insert(make_entry("c2", "B", 2.0, 4.0))
+  match db.compute_center() {
+    Some((c, n)) => {
+      @test.assert_eq(n, 2)
+      @test.assert_eq(c.lat, 1.0)
+      @test.assert_eq(c.lng, 2.0)
+    }
+    None => @test.assert_eq(true, false)
+  }
+  ignore(db.remove("c2"))
+  match db.compute_center() {
+    Some((c, n)) => {
+      @test.assert_eq(n, 1)
+      @test.assert_eq(c.lat, 0.0)
+    }
+    None => @test.assert_eq(true, false)
+  }
+}
+
+///|
+test "GeoDB::kmeans_elbow uses warm start" {
+  let db = @db.GeoDB::in_memory()
+  db.insert(make_entry("k1", "A", 0.0, 0.0))
+  db.insert(make_entry("k2", "B", 0.0, 1.0))
+  db.insert(make_entry("k3", "C", 1.0, 0.0))
+  db.insert(make_entry("k4", "D", 1.0, 1.0))
+  let r = db.kmeans_elbow(3)
+  @test.assert_eq(r.length(), 3)
+  let mut i = 1
+  while i < r.length() {
+    @test.assert_eq(r[i - 1].1 >= r[i].1, true)
+    i = i + 1
+  }
+}

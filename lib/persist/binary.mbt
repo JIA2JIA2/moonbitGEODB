@@ -19,7 +19,7 @@ const HEADER_SIZE : Int = 32
 
 ///|
 /// Encode a single GeoEntry to a binary record (with 4-byte size prefix).
-pub fn encode_entry(entry : @types.GeoEntry) -> Bytes {
+fn encode_entry_body(entry : @types.GeoEntry) -> Bytes {
   let w = BinWriter::new()
   w.write_string(entry.id)
   w.write_string(entry.name)
@@ -36,11 +36,14 @@ pub fn encode_entry(entry : @types.GeoEntry) -> Bytes {
   for tag in entry.tags {
     w.write_string(tag)
   }
-  let body = w.to_bytes()
+  w.to_bytes()
+}
 
-  // Record = UInt32 size prefix + body
-  let size_prefix = encode_int32(body.length() + 4)
-  size_prefix + body
+///|
+/// Encode an entry with its UInt32 record-size prefix.
+pub fn encode_entry(entry : @types.GeoEntry) -> Bytes {
+  let body = encode_entry_body(entry)
+  encode_int32(body.length() + 4) + body
 }
 
 ///|
@@ -95,7 +98,9 @@ pub fn encode_snapshot(
 ) -> Bytes {
   let entry_writer = BinWriter::new()
   for entry in entries {
-    entry_writer.append_bytes(encode_entry(entry))
+    let body = encode_entry_body(entry)
+    entry_writer.write_int32(body.length() + 4)
+    entry_writer.append_bytes(body)
   }
   let entry_data = entry_writer.to_bytes()
 

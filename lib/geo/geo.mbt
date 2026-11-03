@@ -852,6 +852,7 @@ pub fn kmeans(
   points : Array[@types.GeoPoint],
   k : Int,
   max_iter? : Int = 100,
+  init? : Array[@types.GeoPoint]? = None,
 ) -> Array[KMeansCluster] {
   let n = points.length()
   if n == 0 {
@@ -871,11 +872,24 @@ pub fn kmeans(
     iters = 1
   }
   // K-Means++ initialization: choose centroids that are far apart.
-  // 1. First centroid: pick a random point (use index 0 for determinism).
+  // An optional `init` supplies warm-start centroids; any missing centroids
+  // are filled with the farthest-point heuristic.
   let centroids : Array[@types.GeoPoint] = []
-  centroids.push(points[0])
-  // 2. For each remaining centroid, pick the point farthest from existing centroids.
-  let mut ci = 1
+  match init {
+    Some(seed) => {
+      let limit = if seed.length() < kk { seed.length() } else { kk }
+      let mut si = 0
+      while si < limit {
+        centroids.push(seed[si])
+        si = si + 1
+      }
+    }
+    None => ()
+  }
+  if centroids.length() == 0 {
+    centroids.push(points[0])
+  }
+  let mut ci = centroids.length()
   while ci < kk {
     let mut best_dist = -1.0
     let mut best_i = 0

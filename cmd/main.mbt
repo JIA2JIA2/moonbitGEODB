@@ -3748,6 +3748,12 @@ fn run_benchmark(n : Int) -> Unit {
   let t_match = @bench.monotonic_clock_end(t_match0)
   println("  Address match:   " + t_match.to_string() + " us")
 
+  // Summary report (cached center/bbox + merged distributions).
+  let t_sum0 = @bench.monotonic_clock_start()
+  let _sum = db.summary()
+  let t_sum = @bench.monotonic_clock_end(t_sum0)
+  println("  Summary:         " + t_sum.to_string() + " us")
+
   // CSV / JSON export (single-pass escaping).
   let t_csv0 = @bench.monotonic_clock_start()
   let _csv = db.to_csv()
