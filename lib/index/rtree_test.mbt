@@ -56,6 +56,51 @@ fn rt_same(a : Array[(String, Double)], b : Array[(String, Double)]) -> Bool {
 }
 
 ///|
+/// Compare only the sorted distance multiset, ignoring tie ordering.
+fn rt_same_distances(
+  a : Array[(String, Double)],
+  b : Array[(String, Double)],
+) -> Bool {
+  if a.length() != b.length() {
+    return false
+  }
+  let da : Array[Double] = []
+  let db : Array[Double] = []
+  for p in a {
+    da.push(p.1)
+  }
+  for p in b {
+    db.push(p.1)
+  }
+  da.sort_by(fn(x, y) {
+    if x < y {
+      -1
+    } else if x > y {
+      1
+    } else {
+      0
+    }
+  })
+  db.sort_by(fn(x, y) {
+    if x < y {
+      -1
+    } else if x > y {
+      1
+    } else {
+      0
+    }
+  })
+  let mut i = 0
+  while i < da.length() {
+    if da[i] != db[i] {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}
+
+///|
 test "RTree::new is empty" {
   let t = @index.RTree::new()
   @test.assert_eq(t.size(), 0)
@@ -196,4 +241,92 @@ test "RTree::remove missing returns false" {
   @test.assert_eq(t.remove("a"), true)
   @test.assert_eq(t.remove("a"), false)
   @test.assert_eq(t.size(), 0)
+}
+
+///|
+test "RTree::bulk_load matches brute force" {
+  let t = @index.RTree::new()
+  let points : Array[(String, @types.GeoPoint)] = []
+  let mut i = 0
+  while i < 120 {
+    let lat = 30.0 + (i % 20).to_double() * 0.5
+    let lng = 110.0 + (i / 20).to_double() * 0.5
+    points.push(("b\{i}", rt_pt(lat, lng)))
+    i = i + 1
+  }
+  t.bulk_load(points)
+  @test.assert_eq(t.size(), 120)
+  let queries = [
+    rt_pt(35.0, 113.0),
+    rt_pt(32.0, 116.0),
+    rt_pt(37.0, 115.0),
+    rt_pt(40.0, 110.0),
+  ]
+  for q in queries {
+    @test.assert_eq(rt_same(t.nearest(q, 5), rt_brute(points, q, 5)), true)
+  }
+  let bbox : @types.BBox = {
+    min_lat: 33.0,
+    max_lat: 37.0,
+    min_lng: 111.0,
+    max_lng: 115.0,
+  }
+  let mut expected = 0
+  for p in points {
+    if @geo.bbox_contains(bbox, p.1) {
+      expected = expected + 1
+    }
+  }
+  @test.assert_eq(t.search(bbox).length(), expected)
+}
+
+///|
+test "RTree::bulk_load supports later insert and remove" {
+  let t = @index.RTree::new()
+  let points : Array[(String, @types.GeoPoint)] = []
+  let mut i = 0
+  while i < 80 {
+    let lat = 30.0 + (i % 10).to_double() * 0.5
+    let lng = 110.0 + (i / 10).to_double() * 0.5
+    points.push(("c\{i}", rt_pt(lat, lng)))
+    i = i + 1
+  }
+  t.bulk_load(points)
+  t.insert("extra", rt_pt(35.1, 113.1))
+  points.push(("extra", rt_pt(35.1, 113.1)))
+  let q = rt_pt(35.13, 113.27)
+  @test.assert_eq(rt_same(t.nearest(q, 5), rt_brute(points, q, 5)), true)
+  @test.assert_eq(t.remove("c0"), true)
+  @test.assert_eq(t.size(), 80)
+  @test.assert_eq(t.nearest(q, 100).length(), 80)
+  let remaining : Array[(String, @types.GeoPoint)] = []
+  for p in points {
+    if p.0 != "c0" {
+      remaining.push(p)
+    }
+  }
+  @test.assert_eq(
+    rt_same_distances(t.nearest(q, 5), rt_brute(remaining, q, 5)),
+    true,
+  )
+}
+
+///|
+test "RTree::bulk_load on non-empty tree falls back to insert" {
+  let t = @index.RTree::new()
+  t.insert("seed", rt_pt(0.0, 0.0))
+  let points : Array[(String, @types.GeoPoint)] = []
+  let mut i = 0
+  while i < 20 {
+    points.push(("d\{i}", rt_pt(i.to_double(), i.to_double())))
+    i = i + 1
+  }
+  t.bulk_load(points)
+  @test.assert_eq(t.size(), 21)
+  let all : Array[(String, @types.GeoPoint)] = [("seed", rt_pt(0.0, 0.0))]
+  for p in points {
+    all.push(p)
+  }
+  let q = rt_pt(5.0, 5.0)
+  @test.assert_eq(rt_same(t.nearest(q, 5), rt_brute(all, q, 5)), true)
 }

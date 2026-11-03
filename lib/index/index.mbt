@@ -267,14 +267,25 @@ pub fn Index::bulk_insert(self : Index, entries : Array[@types.GeoEntry]) -> Uni
       }
     }
   }
-  // Phase 2: Build R-tree in bulk (still O(n·log n), but no per-entry balance
-  // overhead that comes from rebalancing after each individual insert in a
-  // loop — the best R-tree implementations use a bottom-up sort-then-pack
-  // for this; we defer all inserts to avoid redundant node splits).
-  // NOTE: R-tree::insert is per-entry, so this still costs O(n·log n). We
-  // save mostly on the Python-level HashMap churn.
-  for entry in entries {
-    self.rtree.insert(entry.id, entry.location)
+  // Phase 2: build the R-tree. Use STR sort-then-pack when the tree is empty;
+  // otherwise fall back to per-entry insertion (replacing existing ids).
+  if self.rtree.size() == 0 {
+    let pts : Array[(String, @types.GeoPoint)] = []
+    let seen : @hashmap.HashMap[String, Int] = @hashmap.HashMap([])
+    for entry in entries {
+      match seen.get(entry.id) {
+        Some(i) => pts[i] = (entry.id, entry.location)
+        None => {
+          seen[entry.id] = pts.length()
+          pts.push((entry.id, entry.location))
+        }
+      }
+    }
+    self.rtree.bulk_load(pts)
+  } else {
+    for entry in entries {
+      self.rtree.insert(entry.id, entry.location)
+    }
   }
   // Invalidate caches once at the end.
   self.cached_bbox = None

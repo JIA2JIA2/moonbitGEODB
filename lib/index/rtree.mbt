@@ -99,6 +99,161 @@ pub fn RTree::insert(
 }
 
 ///|
+/// Sort-tile-recursive bulk load for an empty tree. Existing points fall back
+/// to per-entry insertion. The resulting nodes use the same layout (leaf
+/// entries, child ids, parent links, bbox) as incremental insertion, so
+/// search / nearest / remove remain valid afterwards.
+pub fn RTree::bulk_load(
+  self : RTree,
+  entries : Array[(String, @types.GeoPoint)],
+) -> Unit {
+  if entries.length() == 0 {
+    return
+  }
+  if self.points.length() > 0 || self.root != None {
+    for e in entries {
+      self.insert(e.0, e.1)
+    }
+    return
+  }
+  // Deduplicate by id (last wins) and fill the point map.
+  let unique : Array[(String, @types.GeoPoint)] = []
+  let seen : @hashmap.HashMap[String, Int] = @hashmap.HashMap([])
+  for e in entries {
+    match seen.get(e.0) {
+      Some(i) => unique[i] = e
+      None => {
+        seen[e.0] = unique.length()
+        unique.push(e)
+      }
+    }
+  }
+  let n = unique.length()
+  for e in unique {
+    self.points[e.0] = e.1
+  }
+  let m = self.max_entries
+  let leaf_count = (n + m - 1) / m
+  let slice_count = ceil_sqrt(leaf_count)
+  let slice_size = (n + slice_count - 1) / slice_count
+  // Sort by longitude, tile into slices, then sort each slice by latitude.
+  let by_lng : Array[(String, @types.GeoPoint)] = []
+  for e in unique {
+    by_lng.push(e)
+  }
+  by_lng.sort_by(fn(a, b) {
+    if a.1.lng < b.1.lng {
+      -1
+    } else if a.1.lng > b.1.lng {
+      1
+    } else {
+      0
+    }
+  })
+  let leaves : Array[Array[String]] = []
+  let mut s = 0
+  while s < slice_count {
+    let start = s * slice_size
+    let end = min_int((s + 1) * slice_size, n)
+    if start < end {
+      let slice : Array[(String, @types.GeoPoint)] = []
+      let mut k = start
+      while k < end {
+        slice.push(by_lng[k])
+        k = k + 1
+      }
+      slice.sort_by(fn(a, b) {
+        if a.1.lat < b.1.lat {
+          -1
+        } else if a.1.lat > b.1.lat {
+          1
+        } else {
+          0
+        }
+      })
+      k = 0
+      while k < slice.length() {
+        let ids : Array[String] = []
+        let stop = min_int(k + m, slice.length())
+        let mut t = k
+        while t < stop {
+          ids.push(slice[t].0)
+          t = t + 1
+        }
+        leaves.push(ids)
+        k = k + m
+      }
+    }
+    s = s + 1
+  }
+  // Create leaves, then pack parents bottom-up.
+  let mut current : Array[Int] = []
+  for ids in leaves {
+    let nid = self.alloc_node_id()
+    self.nodes[nid] = {
+      bbox: self.bbox_of_entries(ids),
+      is_leaf: true,
+      children: [],
+      entries: ids,
+      parent: None,
+    }
+    current.push(nid)
+  }
+  while current.length() > 1 {
+    let next : Array[Int] = []
+    let mut k = 0
+    while k < current.length() {
+      let children : Array[Int] = []
+      let stop = min_int(k + m, current.length())
+      let mut t = k
+      while t < stop {
+        children.push(current[t])
+        t = t + 1
+      }
+      let pid = self.alloc_node_id()
+      self.nodes[pid] = {
+        bbox: self.bbox_of_children(children),
+        is_leaf: false,
+        children,
+        entries: [],
+        parent: None,
+      }
+      for c in children {
+        match self.nodes.get(c) {
+          Some(child) => {
+            child.parent = Some(pid)
+            self.nodes[c] = child
+          }
+          None => ()
+        }
+      }
+      next.push(pid)
+      k = k + m
+    }
+    current = next
+  }
+  self.root = Some(current[0])
+}
+
+///|
+fn ceil_sqrt(n : Int) -> Int {
+  let mut s = 1
+  while s * s < n {
+    s = s + 1
+  }
+  s
+}
+
+///|
+fn min_int(a : Int, b : Int) -> Int {
+  if a < b {
+    a
+  } else {
+    b
+  }
+}
+
+///|
 /// Remove an entry id. Returns `true` if it was present.
 pub fn RTree::remove(self : RTree, id : String) -> Bool {
   let point = match self.points.get(id) {
