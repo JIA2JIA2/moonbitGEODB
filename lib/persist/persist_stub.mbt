@@ -57,6 +57,15 @@ pub fn file_mtime(_path : String) -> Int64 {
 }
 
 ///|
+/// Copy a file. Not available on non-native backends.
+pub fn copy_file(
+  _src_path : String,
+  _dst_path : String,
+) -> Result[Unit, String] {
+  Err("file IO not available on this backend")
+}
+
+///|
 /// Atomically write binary content to file. Not available on non-native backends.
 pub fn atomic_save_bytes(
   _path : String,

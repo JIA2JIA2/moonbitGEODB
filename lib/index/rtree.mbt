@@ -64,6 +64,15 @@ pub fn RTree::size(self : RTree) -> Int {
 }
 
 ///|
+/// Remove all points and nodes, leaving an empty tree.
+pub fn RTree::clear(self : RTree) -> Unit {
+  self.root = None
+  self.nodes.clear()
+  self.points.clear()
+  self.next_id = 0
+}
+
+///|
 /// Whether an entry id is present.
 pub fn RTree::contains(self : RTree, id : String) -> Bool {
   self.points.contains(id)

@@ -2969,3 +2969,37 @@ test "GeoDB::concave_hull basic" {
   let hull = db.concave_hull(2.0)
   @test.assert_eq(hull.length() >= 3, true)
 }
+
+///|
+test "GeoDB::find_nearest_pairs enumerates every pair exactly once" {
+  let db = @db.GeoDB::in_memory()
+  db.insert(make_entry("a", "A", 0.0, 0.0))
+  db.insert(make_entry("b", "B", 0.0, 1.0))
+  db.insert(make_entry("c", "C", 1.0, 0.0))
+  db.insert(make_entry("d", "D", 5.0, 5.0))
+  let pairs = db.find_nearest_pairs(6)
+  @test.assert_eq(pairs.length(), 6)
+  let keys : Array[String] = []
+  for p in pairs {
+    let key = if p.0.id < p.1.id {
+      p.0.id + "|" + p.1.id
+    } else {
+      p.1.id + "|" + p.0.id
+    }
+    let mut found = false
+    for k in keys {
+      if k == key {
+        found = true
+      }
+    }
+    @test.assert_eq(found, false)
+    keys.push(key)
+  }
+  @test.assert_eq(keys.length(), 6)
+  @test.assert_eq(pairs[0].2 < 120.0, true)
+  let mut i = 1
+  while i < pairs.length() {
+    @test.assert_eq(pairs[i - 1].2 <= pairs[i].2, true)
+    i = i + 1
+  }
+}

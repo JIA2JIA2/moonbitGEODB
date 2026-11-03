@@ -3507,6 +3507,19 @@ fn run_benchmark(n : Int) -> Unit {
   println("  Build DB:       " + t_build.to_string() + " us")
   println("  Entries:        " + db.size().to_string())
 
+  // Binary persistence: full snapshot write + cold reopen (index rebuild).
+  let bench_path = "/tmp/moonbitgeodb_bench_" + n.to_string() + ".db"
+  let t_save0 = @bench.monotonic_clock_start()
+  ignore(db.save_to(bench_path))
+  let t_save = @bench.monotonic_clock_end(t_save0)
+  println("  Save DB:        " + t_save.to_string() + " us")
+  let t_open0 = @bench.monotonic_clock_start()
+  let reopened = @db.GeoDB::open(bench_path)
+  let t_open = @bench.monotonic_clock_end(t_open0)
+  println("  Open DB:        " + t_open.to_string() + " us")
+  println("  Loaded entries: " + reopened.size().to_string())
+  ignore(@persist.remove_file(bench_path))
+
   // BBox query (over Beijing area)
   let t1 = @bench.monotonic_clock_start()
   let _bbox_res = db.find_bbox(39.0, 40.0, 116.0, 117.0)
@@ -3568,6 +3581,95 @@ fn run_benchmark(n : Int) -> Unit {
   )
   let t_kriging = @bench.monotonic_clock_end(t8)
   println("  Kriging KNN:     " + t_kriging.to_string() + " us")
+
+  // Moran's I significance test (R-tree-built mutual-kNN weights).
+  let t_mt0 = @bench.monotonic_clock_start()
+  let _mt = db.morans_i_test(kvals, k=8)
+  let t_mt = @bench.monotonic_clock_end(t_mt0)
+  println("  Moran test:      " + t_mt.to_string() + " us")
+
+  // IDW through the DB API (R-tree kNN instead of full scan).
+  let t_idw0 = @bench.monotonic_clock_start()
+  let _idw = db.idw_predict_knn(
+    @types.GeoPoint::make(35.0, 115.0),
+    12,
+    fn(e) { e.location.lat },
+  )
+  let t_idw = @bench.monotonic_clock_end(t_idw0)
+  println("  IDW KNN:         " + t_idw.to_string() + " us")
+
+  // Kriging through the DB API (R-tree kNN instead of full scan).
+  let t_kdb0 = @bench.monotonic_clock_start()
+  let _kdb = db.kriging_predict_knn(
+    @types.GeoPoint::make(35.0, 115.0),
+    fn(e) { e.location.lat },
+    kfit,
+    k=12,
+  )
+  let t_kdb = @bench.monotonic_clock_end(t_kdb0)
+  println("  Kriging DB KNN:  " + t_kdb.to_string() + " us")
+
+  // Name prefix query (sorted-key cache + binary search).
+  let t_prefix0 = @bench.monotonic_clock_start()
+  let _prefix = db.find_name_prefix("北")
+  let t_prefix = @bench.monotonic_clock_end(t_prefix0)
+  println("  Name prefix:     " + t_prefix.to_string() + " us")
+
+  // Name substring query (linear scan worst case).
+  let t_contains0 = @bench.monotonic_clock_start()
+  let _contains = db.find_name_contains("路")
+  let t_contains = @bench.monotonic_clock_end(t_contains0)
+  println("  Name contains:   " + t_contains.to_string() + " us")
+
+  // Global nearest pairs (top-k via R-tree).
+  let t_pairs0 = @bench.monotonic_clock_start()
+  let _pairs = db.find_nearest_pairs(10)
+  let t_pairs = @bench.monotonic_clock_end(t_pairs0)
+  println("  Nearest pairs:   " + t_pairs.to_string() + " us")
+
+  // Duplicate detection (spatial grid prefilter + Levenshtein).
+  let t_dup0 = @bench.monotonic_clock_start()
+  let _dups = db.find_duplicates()
+  let t_dup = @bench.monotonic_clock_end(t_dup0)
+  println("  Find duplicates: " + t_dup.to_string() + " us")
+
+  // Distance matrix over the first 100 ids.
+  let all_entries = db.all()
+  let ids : Array[String] = []
+  let mut di = 0
+  while di < 100 && di < all_entries.length() {
+    ids.push(all_entries[di].id)
+    di = di + 1
+  }
+  let t_matrix0 = @bench.monotonic_clock_start()
+  let _matrix = db.distance_matrix(ids)
+  let t_matrix = @bench.monotonic_clock_end(t_matrix0)
+  println("  Distance matrix: " + t_matrix.to_string() + " us")
+
+  // Geohash 3x3 neighbourhood resolved through the spatial index.
+  if all_entries.length() > 0 {
+    let gh = @geo.geohash_encode(
+      all_entries[0].location.lat,
+      all_entries[0].location.lng,
+      6,
+    )
+    let t_gh0 = @bench.monotonic_clock_start()
+    let _ghres = db.find_by_geohash_bbox(gh)
+    let t_gh = @bench.monotonic_clock_end(t_gh0)
+    println("  Geohash bbox:    " + t_gh.to_string() + " us")
+  }
+
+  // Farthest pair (convex hull, used by summary).
+  let t_max0 = @bench.monotonic_clock_start()
+  let _max = db.compute_max_distance()
+  let t_max = @bench.monotonic_clock_end(t_max0)
+  println("  Max distance:    " + t_max.to_string() + " us")
+
+  // Semantic address matching (prepared query reused for all candidates).
+  let t_match0 = @bench.monotonic_clock_start()
+  let _matched = db.match_addresses("北京市海淀区颐和园路", limit=10)
+  let t_match = @bench.monotonic_clock_end(t_match0)
+  println("  Address match:   " + t_match.to_string() + " us")
 
   println("  ---")
   let us_per_entry = t_build / n.to_double()

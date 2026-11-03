@@ -32,6 +32,7 @@ pub(all) struct Index {
   rtree : RTree // R-tree for sub-linear KNN / range queries
   mut cached_bbox : @types.BBox? // cached combined bbox
   mut cached_entries : Array[@types.GeoEntry]? // cached entries snapshot
+  mut cached_lower_names : Array[String]? // lowercased names aligned with cached_entries
   mut name_keys_cache : Array[String]? // sorted lowercase name keys for prefix queries
 } derive(Eq, Debug)
 
@@ -62,6 +63,7 @@ pub fn Index::new(cell_size? : Double = default_cell_size) -> Index {
     rtree: RTree::new(),
     cached_bbox: None,
     cached_entries: None,
+    cached_lower_names: None,
     name_keys_cache: None,
   }
 }
@@ -70,6 +72,24 @@ pub fn Index::new(cell_size? : Double = default_cell_size) -> Index {
 /// Number of entries currently indexed.
 pub fn Index::size(self : Index) -> Int {
   self.entries.length()
+}
+
+///|
+/// Remove all entries and reset every secondary index in one pass.
+pub fn Index::clear(self : Index) -> Unit {
+  self.entries.clear()
+  self.grid.clear()
+  self.coarse_grid.clear()
+  self.by_name.clear()
+  self.by_tag.clear()
+  self.by_province.clear()
+  self.by_city.clear()
+  self.by_district.clear()
+  self.rtree.clear()
+  self.cached_bbox = None
+  self.cached_entries = None
+  self.cached_lower_names = None
+  self.name_keys_cache = None
 }
 
 ///|
@@ -157,6 +177,7 @@ pub fn Index::insert(self : Index, entry : @types.GeoEntry) -> Unit {
   // Invalidate caches.
   self.cached_bbox = None
   self.cached_entries = None
+  self.cached_lower_names = None
   self.name_keys_cache = None
 }
 
@@ -168,6 +189,9 @@ pub fn Index::insert(self : Index, entry : @types.GeoEntry) -> Unit {
 pub fn Index::bulk_insert(self : Index, entries : Array[@types.GeoEntry]) -> Unit {
   // Phase 1: HashMap of entries + all non-spatial indexes in one pass.
   for entry in entries {
+    if self.entries.contains(entry.id) {
+      ignore(self.remove(entry.id))
+    }
     self.entries[entry.id] = entry
     // Fine spatial grid.
     let idx = cell_idx(entry.location.lat, entry.location.lng, self.cell_size, self.lng_cells)
@@ -234,7 +258,32 @@ pub fn Index::bulk_insert(self : Index, entries : Array[@types.GeoEntry]) -> Uni
   // Invalidate caches once at the end.
   self.cached_bbox = None
   self.cached_entries = None
+  self.cached_lower_names = None
   self.name_keys_cache = None
+}
+
+///|
+/// Remove every occurrence of `id` from `arr` in place, returning whether any
+/// element was removed.
+fn remove_id_in_place(arr : Array[String], id : String) -> Bool {
+  let n = arr.length()
+  let mut write = 0
+  let mut read = 0
+  while read < n {
+    let x = arr[read]
+    if x != id {
+      arr[write] = x
+      write = write + 1
+    }
+    read = read + 1
+  }
+  if write == n {
+    return false
+  }
+  while arr.length() > write {
+    ignore(arr.pop())
+  }
+  true
 }
 
 ///|
@@ -247,41 +296,29 @@ pub fn Index::remove(self : Index, id : String) -> @types.GeoEntry? {
       // Drop from fine grid cell.
       let idx = cell_idx(entry.location.lat, entry.location.lng, self.cell_size, self.lng_cells)
       match self.grid.get(idx) {
-        Some(arr) => {
-          let filtered = arr.iter().filter(fn(x) { x != id }).collect()
-          if filtered.length() == 0 {
+        Some(arr) =>
+          if remove_id_in_place(arr, id) && arr.length() == 0 {
             ignore(self.grid.remove(idx))
-          } else {
-            self.grid[idx] = filtered
           }
-        }
         None => ()
       }
       // Drop from coarse grid cell.
       let cidx = cell_idx(entry.location.lat, entry.location.lng, coarse_cell_size, self.coarse_lng_cells)
       match self.coarse_grid.get(cidx) {
-        Some(arr) => {
-          let filtered = arr.iter().filter(fn(x) { x != id }).collect()
-          if filtered.length() == 0 {
+        Some(arr) =>
+          if remove_id_in_place(arr, id) && arr.length() == 0 {
             ignore(self.coarse_grid.remove(cidx))
-          } else {
-            self.coarse_grid[cidx] = filtered
           }
-        }
         None => ()
       }
       // Drop from name index.
       let name_key = entry.name.to_lower()
       if name_key.length() > 0 {
         match self.by_name.get(name_key) {
-          Some(arr) => {
-            let filtered = arr.iter().filter(fn(x) { x != id }).collect()
-            if filtered.length() == 0 {
+          Some(arr) =>
+            if remove_id_in_place(arr, id) && arr.length() == 0 {
               ignore(self.by_name.remove(name_key))
-            } else {
-              self.by_name[name_key] = filtered
             }
-          }
           None => ()
         }
       }
@@ -290,14 +327,10 @@ pub fn Index::remove(self : Index, id : String) -> @types.GeoEntry? {
         let tag_key = tag.to_lower()
         if tag_key.length() > 0 {
           match self.by_tag.get(tag_key) {
-            Some(arr) => {
-              let filtered = arr.iter().filter(fn(x) { x != id }).collect()
-              if filtered.length() == 0 {
+            Some(arr) =>
+              if remove_id_in_place(arr, id) && arr.length() == 0 {
                 ignore(self.by_tag.remove(tag_key))
-              } else {
-                self.by_tag[tag_key] = filtered
               }
-            }
             None => ()
           }
         }
@@ -306,42 +339,30 @@ pub fn Index::remove(self : Index, id : String) -> @types.GeoEntry? {
       if entry.address.province.length() > 0 {
         let prov_key = entry.address.province.to_lower()
         match self.by_province.get(prov_key) {
-          Some(arr) => {
-            let filtered = arr.iter().filter(fn(x) { x != id }).collect()
-            if filtered.length() == 0 {
+          Some(arr) =>
+            if remove_id_in_place(arr, id) && arr.length() == 0 {
               ignore(self.by_province.remove(prov_key))
-            } else {
-              self.by_province[prov_key] = filtered
             }
-          }
           None => ()
         }
       }
       if entry.address.city.length() > 0 {
         let city_key = entry.address.city.to_lower()
         match self.by_city.get(city_key) {
-          Some(arr) => {
-            let filtered = arr.iter().filter(fn(x) { x != id }).collect()
-            if filtered.length() == 0 {
+          Some(arr) =>
+            if remove_id_in_place(arr, id) && arr.length() == 0 {
               ignore(self.by_city.remove(city_key))
-            } else {
-              self.by_city[city_key] = filtered
             }
-          }
           None => ()
         }
       }
       if entry.address.district.length() > 0 {
         let dist_key = entry.address.district.to_lower()
         match self.by_district.get(dist_key) {
-          Some(arr) => {
-            let filtered = arr.iter().filter(fn(x) { x != id }).collect()
-            if filtered.length() == 0 {
+          Some(arr) =>
+            if remove_id_in_place(arr, id) && arr.length() == 0 {
               ignore(self.by_district.remove(dist_key))
-            } else {
-              self.by_district[dist_key] = filtered
             }
-          }
           None => ()
         }
       }
@@ -349,6 +370,7 @@ pub fn Index::remove(self : Index, id : String) -> @types.GeoEntry? {
       // Invalidate caches.
       self.cached_bbox = None
       self.cached_entries = None
+      self.cached_lower_names = None
       self.name_keys_cache = None
       Some(entry)
     }
@@ -382,12 +404,13 @@ pub fn Index::query_bbox(
   let coarse_dlat = math_floor((bbox.max_lat - bbox.min_lat) / coarse_cell_size + 1.0)
   let coarse_dlng = math_floor((bbox.max_lng - bbox.min_lng) / coarse_cell_size + 1.0)
   let coarse_cells = coarse_dlat * coarse_dlng
-  if coarse_cells <= fine_cells && coarse_cells <= 500 {
-    // Coarse grid path — fewer cells to scan.
-    return self.query_bbox_grid_coarse(bbox)
-  }
-  if fine_cells <= 500 {
+  if fine_cells <= 500 && fine_cells <= coarse_cells * 4 {
+    // Prefer the fine grid when it covers only a few more cells: fine
+    // buckets are ~25x smaller, so the candidate set shrinks substantially.
     return self.query_bbox_grid(bbox)
+  }
+  if coarse_cells <= 500 {
+    return self.query_bbox_grid_coarse(bbox)
   }
   let ids = self.rtree.search(bbox)
   let result : Array[@types.GeoEntry] = []
@@ -592,10 +615,14 @@ pub fn Index::find_name_contains(
     return []
   }
   let out : Array[@types.GeoEntry] = []
-  for entry in self.entries.values() {
-    if entry.name.to_lower().contains(n) {
-      out.push(entry)
+  let entries = self.to_array()
+  let names = self.lowered_names()
+  let mut i = 0
+  while i < entries.length() && i < names.length() {
+    if names[i].contains(n) {
+      out.push(entries[i])
     }
+    i = i + 1
   }
   out
 }
@@ -610,6 +637,23 @@ pub fn Index::to_array(self : Index) -> Array[@types.GeoEntry] {
       let arr = self.entries.values().collect()
       self.cached_entries = Some(arr)
       arr
+    }
+  }
+}
+
+///|
+/// Cached lowercase names, aligned index-wise with `to_array()`.
+pub fn Index::lowered_names(self : Index) -> Array[String] {
+  match self.cached_lower_names {
+    Some(names) => names
+    None => {
+      let entries = self.to_array()
+      let names : Array[String] = []
+      for e in entries {
+        names.push(e.name.to_lower())
+      }
+      self.cached_lower_names = Some(names)
+      names
     }
   }
 }
@@ -985,15 +1029,20 @@ pub fn Index::find_sorted_by_distance(
   self : Index,
   point : @types.GeoPoint,
 ) -> Array[(@types.GeoEntry, Double)] {
-  let n = self.size()
-  let raw = self.rtree.nearest(point, n)
+  let entries = self.to_array()
   let out : Array[(@types.GeoEntry, Double)] = []
-  for (id, d) in raw {
-    match self.entries.get(id) {
-      Some(e) => out.push((e, d))
-      None => ()
-    }
+  for e in entries {
+    out.push((e, @geo.haversine(point, e.location)))
   }
+  out.sort_by(fn(a, b) {
+    if a.1 < b.1 {
+      -1
+    } else if a.1 > b.1 {
+      1
+    } else {
+      0
+    }
+  })
   out
 }
 

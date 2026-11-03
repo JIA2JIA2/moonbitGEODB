@@ -44,12 +44,8 @@ pub fn encode_entry(entry : @types.GeoEntry) -> Bytes {
 }
 
 ///|
-/// Decode a single GeoEntry from a binary record starting at offset.
-/// Returns (entry, new_offset).
-pub fn decode_entry(data : Bytes, offset : Int) -> (@types.GeoEntry, Int) {
-  let r = BinReader::new(data)
-  r.pos = offset
-
+/// Decode a single GeoEntry from an existing sequential reader.
+fn decode_entry_from_reader(r : BinReader) -> @types.GeoEntry {
   // Read and skip the record size.
   let _record_size = r.read_int32()
 
@@ -77,7 +73,16 @@ pub fn decode_entry(data : Bytes, offset : Int) -> (@types.GeoEntry, Int) {
     @types.GeoPoint::make(lat, lng),
   )
   entry.tags = tags
+  entry
+}
 
+///|
+/// Decode a single GeoEntry from a binary record starting at offset.
+/// Returns (entry, new_offset).
+pub fn decode_entry(data : Bytes, offset : Int) -> (@types.GeoEntry, Int) {
+  let r = BinReader::new(data)
+  r.pos = offset
+  let entry = decode_entry_from_reader(r)
   (entry, r.position())
 }
 
@@ -90,8 +95,7 @@ pub fn encode_snapshot(
 ) -> Bytes {
   let entry_writer = BinWriter::new()
   for entry in entries {
-    let encoded = encode_entry(entry)
-    entry_writer.buf = entry_writer.buf + encoded
+    entry_writer.append_bytes(encode_entry(entry))
   }
   let entry_data = entry_writer.to_bytes()
 
@@ -100,7 +104,7 @@ pub fn encode_snapshot(
 
   // Build header.
   let header_w = BinWriter::new()
-  header_w.buf = header_w.buf + MAGIC
+  header_w.append_bytes(MAGIC)
   header_w.write_uint16(binary_version)
   header_w.write_uint16(0) // flags (reserved)
   header_w.write_int32(entries.length())
@@ -148,19 +152,16 @@ pub fn decode_snapshot(
 
   // Verify checksum over remaining data.
   let entry_data_start = r.position()
-  let entry_data = bytes_slice(data, entry_data_start, data.length())
-  let computed_checksum = crc32(entry_data)
+  let computed_checksum = crc32_range(data, entry_data_start, data.length())
   if stored_checksum != computed_checksum {
     return Err("checksum mismatch: file may be corrupted")
   }
 
   // Decode entries.
   let entries : Array[@types.GeoEntry] = []
-  let mut pos = entry_data_start
+  r.pos = entry_data_start
   for _ in 0..<entry_count {
-    let (entry, new_pos) = decode_entry(data, pos)
-    entries.push(entry)
-    pos = new_pos
+    entries.push(decode_entry_from_reader(r))
   }
 
   Ok((entries, created_at, updated_at))

@@ -9,11 +9,13 @@
 ///|
 /// Slice a Bytes range [start, end) into a new Bytes.
 pub fn bytes_slice(data : Bytes, start : Int, end : Int) -> Bytes {
-  let mut result : Bytes = []
-  for i in start..<end {
-    result = result + [data[i]]
+  let len = end - start
+  if len <= 0 {
+    return []
   }
-  result
+  let result = FixedArray::make(len, b'\x00')
+  result.blit_from_bytes(0, data, start, len)
+  result.unsafe_reinterpret_as_bytes()
 }
 
 ///|
@@ -143,8 +145,9 @@ pub fn decode_string(bytes : Bytes, offset : Int) -> (String, Int) {
   let len = decode_uint16(bytes, offset)
   let start = offset + 2
   let end = start + len
-  let sub = bytes_slice(bytes, start, end)
-  let s = @utf8.decode(sub) catch { _ => "" }
+  let s = @utf8.decode(bytes.exact_view(start=start, end=end)) catch {
+    _ => ""
+  }
   (s, end)
 }
 
@@ -167,21 +170,48 @@ pub fn decode_bytes_with_len(bytes : Bytes, offset : Int) -> (Bytes, Int) {
 }
 
 ///|
+/// Lookup table for the CRC32 polynomial 0xEDB88320, built once at startup.
+let crc32_table : FixedArray[UInt64] = crc32_build_table()
+
+///|
+fn crc32_build_table() -> FixedArray[UInt64] {
+  let table = FixedArray::make(256, (0 : UInt64))
+  let mut i = 0
+  while i < 256 {
+    let mut c : UInt64 = i.to_uint64()
+    let mut bit = 0
+    while bit < 8 {
+      let one : UInt64 = 1
+      if (c & one) != (0 : UInt64) {
+        c = (c >> 1) ^ (0xEDB88320 : UInt64)
+      } else {
+        c = c >> 1
+      }
+      bit = bit + 1
+    }
+    table[i] = c
+    i = i + 1
+  }
+  table
+}
+
+///|
 /// Compute a CRC32 checksum of a Bytes slice.
 pub fn crc32(data : Bytes) -> Int {
+  crc32_range(data, 0, data.length())
+}
+
+///|
+/// Compute a CRC32 checksum over `data[start..end)` without copying the range.
+pub fn crc32_range(data : Bytes, start : Int, end : Int) -> Int {
   let mut crc : UInt64 = 0xFFFFFFFF
-  let zero : UInt64 = 0
-  for i in 0..<data.length() {
+  let mask : UInt64 = 0xFF
+  let mut i = start
+  while i < end {
     let byte : UInt64 = data[i].to_uint64()
-    crc = (crc ^ byte) & 0xFFFFFFFF
-    for _ in 0..<8 {
-      let one : UInt64 = 1
-      if (crc & one) != zero {
-        crc = (crc >> 1) ^ 0xEDB88320
-      } else {
-        crc = crc >> 1
-      }
-    }
+    let idx : Int = ((crc ^ byte) & mask).to_int()
+    crc = (crc >> 8) ^ crc32_table[idx]
+    i = i + 1
   }
   let result : UInt64 = (crc ^ 0xFFFFFFFF) & 0xFFFFFFFF
   result.to_int()
@@ -190,57 +220,66 @@ pub fn crc32(data : Bytes) -> Int {
 // ---- Writer/Reader for streaming ----
 
 ///|
-/// A sequential binary writer that appends encoded data to a Bytes buffer.
+/// A sequential binary writer that appends encoded data to a Buffer.
 pub(all) struct BinWriter {
-  mut buf : Bytes
+  mut buf : @buffer.Buffer
 }
 
 ///|
 /// Create a new empty BinWriter.
 pub fn BinWriter::new() -> BinWriter {
-  { buf: ([] : Bytes), }
+  { buf: @buffer.Buffer(), }
 }
 
 ///|
 /// Write an Int32.
 pub fn BinWriter::write_int32(self : BinWriter, value : Int) -> Unit {
-  self.buf = self.buf + encode_int32(value)
+  self.buf.write_int_be(value)
 }
 
 ///|
 /// Write a UInt16.
 pub fn BinWriter::write_uint16(self : BinWriter, value : Int) -> Unit {
-  self.buf = self.buf + encode_uint16(value)
+  self.buf.write_uint16_be(value.to_uint16())
 }
 
 ///|
 /// Write an Int64.
 pub fn BinWriter::write_int64(self : BinWriter, value : Int64) -> Unit {
-  self.buf = self.buf + encode_int64(value)
+  self.buf.write_int64_be(value)
 }
 
 ///|
 /// Write a Double.
 pub fn BinWriter::write_double(self : BinWriter, value : Double) -> Unit {
-  self.buf = self.buf + encode_double(value)
+  self.buf.write_double_be(value)
 }
 
 ///|
 /// Write a length-prefixed string.
 pub fn BinWriter::write_string(self : BinWriter, s : String) -> Unit {
-  self.buf = self.buf + encode_string(s)
+  let bytes = @utf8.encode(s)
+  self.buf.write_uint16_be(bytes.length().to_uint16())
+  self.buf.write_bytes(bytes.exact_view())
 }
 
 ///|
 /// Write raw bytes with a UInt32 length prefix.
 pub fn BinWriter::write_bytes(self : BinWriter, data : Bytes) -> Unit {
-  self.buf = self.buf + encode_bytes_with_len(data)
+  self.buf.write_int_be(data.length())
+  self.buf.write_bytes(data.exact_view())
+}
+
+///|
+/// Append raw bytes without a length prefix.
+pub fn BinWriter::append_bytes(self : BinWriter, data : Bytes) -> Unit {
+  self.buf.write_bytes(data.exact_view())
 }
 
 ///|
 /// Get the final encoded Bytes.
 pub fn BinWriter::to_bytes(self : BinWriter) -> Bytes {
-  self.buf
+  self.buf.to_bytes()
 }
 
 ///|

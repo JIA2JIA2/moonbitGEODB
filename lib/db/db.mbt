@@ -58,19 +58,11 @@ pub fn GeoDB::open(path : String, auto_save? : Bool = false) -> GeoDB {
     cached_voronoi: None,
     voronoi_dirty: false,
   }
-  match @persist.load_entries_from_snapshot(path) {
-    Ok(entries) => {
-      for e in entries {
-        db.index.insert(e)
-      }
-      // Restore metadata timestamps from snapshot.
-      match @persist.load_snapshot(path) {
-        Ok((_, created_at, updated_at)) => {
-          db.created_at = created_at
-          db.updated_at = updated_at
-        }
-        Err(_) => ()
-      }
+  match @persist.load_snapshot(path) {
+    Ok((entries, created_at, updated_at)) => {
+      db.index.bulk_insert(entries)
+      db.created_at = created_at
+      db.updated_at = updated_at
     }
     Err(_) => () // treat missing/corrupt file as empty DB
   }
@@ -145,31 +137,16 @@ pub fn GeoDB::find_neighbors(
   match self.get(id) {
     None => []
     Some(target) => {
-      let results : Array[(@types.GeoEntry, Double)] = []
-      for e in self.all() {
-        if e.id == id {
+      let raw = self.index.query_nearest(target.location, k + 1)
+      let out : Array[(@types.GeoEntry, Double)] = []
+      for pair in raw {
+        if pair.0.id == id {
           continue
         }
-        let d = @geo.haversine(target.location, e.location)
-        results.push((e, d))
-      }
-      results.sort_by(fn(a, b) {
-        if a.1 < b.1 {
-          -1
-        } else if a.1 > b.1 {
-          1
-        } else {
-          0
-        }
-      })
-      let out : Array[(@types.GeoEntry, Double)] = []
-      let mut i = 0
-      for r in results {
-        if i >= k {
+        if out.length() >= k {
           break
         }
-        out.push(r)
-        i = i + 1
+        out.push(pair)
       }
       out
     }
@@ -269,24 +246,7 @@ pub fn GeoDB::find_nearby(
   radius_km~ : Double,
   limit? : Int = 10,
 ) -> Array[(@types.GeoEntry, Double)] {
-  let bbox = @geo.bbox_around(point, radius_km)
-  let candidates = self.index.query_bbox(bbox)
-  let pairs : Array[(@types.GeoEntry, Double)] = []
-  for e in candidates {
-    let d = @geo.haversine(point, e.location)
-    if d <= radius_km {
-      pairs.push((e, d))
-    }
-  }
-  pairs.sort_by(fn(a, b) {
-    if a.1 < b.1 {
-      -1
-    } else if a.1 > b.1 {
-      1
-    } else {
-      0
-    }
-  })
+  let pairs = self.index.find_within_distance(point, radius_km)
   let out : Array[(@types.GeoEntry, Double)] = []
   let mut i = 0
   for p in pairs {
@@ -321,12 +281,8 @@ pub fn GeoDB::from_bytes(self : GeoDB, data : Bytes) -> Result[Unit, String] {
   match @persist.binary_decode_snapshot(data) {
     Err(msg) => Err(msg)
     Ok((entries, created_at, updated_at)) => {
-      for e in self.all() {
-        ignore(self.index.remove(e.id))
-      }
-      for e in entries {
-        self.index.insert(e)
-      }
+      self.index.clear()
+      self.index.bulk_insert(entries)
       self.created_at = created_at
       self.updated_at = updated_at
       Ok(())
@@ -390,12 +346,8 @@ pub fn GeoDB::restore(self : GeoDB) -> Result[Unit, String] {
           match @persist.load_snapshot(p) {
             Err(e) => Err("reload after restore failed: \{e}")
             Ok((entries, created_at, updated_at)) => {
-              for e in self.all() {
-                ignore(self.index.remove(e.id))
-              }
-              for e in entries {
-                self.index.insert(e)
-              }
+              self.index.clear()
+              self.index.bulk_insert(entries)
               self.created_at = created_at
               self.updated_at = updated_at
               Ok(())
@@ -586,16 +538,27 @@ pub fn GeoDB::compute_max_distance(
   if entries.length() < 2 {
     return None
   }
+  let pts : Array[@types.GeoPoint] = []
+  for e in entries {
+    pts.push(e.location)
+  }
+  // The farthest pair is always a pair of convex-hull vertices, so only the
+  // hull (typically far smaller than the full set) needs pairwise checks.
+  let hull = @geo.convex_hull(pts)
+  if hull.length() < 2 {
+    let p = if hull.length() == 1 { hull[0] } else { pts[0] }
+    return Some((p, p, 0.0))
+  }
   let mut max_d = 0.0
-  let mut p1 = entries[0].location
-  let mut p2 = entries[1].location
-  for i in 0..<entries.length() {
-    for j in (i + 1)..<entries.length() {
-      let d = @geo.haversine(entries[i].location, entries[j].location)
+  let mut p1 = hull[0]
+  let mut p2 = hull[1]
+  for i in 0..<hull.length() {
+    for j in (i + 1)..<hull.length() {
+      let d = @geo.haversine(hull[i], hull[j])
       if d > max_d {
         max_d = d
-        p1 = entries[i].location
-        p2 = entries[j].location
+        p1 = hull[i]
+        p2 = hull[j]
       }
     }
   }
@@ -918,15 +881,9 @@ pub fn levenshtein_distance(a : String, b : String) -> Int {
       curr[j2] = min3(prev[j2] + 1, curr[j2 - 1] + 1, prev[j2 - 1] + cost)
       j2 = j2 + 1
     }
-    // Swap prev <-> curr.
     let new_prev = curr
+    curr = prev
     prev = new_prev
-    curr = []
-    let mut k = 0
-    while k <= nb {
-      curr.push(0)
-      k = k + 1
-    }
     i = i + 1
   }
   prev[nb]
@@ -997,9 +954,10 @@ pub fn GeoDB::match_addresses(
   query : String,
   limit? : Int = 10,
 ) -> Array[(@types.GeoEntry, @parser.MatchResult)] {
+  let prepared = @parser.prepare_query(query)
   let results : Array[(@types.GeoEntry, @parser.MatchResult)] = []
   for e in self.all() {
-    let r = @parser.match_address(query, e.name)
+    let (r, _) = @parser.match_address_prepared(prepared, e.name)
     match r.level {
       None => ()
       _ => results.push((e, r))
@@ -1084,12 +1042,19 @@ pub fn GeoDB::insert_batch(
   self : GeoDB,
   entries : Array[@types.GeoEntry],
 ) -> Int {
-  let mut n = 0
-  for e in entries {
-    self.insert(e)
-    n = n + 1
+  let auto = self.auto_save
+  if auto {
+    self.auto_save = false
   }
-  n
+  for e in entries {
+    self.index.insert(e)
+  }
+  self.voronoi_dirty = true
+  self.auto_save = auto
+  if auto && entries.length() > 0 {
+    ignore(self.save())
+  }
+  entries.length()
 }
 
 ///|
@@ -1110,9 +1075,8 @@ pub fn GeoDB::remove_batch(self : GeoDB, ids : Array[String]) -> Int {
 ///|
 /// Remove all entries from the database.
 pub fn GeoDB::clear(self : GeoDB) -> Unit {
-  for e in self.all() {
-    ignore(self.index.remove(e.id))
-  }
+  self.index.clear()
+  self.voronoi_dirty = true
   if self.auto_save {
     ignore(self.save())
   }
@@ -1152,18 +1116,16 @@ pub fn GeoDB::import_json(self : GeoDB, json : String) -> Int {
   // Expect an array at top level.
   match j {
     Array(arr) => {
-      let mut n = 0
+      let to_insert : Array[@types.GeoEntry] = []
       for item in arr {
         match try_import_json_value(item) {
           None => ()
-          Some(entry) => {
-            self.insert(entry)
-            n = n + 1
-          }
+          Some(entry) => to_insert.push(entry)
         }
       }
-      if self.auto_save && n > 0 {
-        ignore(self.save())
+      let n = to_insert.length()
+      if n > 0 {
+        ignore(self.insert_batch(to_insert))
       }
       n
     }
@@ -1301,12 +1263,15 @@ pub fn GeoDB::find_name_pattern(
   pattern : String,
 ) -> Array[@types.GeoEntry] {
   let p = pattern.to_lower()
+  let entries = self.all()
+  let names = self.index.lowered_names()
   let results : Array[@types.GeoEntry] = []
-  for e in self.all() {
-    let n = e.name.to_lower()
-    if simple_wildcard_match(n, p) {
-      results.push(e)
+  let mut i = 0
+  while i < entries.length() && i < names.length() {
+    if simple_wildcard_match(names[i], p) {
+      results.push(entries[i])
     }
+    i = i + 1
   }
   results
 }
@@ -1348,17 +1313,7 @@ fn simple_wildcard_match(text : String, pattern : String) -> Bool {
 ///|
 /// Count how many entries have a specific tag (case-insensitive).
 pub fn GeoDB::count_by_tag(self : GeoDB, tag : String) -> Int {
-  let lower = tag.to_lower()
-  let mut n = 0
-  for e in self.all() {
-    for t in e.tags {
-      if t.to_lower() == lower {
-        n = n + 1
-        break
-      }
-    }
-  }
-  n
+  self.index.find_by_any_tags([tag]).length()
 }
 
 ///|
@@ -1498,20 +1453,29 @@ pub fn GeoDB::find_nearest_pairs(
   self : GeoDB,
   k : Int,
 ) -> Array[(@types.GeoEntry, @types.GeoEntry, Double)] {
+  if k <= 0 {
+    return []
+  }
   let entries = self.all()
   let pairs : Array[(@types.GeoEntry, @types.GeoEntry, Double)] = []
-  let n = entries.length()
-  let mut i = 0
-  while i < n {
-    let mut j = i + 1
-    while j < n {
-      let a = entries[i]
-      let b = entries[j]
-      let d = @geo.haversine(a.location, b.location)
-      pairs.push((a, b, d))
-      j = j + 1
+  let seen : @hashmap.HashMap[String, Bool] = @hashmap.HashMap([])
+  for a in entries {
+    let neighbors = self.index.query_nearest(a.location, k + 1)
+    for pair in neighbors {
+      let b = pair.0
+      if b.id == a.id {
+        continue
+      }
+      let key = if a.id < b.id {
+        a.id + "\u0001" + b.id
+      } else {
+        b.id + "\u0001" + a.id
+      }
+      if !seen.contains(key) {
+        seen[key] = true
+        pairs.push((a, b, pair.1))
+      }
     }
-    i = i + 1
   }
   pairs.sort_by(fn(x, y) {
     if x.2 < y.2 {
@@ -1593,7 +1557,7 @@ pub fn GeoDB::import_csv(self : GeoDB, csv : String) -> Int {
     return 0
   }
   // Skip header line.
-  let mut n = 0
+  let to_insert : Array[@types.GeoEntry] = []
   let mut i = 1
   while i < lines.length() {
     let line = lines[i].to_owned()
@@ -1603,15 +1567,13 @@ pub fn GeoDB::import_csv(self : GeoDB, csv : String) -> Int {
     }
     match parse_csv_row(line) {
       None => ()
-      Some(entry) => {
-        self.insert(entry)
-        n = n + 1
-      }
+      Some(entry) => to_insert.push(entry)
     }
     i = i + 1
   }
-  if self.auto_save && n > 0 {
-    ignore(self.save())
+  let n = to_insert.length()
+  if n > 0 {
+    ignore(self.insert_batch(to_insert))
   }
   n
 }
@@ -1728,7 +1690,7 @@ pub fn GeoDB::import_geojson(self : GeoDB, geojson : String) -> Int {
   let j = @json.parse(trimmed) catch { _ => return 0 }
   match j {
     Object(obj) => {
-      let mut n = 0
+      let to_insert : Array[@types.GeoEntry] = []
       // Check for "type": "FeatureCollection" or single "Feature".
       let typ = obj.get("type")
       match typ {
@@ -1740,10 +1702,7 @@ pub fn GeoDB::import_geojson(self : GeoDB, geojson : String) -> Int {
                 for feat in features {
                   match try_import_geojson_feature(feat) {
                     None => ()
-                    Some(entry) => {
-                      self.insert(entry)
-                      n = n + 1
-                    }
+                    Some(entry) => to_insert.push(entry)
                   }
                 }
               _ => ()
@@ -1751,16 +1710,14 @@ pub fn GeoDB::import_geojson(self : GeoDB, geojson : String) -> Int {
           } else if s == "Feature" {
             match try_import_geojson_feature(j) {
               None => ()
-              Some(entry) => {
-                self.insert(entry)
-                n = n + 1
-              }
+              Some(entry) => to_insert.push(entry)
             }
           }
         _ => ()
       }
-      if self.auto_save && n > 0 {
-        ignore(self.save())
+      let n = to_insert.length()
+      if n > 0 {
+        ignore(self.insert_batch(to_insert))
       }
       n
     }
@@ -1881,47 +1838,35 @@ pub fn GeoDB::find_duplicates(
   max_edit_dist? : Int = 2,
 ) -> Array[Array[@types.GeoEntry]] {
   let entries = self.all()
-  let n = entries.length()
-  let visited : Array[Bool] = []
-  let mut i = 0
-  while i < n {
-    visited.push(false)
-    i = i + 1
-  }
+  let visited : @hashmap.HashMap[String, Bool] = @hashmap.HashMap([])
   let groups : Array[Array[@types.GeoEntry]] = []
-  i = 0
-  while i < n {
-    if visited[i] {
-      i = i + 1
+  for a in entries {
+    if visited.get(a.id).unwrap_or(false) {
       continue
     }
-    let a = entries[i]
     let group : Array[@types.GeoEntry] = [a]
-    visited[i] = true
-    let mut j = i + 1
-    while j < n {
-      if visited[j] {
-        j = j + 1
+    visited[a.id] = true
+    let nearby = self.index.find_within_distance_unsorted(
+      a.location,
+      max_distance_km,
+    )
+    for pair in nearby {
+      let b = pair.0
+      if visited.get(b.id).unwrap_or(false) {
         continue
       }
-      let b = entries[j]
-      let d = @geo.haversine(a.location, b.location)
-      if d <= max_distance_km {
-        let name_dist = levenshtein_distance(
-          a.name.to_lower(),
-          b.name.to_lower(),
-        )
-        if name_dist <= max_edit_dist {
-          group.push(b)
-          visited[j] = true
-        }
+      let name_dist = levenshtein_distance(
+        a.name.to_lower(),
+        b.name.to_lower(),
+      )
+      if name_dist <= max_edit_dist {
+        group.push(b)
+        visited[b.id] = true
       }
-      j = j + 1
     }
     if group.length() >= 2 {
       groups.push(group)
     }
-    i = i + 1
   }
   groups
 }
@@ -1998,16 +1943,23 @@ pub fn GeoDB::distance_matrix(
   ids : Array[String],
 ) -> Array[Array[Double]] {
   let n = ids.length()
+  let locations : Array[@types.GeoPoint?] = []
+  for id in ids {
+    locations.push(
+      match self.get(id) {
+        Some(e) => Some(e.location)
+        None => None
+      },
+    )
+  }
   let matrix : Array[Array[Double]] = []
   let mut i = 0
   while i < n {
     let row : Array[Double] = []
-    let entry_i = self.get(ids[i])
     let mut j = 0
     while j < n {
-      let entry_j = self.get(ids[j])
-      let d = match (entry_i, entry_j) {
-        (Some(a), Some(b)) => @geo.haversine(a.location, b.location)
+      let d = match (locations[i], locations[j]) {
+        (Some(a), Some(b)) => @geo.haversine(a, b)
         _ => 0.0
       }
       row.push(d)
@@ -2030,22 +1982,10 @@ pub fn GeoDB::reverse_geocode(
   lng : Double,
 ) -> (@types.GeoEntry, Double)? {
   let point = @types.GeoPoint::make(lat, lng)
-  let entries = self.all()
-  if entries.length() == 0 {
-    return None
+  match self.index.query_nearest(point, 1) {
+    [] => None
+    arr => Some(arr[0])
   }
-  let mut best : @types.GeoEntry = entries[0]
-  let mut best_d = @geo.haversine(point, best.location)
-  let mut i = 1
-  while i < entries.length() {
-    let d = @geo.haversine(point, entries[i].location)
-    if d < best_d {
-      best_d = d
-      best = entries[i]
-    }
-    i = i + 1
-  }
-  Some((best, best_d))
 }
 
 // ---- Tag combination queries ----
@@ -2056,23 +1996,10 @@ pub fn GeoDB::find_by_tags_all(
   self : GeoDB,
   tags : Array[String],
 ) -> Array[@types.GeoEntry] {
-  let results : Array[@types.GeoEntry] = []
   if tags.length() == 0 {
-    return results
+    return []
   }
-  for e in self.all() {
-    let mut match_all = true
-    for t in tags {
-      if !has_tag(e, t) {
-        match_all = false
-        break
-      }
-    }
-    if match_all {
-      results.push(e)
-    }
-  }
-  results
+  self.index.find_by_all_tags(tags)
 }
 
 ///|
@@ -2081,29 +2008,10 @@ pub fn GeoDB::find_by_tags_any(
   self : GeoDB,
   tags : Array[String],
 ) -> Array[@types.GeoEntry] {
-  let results : Array[@types.GeoEntry] = []
   if tags.length() == 0 {
-    return results
+    return []
   }
-  for e in self.all() {
-    for t in tags {
-      if has_tag(e, t) {
-        results.push(e)
-        break
-      }
-    }
-  }
-  results
-}
-
-///|
-fn has_tag(entry : @types.GeoEntry, tag : String) -> Bool {
-  for t in entry.tags {
-    if t.to_lower() == tag.to_lower() {
-      return true
-    }
-  }
-  false
+  self.index.find_by_any_tags(tags)
 }
 
 // ---- Bounding box queries ----
@@ -2124,12 +2032,10 @@ pub fn GeoDB::find_within_radius(
   radius_km : Double,
 ) -> Array[@types.GeoEntry] {
   let center = @types.GeoPoint::make(lat, lng)
+  let pairs = self.index.find_within_distance_unsorted(center, radius_km)
   let results : Array[@types.GeoEntry] = []
-  for e in self.all() {
-    let d = @geo.haversine(center, e.location)
-    if d <= radius_km {
-      results.push(e)
-    }
+  for p in pairs {
+    results.push(p.0)
   }
   results
 }
@@ -2286,29 +2192,50 @@ pub fn GeoDB::path_detail(
 // ---- Geohash-based queries ----
 
 ///|
+/// Whether every character belongs to the standard geohash base32 alphabet.
+fn is_valid_geohash(hash : String) -> Bool {
+  for c in hash {
+    let ok = (c >= '0' && c <= '9') ||
+      (c >= 'b' && c <= 'h') ||
+      (c >= 'j' && c <= 'k') ||
+      (c >= 'm' && c <= 'n') ||
+      (c >= 'p' && c <= 'z')
+    if !ok {
+      return false
+    }
+  }
+  true
+}
+
+///|
+/// Slightly expand a bbox so points exactly on a geohash cell boundary are
+/// still candidates for the subsequent exact prefix check.
+fn pad_bbox(bbox : @types.BBox) -> @types.BBox {
+  let eps = 1.0e-9
+  @types.BBox::from_corners(
+    @types.GeoPoint::make(bbox.min_lat - eps, bbox.min_lng - eps),
+    @types.GeoPoint::make(bbox.max_lat + eps, bbox.max_lng + eps),
+  )
+}
+
+///|
 /// Find all entries whose geohash at given precision starts with the given prefix.
-/// Useful for efficient spatial indexing by geohash prefix.
+/// Uses the geohash cell bbox to drive a spatial index lookup, then verifies
+/// the exact prefix, instead of scanning and re-encoding every entry.
 pub fn GeoDB::find_by_geohash_prefix(
   self : GeoDB,
   prefix : String,
   precision? : Int = 6,
 ) -> Array[@types.GeoEntry] {
+  if prefix.length() == 0 || !is_valid_geohash(prefix) {
+    return []
+  }
+  let candidates = self.index.query_bbox(pad_bbox(@geo.geohash_to_bbox(prefix)))
   let results : Array[@types.GeoEntry] = []
-  for e in self.all() {
+  for e in candidates {
     let gh = @geo.geohash_encode(e.location.lat, e.location.lng, precision)
-    if gh.length() >= prefix.length() {
-      let mut matches = true
-      let mut i = 0
-      while i < prefix.length() {
-        if gh[i] != prefix[i] {
-          matches = false
-          break
-        }
-        i = i + 1
-      }
-      if matches {
-        results.push(e)
-      }
+    if gh.length() >= prefix.length() && gh.has_prefix(prefix) {
+      results.push(e)
     }
   }
   results
@@ -2321,8 +2248,12 @@ pub fn GeoDB::find_by_geohash(
   geohash : String,
   precision? : Int = 6,
 ) -> Array[@types.GeoEntry] {
+  if geohash.length() == 0 || !is_valid_geohash(geohash) {
+    return []
+  }
+  let candidates = self.index.query_bbox(pad_bbox(@geo.geohash_to_bbox(geohash)))
   let results : Array[@types.GeoEntry] = []
-  for e in self.all() {
+  for e in candidates {
     let gh = @geo.geohash_encode(e.location.lat, e.location.lng, precision)
     if gh == geohash {
       results.push(e)
@@ -2570,27 +2501,52 @@ pub fn GeoDB::find_by_geohash_bbox(
   hash : String,
   precision? : Int = 6,
 ) -> Array[@types.GeoEntry] {
+  if hash.length() == 0 || !is_valid_geohash(hash) {
+    return []
+  }
   let neighbors = @geo.geohash_neighbors(hash)
-  let results : Array[@types.GeoEntry] = []
-  let seen_ids : Array[String] = []
+  let prefixes : Array[String] = []
+  let mut min_lat = 90.0
+  let mut max_lat = -90.0
+  let mut min_lng = 180.0
+  let mut max_lng = -180.0
   for nh in neighbors {
     if nh.length() >= precision {
-      let prefix = geohash_prefix_of(nh, precision)
-      let matches = self.find_by_geohash_prefix(prefix, precision~)
-      for m in matches {
-        // Deduplicate by entry ID.
-        let mut dup = false
-        for id in seen_ids {
-          if id == m.id {
-            dup = true
-            break
-          }
-        }
-        if !dup {
-          seen_ids.push(m.id)
-          results.push(m)
-        }
+      prefixes.push(geohash_prefix_of(nh, precision))
+    }
+    let b = @geo.geohash_to_bbox(nh)
+    if b.min_lat < min_lat {
+      min_lat = b.min_lat
+    }
+    if b.max_lat > max_lat {
+      max_lat = b.max_lat
+    }
+    if b.min_lng < min_lng {
+      min_lng = b.min_lng
+    }
+    if b.max_lng > max_lng {
+      max_lng = b.max_lng
+    }
+  }
+  if prefixes.length() == 0 {
+    return []
+  }
+  let bbox : @types.BBox = { min_lat, max_lat, min_lng, max_lng, }
+  let candidates = self.index.query_bbox(pad_bbox(bbox))
+  let seen : @hashmap.HashMap[String, Bool] = @hashmap.HashMap([])
+  let results : Array[@types.GeoEntry] = []
+  for e in candidates {
+    let gh = @geo.geohash_encode(e.location.lat, e.location.lng, precision)
+    let mut matched = false
+    for p in prefixes {
+      if gh.length() >= p.length() && gh.has_prefix(p) {
+        matched = true
+        break
       }
+    }
+    if matched && !seen.contains(e.id) {
+      seen[e.id] = true
+      results.push(e)
     }
   }
   results
@@ -2712,13 +2668,8 @@ fn dbscan_range_query_idx(
 
 ///|
 fn geohash_prefix_of(s : String, len : Int) -> String {
-  let mut result = ""
-  let mut i = 0
-  while i < len && i < s.length() {
-    result = result + s[i].to_string()
-    i = i + 1
-  }
-  result
+  let end = if len < s.length() { len } else { s.length() }
+  s[:end].to_owned()
 }
 
 ///|
@@ -3570,6 +3521,92 @@ pub fn GeoDB::morans_i_on_lng(self : GeoDB) -> @geo.MoranIResult? {
 
 // ---- Spatial autocorrelation with significance / hotspot analysis ----
 
+///|
+fn array_contains_int(arr : Array[Int], target : Int) -> Bool {
+  for v in arr {
+    if v == target {
+      return true
+    }
+  }
+  false
+}
+
+///|
+/// Build mutual-kNN binary weights (`Array[Array[Int]]`) using the R-tree
+/// index instead of the geo package's O(n²) brute-force version. Each row
+/// starts with its own index, followed by the sorted symmetric neighbours.
+fn build_knn_weights(
+  db : GeoDB,
+  entries : Array[@types.GeoEntry],
+  k : Int,
+) -> Array[Array[Int]] {
+  let n = entries.length()
+  if n == 0 {
+    return []
+  }
+  let id_to_idx : @hashmap.HashMap[String, Int] = @hashmap.HashMap([])
+  let mut i = 0
+  while i < n {
+    id_to_idx[entries[i].id] = i
+    i = i + 1
+  }
+  let k_eff = if k < n - 1 { k } else { n - 1 }
+  let knn : Array[Array[Int]] = []
+  i = 0
+  while i < n {
+    let list : Array[Int] = []
+    if k_eff > 0 {
+      let neighbors = db.index.query_nearest(entries[i].location, k_eff + 1)
+      for pair in neighbors {
+        if list.length() >= k_eff {
+          break
+        }
+        if pair.0.id == entries[i].id {
+          continue
+        }
+        match id_to_idx.get(pair.0.id) {
+          Some(j) => list.push(j)
+          None => ()
+        }
+      }
+    }
+    knn.push(list)
+    i = i + 1
+  }
+  // Symmetrise: w_ij = 1 iff j in knn[i] OR i in knn[j].
+  let rows : Array[Array[Int]] = []
+  let mut r = 0
+  while r < n {
+    rows.push([])
+    r = r + 1
+  }
+  i = 0
+  while i < n {
+    for j in knn[i] {
+      if !array_contains_int(rows[i], j) {
+        rows[i].push(j)
+      }
+      if !array_contains_int(rows[j], i) {
+        rows[j].push(i)
+      }
+    }
+    i = i + 1
+  }
+  let weights : Array[Array[Int]] = []
+  i = 0
+  while i < n {
+    let extra = rows[i]
+    extra.sort()
+    let row : Array[Int] = [i]
+    for j in extra {
+      row.push(j)
+    }
+    weights.push(row)
+    i = i + 1
+  }
+  weights
+}
+
 ///| Enhanced global Moran's I with z-score and two-sided p-value, using
 
 ///| mutual-kNN binary weights. `values` must have one entry per record
@@ -3588,7 +3625,7 @@ pub fn GeoDB::morans_i_test(
   for e in entries {
     pts.push(e.location)
   }
-  let weights = @geo.knn_weights(pts, k~)
+  let weights = build_knn_weights(self, entries, k)
   @geo.morans_i_test(pts, values, weights)
 }
 
@@ -3609,7 +3646,7 @@ pub fn GeoDB::getis_ord(
   for e in entries {
     pts.push(e.location)
   }
-  let weights = @geo.knn_weights(pts, k~)
+  let weights = build_knn_weights(self, entries, k)
   @geo.getis_ord_gi_star(pts, values, weights, threshold~)
 }
 
@@ -3628,7 +3665,7 @@ pub fn GeoDB::lisa(
   for e in entries {
     pts.push(e.location)
   }
-  let weights = @geo.knn_weights(pts, k~)
+  let weights = build_knn_weights(self, entries, k)
   @geo.local_morans(pts, values, weights, threshold~)
 }
 
@@ -3939,12 +3976,18 @@ pub fn GeoDB::idw_predict_knn(
   value_fn : (@types.GeoEntry) -> Double,
   power? : Double = 2.0,
 ) -> Double? {
-  let entries = self.all()
+  if k <= 0 {
+    return None
+  }
+  let neighbors = self.index.query_nearest(query, k)
+  if neighbors.length() == 0 {
+    return None
+  }
   let pts : Array[@types.GeoPoint] = []
   let vals : Array[Double] = []
-  for e in entries {
-    pts.push(e.location)
-    vals.push(value_fn(e))
+  for pair in neighbors {
+    pts.push(pair.0.location)
+    vals.push(value_fn(pair.0))
   }
   @geo.idw_interpolate_knn(pts, vals, query, k, power~)
 }
@@ -4001,12 +4044,18 @@ pub fn GeoDB::kriging_predict_knn(
   variogram : @geo.FittedVariogram,
   k? : Int = 12,
 ) -> Double? {
-  let entries = self.all()
+  if k <= 0 {
+    return None
+  }
+  let neighbors = self.index.query_nearest(query, k)
+  if neighbors.length() == 0 {
+    return None
+  }
   let pts : Array[@types.GeoPoint] = []
   let vals : Array[Double] = []
-  for e in entries {
-    pts.push(e.location)
-    vals.push(value_fn(e))
+  for pair in neighbors {
+    pts.push(pair.0.location)
+    vals.push(value_fn(pair.0))
   }
   @geo.ordinary_kriging_knn(pts, vals, query, variogram, k~)
 }

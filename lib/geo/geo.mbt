@@ -142,7 +142,7 @@ pub fn geohash_encode(lat : Double, lng : Double, precision : Int) -> String {
   // Start with MSB (16 = 10000 in binary for a 5-bit character).
   let mut bit = 16
   let mut ch = 0
-  let mut hash = ""
+  let sb = StringBuilder(size_hint=precision)
   let mut i = 0
   while i < precision * 5 {
     if is_even {
@@ -165,7 +165,7 @@ pub fn geohash_encode(lat : Double, lng : Double, precision : Int) -> String {
     is_even = !is_even
     if bit == 1 {
       // All 5 bits collected: write character and reset.
-      hash = hash + geohash_char_at(ch)
+      sb.write_string(geohash_char_at(ch))
       ch = 0
       bit = 16
     } else {
@@ -173,7 +173,7 @@ pub fn geohash_encode(lat : Double, lng : Double, precision : Int) -> String {
     }
     i = i + 1
   }
-  hash
+  sb.to_string()
 }
 
 ///|
@@ -563,15 +563,13 @@ pub fn geohash_cell_size(precision : Int) -> (Double, Double) {
   }
   let mut lat_span = 180.0
   let mut lng_span = 360.0
-  let mut is_even = true
   let mut i = 0
-  while i < precision {
-    if is_even {
+  while i < precision * 5 {
+    if i % 2 == 0 {
       lng_span = lng_span / 2.0
     } else {
       lat_span = lat_span / 2.0
     }
-    is_even = !is_even
     i = i + 1
   }
   (lat_span, lng_span)

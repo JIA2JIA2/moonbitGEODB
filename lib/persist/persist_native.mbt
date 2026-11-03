@@ -155,6 +155,34 @@ pub fn file_mtime(path : String) -> Int64 {
 }
 
 ///|
+/// FFI: stream-copy a file from src to dst. Returns 0 on success, -1 on error.
+#borrow(src_path, dst_path)
+extern "c" fn ffi_copy_file(
+  src_path : Bytes,
+  src_path_len : Int,
+  dst_path : Bytes,
+  dst_path_len : Int,
+) -> Int = "geodb_copy_file"
+
+///|
+/// Copy a file without loading its full contents into memory.
+pub fn copy_file(src_path : String, dst_path : String) -> Result[Unit, String] {
+  let src_bytes = @utf8.encode(src_path)
+  let dst_bytes = @utf8.encode(dst_path)
+  let rc = ffi_copy_file(
+    src_bytes,
+    src_bytes.length(),
+    dst_bytes,
+    dst_bytes.length(),
+  )
+  if rc == 0 {
+    Ok(())
+  } else {
+    Err("copy failed: \{src_path} -> \{dst_path}")
+  }
+}
+
+///|
 /// Atomically write binary content to file: writes to .tmp first, then renames.
 pub fn atomic_save_bytes(
   path : String,

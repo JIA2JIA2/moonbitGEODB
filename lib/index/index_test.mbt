@@ -483,3 +483,47 @@ test "Index::remove updates address indexes" {
   @test.assert_eq(idx.find_by_district("海淀区").length(), 0)
   @test.assert_eq(idx.list_provinces().length(), 0)
 }
+
+///|
+test "Index::clear resets every secondary index" {
+  let idx = @index.Index::new()
+  idx.insert(
+    make_entry_with_address(
+      "p01", "Tiananmen", 39.9, 116.4, "北京市", "北京市", "海淀区",
+    ),
+  )
+  idx.insert(make_entry("p02", "Shanghai", 31.2, 121.5))
+  @test.assert_eq(idx.size(), 2)
+  @test.assert_eq(idx.query_nearest(@types.GeoPoint::make(39.9, 116.4), 5).length(), 2)
+
+  idx.clear()
+  @test.assert_eq(idx.size(), 0)
+  @test.assert_eq(idx.get("p01") is None, true)
+  @test.assert_eq(idx.find_by_name("Tiananmen").length(), 0)
+  @test.assert_eq(idx.find_by_province("北京市").length(), 0)
+  @test.assert_eq(idx.find_by_city("北京市").length(), 0)
+  @test.assert_eq(idx.find_by_district("海淀区").length(), 0)
+  @test.assert_eq(idx.list_tags().length(), 0)
+  @test.assert_eq(idx.query_nearest(@types.GeoPoint::make(39.9, 116.4), 5).length(), 0)
+
+  idx.insert(make_entry("p03", "Guangzhou", 23.1, 113.3))
+  @test.assert_eq(idx.size(), 1)
+  @test.assert_eq(idx.query_nearest(@types.GeoPoint::make(23.1, 113.3), 1).length(), 1)
+}
+
+///|
+test "Index::find_name_contains refreshes lowered-name cache" {
+  let idx = @index.Index::new()
+  idx.insert(make_entry("p01", "Alpha Road", 0.0, 0.0))
+  @test.assert_eq(idx.find_name_contains("road").length(), 1)
+  idx.insert(make_entry("p02", "Beta Road", 1.0, 1.0))
+  @test.assert_eq(idx.find_name_contains("road").length(), 2)
+  idx.insert(make_entry("p03", "Gamma Street", 2.0, 2.0))
+  @test.assert_eq(idx.find_name_contains("street").length(), 1)
+  ignore(idx.remove("p01"))
+  @test.assert_eq(idx.find_name_contains("road").length(), 1)
+  @test.assert_eq(idx.find_name_contains("alpha").length(), 0)
+  idx.clear()
+  idx.insert(make_entry("p04", "Delta Road", 3.0, 3.0))
+  @test.assert_eq(idx.find_name_contains("road").length(), 1)
+}

@@ -177,3 +177,57 @@ MOONBIT_FFI_EXPORT int64_t geodb_file_mtime(
     }
     return (int64_t)st.st_mtime;
 }
+
+MOONBIT_FFI_EXPORT int32_t geodb_copy_file(
+    moonbit_bytes_t src_bytes, int32_t src_len,
+    moonbit_bytes_t dst_bytes, int32_t dst_len
+) {
+    if (src_len < 0 || dst_len < 0) {
+        return -1;
+    }
+    char *src = (char *)malloc((size_t)src_len + 1);
+    char *dst = (char *)malloc((size_t)dst_len + 1);
+    if (src == NULL || dst == NULL) {
+        free(src);
+        free(dst);
+        return -1;
+    }
+    memcpy(src, src_bytes, (size_t)src_len);
+    src[src_len] = '\0';
+    memcpy(dst, dst_bytes, (size_t)dst_len);
+    dst[dst_len] = '\0';
+    FILE *in = fopen(src, "rb");
+    if (in == NULL) {
+        free(src);
+        free(dst);
+        return -1;
+    }
+    FILE *out = fopen(dst, "wb");
+    if (out == NULL) {
+        fclose(in);
+        free(src);
+        free(dst);
+        return -1;
+    }
+    char buf[65536];
+    int rc = 0;
+    size_t n;
+    while ((n = fread(buf, 1, sizeof buf, in)) > 0) {
+        if (fwrite(buf, 1, n, out) != n) {
+            rc = -1;
+            break;
+        }
+    }
+    if (ferror(in)) {
+        rc = -1;
+    }
+    if (fclose(in) != 0) {
+        rc = -1;
+    }
+    if (fclose(out) != 0) {
+        rc = -1;
+    }
+    free(src);
+    free(dst);
+    return rc;
+}
