@@ -3625,11 +3625,18 @@ fn run_benchmark(n : Int) -> Unit {
   let t_prefix = @bench.monotonic_clock_end(t_prefix0)
   println("  Name prefix:     " + t_prefix.to_string() + " us")
 
-  // Name substring query (linear scan worst case).
+  // Name substring query (single char falls back to a full scan).
   let t_contains0 = @bench.monotonic_clock_start()
   let _contains = db.find_name_contains("路")
   let t_contains = @bench.monotonic_clock_end(t_contains0)
   println("  Name contains:   " + t_contains.to_string() + " us")
+
+  // Long needle: the 3-gram index narrows the candidate set.
+  let sample_name = db.all()[0].name
+  let t_cl0 = @bench.monotonic_clock_start()
+  let _cl = db.find_name_contains(sample_name)
+  let t_cl = @bench.monotonic_clock_end(t_cl0)
+  println("  Name contains L: " + t_cl.to_string() + " us")
 
   // Fuzzy name search (length-pruned Levenshtein).
   let t_fuzzy0 = @bench.monotonic_clock_start()

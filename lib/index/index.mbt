@@ -24,6 +24,7 @@ pub(all) struct Index {
   coarse_grid : @hashmap.HashMap[Int, Array[String]] // coarse grid, cell_size=0.5°
   coarse_lng_cells : Int // 360 / coarse_cell_size
   by_name : @hashmap.HashMap[String, Array[String]]
+  by_ngram : @hashmap.HashMap[String, Array[String]] // 3-gram substring index
   by_tag : @hashmap.HashMap[String, Array[String]]
   by_province : @hashmap.HashMap[String, Array[String]]
   by_city : @hashmap.HashMap[String, Array[String]]
@@ -55,6 +56,7 @@ pub fn Index::new(cell_size? : Double = default_cell_size) -> Index {
     coarse_grid: @hashmap.HashMap([]),
     coarse_lng_cells,
     by_name: @hashmap.HashMap([]),
+    by_ngram: @hashmap.HashMap([]),
     by_tag: @hashmap.HashMap([]),
     by_province: @hashmap.HashMap([]),
     by_city: @hashmap.HashMap([]),
@@ -81,6 +83,7 @@ pub fn Index::clear(self : Index) -> Unit {
   self.grid.clear()
   self.coarse_grid.clear()
   self.by_name.clear()
+  self.by_ngram.clear()
   self.by_tag.clear()
   self.by_province.clear()
   self.by_city.clear()
@@ -138,6 +141,12 @@ pub fn Index::insert(self : Index, entry : @types.GeoEntry) -> Unit {
     match self.by_name.get(name_key) {
       None => self.by_name[name_key] = [entry.id]
       Some(arr) => arr.push(entry.id)
+    }
+    for gram in name_ngrams(name_key) {
+      match self.by_ngram.get(gram) {
+        None => self.by_ngram[gram] = [entry.id]
+        Some(arr) => arr.push(entry.id)
+      }
     }
   }
   // Tag index.
@@ -211,6 +220,12 @@ pub fn Index::bulk_insert(self : Index, entries : Array[@types.GeoEntry]) -> Uni
       match self.by_name.get(name_key) {
         None => self.by_name[name_key] = [entry.id]
         Some(arr) => arr.push(entry.id)
+      }
+      for gram in name_ngrams(name_key) {
+        match self.by_ngram.get(gram) {
+          None => self.by_ngram[gram] = [entry.id]
+          Some(arr) => arr.push(entry.id)
+        }
       }
     }
     // Tags.
@@ -320,6 +335,15 @@ pub fn Index::remove(self : Index, id : String) -> @types.GeoEntry? {
               ignore(self.by_name.remove(name_key))
             }
           None => ()
+        }
+        for gram in name_ngrams(name_key) {
+          match self.by_ngram.get(gram) {
+            Some(arr) =>
+              if remove_id_in_place(arr, id) && arr.length() == 0 {
+                ignore(self.by_ngram.remove(gram))
+              }
+            None => ()
+          }
         }
       }
       // Drop from tag indexes.
@@ -605,7 +629,37 @@ pub fn Index::find_name_prefix(
 }
 
 ///|
-/// Substring (case-insensitive) name lookup.
+/// Number of code points per n-gram used by the substring index.
+let ngram_size : Int = 3
+
+///|
+/// Distinct overlapping n-grams (by code point) of a lowercase name.
+fn name_ngrams(name : String) -> Array[String] {
+  let len = name.length()
+  let out : Array[String] = []
+  if len < ngram_size {
+    return out
+  }
+  let mut i = 0
+  while i + ngram_size <= len {
+    let g = name[i:i + ngram_size].to_owned()
+    let mut dup = false
+    for existing in out {
+      if existing == g {
+        dup = true
+        break
+      }
+    }
+    if !dup {
+      out.push(g)
+    }
+    i = i + 1
+  }
+  out
+}
+
+///|
+/// Substring (case-insensitive) name lookup using the 3-gram index.
 pub fn Index::find_name_contains(
   self : Index,
   needle : String,
@@ -615,14 +669,48 @@ pub fn Index::find_name_contains(
     return []
   }
   let out : Array[@types.GeoEntry] = []
-  let entries = self.to_array()
-  let names = self.lowered_names()
-  let mut i = 0
-  while i < entries.length() && i < names.length() {
-    if names[i].contains(n) {
-      out.push(entries[i])
+  let grams = name_ngrams(n)
+  if grams.length() == 0 {
+    // Too short for n-grams: fall back to the cached lowercase-name scan.
+    let entries = self.to_array()
+    let names = self.lowered_names()
+    let mut i = 0
+    while i < entries.length() && i < names.length() {
+      if names[i].contains(n) {
+        out.push(entries[i])
+      }
+      i = i + 1
     }
-    i = i + 1
+    return out
+  }
+  // A substring must contain every n-gram, so a missing posting list means
+  // no match. Otherwise choose the smallest list as the candidate set.
+  let mut best : Array[String]? = None
+  for gram in grams {
+    match self.by_ngram.get(gram) {
+      None => return []
+      Some(ids) =>
+        match best {
+          None => best = Some(ids)
+          Some(cur) =>
+            if ids.length() < cur.length() {
+              best = Some(ids)
+            }
+        }
+    }
+  }
+  match best {
+    None => ()
+    Some(ids) =>
+      for id in ids {
+        match self.entries.get(id) {
+          Some(e) =>
+            if e.name.to_lower().contains(n) {
+              out.push(e)
+            }
+          None => ()
+        }
+      }
   }
   out
 }

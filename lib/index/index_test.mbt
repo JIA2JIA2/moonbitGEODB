@@ -527,3 +527,41 @@ test "Index::find_name_contains refreshes lowered-name cache" {
   idx.insert(make_entry("p04", "Delta Road", 3.0, 3.0))
   @test.assert_eq(idx.find_name_contains("road").length(), 1)
 }
+
+///|
+test "Index::find_name_contains uses n-gram index" {
+  let idx = @index.Index::new()
+  idx.insert(make_entry("p01", "北京市海淀区颐和园路", 39.9, 116.4))
+  idx.insert(make_entry("p02", "上海市浦东新区世纪大道", 31.2, 121.5))
+  idx.insert(make_entry("p03", "Tiananmen Square", 39.9, 116.4))
+  @test.assert_eq(idx.find_name_contains("海淀区").length(), 1)
+  @test.assert_eq(idx.find_name_contains("海淀区")[0].id, "p01")
+  @test.assert_eq(idx.find_name_contains("世纪大道").length(), 1)
+  @test.assert_eq(idx.find_name_contains("square").length(), 1)
+  @test.assert_eq(idx.find_name_contains("square")[0].id, "p03")
+  @test.assert_eq(idx.find_name_contains("不存在").length(), 0)
+}
+
+///|
+test "Index::bulk_insert maintains n-gram index" {
+  let idx = @index.Index::new()
+  let entries : Array[@types.GeoEntry] = [
+    make_entry("p01", "Alpha Road", 0.0, 0.0),
+    make_entry("p02", "Beta Road", 1.0, 1.0),
+    make_entry("p03", "Gamma Street", 2.0, 2.0),
+  ]
+  idx.bulk_insert(entries)
+  @test.assert_eq(idx.find_name_contains("road").length(), 2)
+  @test.assert_eq(idx.find_name_contains("street").length(), 1)
+  ignore(idx.remove("p02"))
+  @test.assert_eq(idx.find_name_contains("road").length(), 1)
+}
+
+///|
+test "Index::find_name_contains deduplicates repeated n-grams" {
+  let idx = @index.Index::new()
+  idx.insert(make_entry("p01", "aaaa", 0.0, 0.0))
+  idx.insert(make_entry("p02", "aaab", 1.0, 1.0))
+  @test.assert_eq(idx.find_name_contains("aaa").length(), 2)
+  @test.assert_eq(idx.find_name_contains("aaaa").length(), 1)
+}
