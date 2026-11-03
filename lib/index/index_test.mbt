@@ -579,3 +579,18 @@ test "Index::find_name_contains handles two-character needles" {
   idx.insert(make_entry("p03", "天津新区", 2.0, 2.0))
   @test.assert_eq(idx.find_name_contains("新区").length(), 1)
 }
+
+///|
+test "Index::bigram index is built lazily" {
+  let idx = @index.Index::new()
+  idx.insert(make_entry("p01", "北京市海淀区", 0.0, 0.0))
+  @test.assert_eq(idx.bigram_built, false)
+  @test.assert_eq(idx.find_name_contains("海淀").length(), 1)
+  @test.assert_eq(idx.bigram_built, true)
+  idx.insert(make_entry("p02", "天津新区", 1.0, 1.0))
+  @test.assert_eq(idx.find_name_contains("新区").length(), 1)
+  ignore(idx.remove("p01"))
+  @test.assert_eq(idx.find_name_contains("海淀").length(), 0)
+  idx.clear()
+  @test.assert_eq(idx.bigram_built, false)
+}

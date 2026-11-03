@@ -25,6 +25,7 @@ pub(all) struct Index {
   coarse_lng_cells : Int // 360 / coarse_cell_size
   mut by_name : @hashmap.HashMap[String, Array[String]]
   mut by_ngram : @hashmap.HashMap[String, Array[String]] // 3-gram substring index
+  mut bigram_built : Bool // true once by_bigram has been populated lazily
   by_bigram : @hashmap.HashMap[String, Array[String]] // 2-gram substring index
   by_name_len : @hashmap.HashMap[Int, Array[String]] // code-point length -> ids
   by_tag : @hashmap.HashMap[String, Array[String]]
@@ -65,6 +66,7 @@ pub fn Index::new(cell_size? : Double = default_cell_size) -> Index {
     coarse_lng_cells,
     by_name: @hashmap.HashMap([]),
     by_ngram: @hashmap.HashMap([]),
+    bigram_built: false,
     by_bigram: @hashmap.HashMap([]),
     by_name_len: @hashmap.HashMap([]),
     by_tag: @hashmap.HashMap([]),
@@ -101,6 +103,7 @@ pub fn Index::clear(self : Index) -> Unit {
   self.by_name.clear()
   self.by_ngram.clear()
   self.by_bigram.clear()
+  self.bigram_built = false
   self.by_name_len.clear()
   self.by_tag.clear()
   self.by_province.clear()
@@ -173,10 +176,12 @@ pub fn Index::insert(self : Index, entry : @types.GeoEntry) -> Unit {
         Some(arr) => arr.push(entry.id)
       }
     }
-    for gram in name_ngrams(name_key, 2) {
-      match self.by_bigram.get(gram) {
-        None => self.by_bigram[gram] = [entry.id]
-        Some(arr) => arr.push(entry.id)
+    if self.bigram_built {
+      for gram in name_ngrams(name_key, 2) {
+        match self.by_bigram.get(gram) {
+          None => self.by_bigram[gram] = [entry.id]
+          Some(arr) => arr.push(entry.id)
+        }
       }
     }
   }
@@ -275,10 +280,12 @@ pub fn Index::bulk_insert(self : Index, entries : Array[@types.GeoEntry]) -> Uni
           Some(arr) => arr.push(entry.id)
         }
       }
-      for gram in name_ngrams(name_key, 2) {
-        match self.by_bigram.get(gram) {
-          None => self.by_bigram[gram] = [entry.id]
-          Some(arr) => arr.push(entry.id)
+      if self.bigram_built {
+        for gram in name_ngrams(name_key, 2) {
+          match self.by_bigram.get(gram) {
+            None => self.by_bigram[gram] = [entry.id]
+            Some(arr) => arr.push(entry.id)
+          }
         }
       }
     }
@@ -419,13 +426,15 @@ pub fn Index::remove(self : Index, id : String) -> @types.GeoEntry? {
             None => ()
           }
         }
-        for gram in name_ngrams(name_key, 2) {
-          match self.by_bigram.get(gram) {
-            Some(arr) =>
-              if remove_id_in_place(arr, id) && arr.length() == 0 {
-                ignore(self.by_bigram.remove(gram))
-              }
-            None => ()
+        if self.bigram_built {
+          for gram in name_ngrams(name_key, 2) {
+            match self.by_bigram.get(gram) {
+              Some(arr) =>
+                if remove_id_in_place(arr, id) && arr.length() == 0 {
+                  ignore(self.by_bigram.remove(gram))
+                }
+              None => ()
+            }
           }
         }
       }
@@ -824,7 +833,26 @@ fn name_ngrams(name : String, size : Int) -> Array[String] {
 }
 
 ///|
-/// Substring (case-insensitive) name lookup using the 3-gram index.
+/// Build the 2-gram index on first short-needle query.
+fn Index::ensure_bigram_index(self : Index) -> Unit {
+  if self.bigram_built {
+    return
+  }
+  self.by_bigram.clear()
+  for e in self.to_array() {
+    let name_key = e.name.to_lower()
+    for gram in name_ngrams(name_key, 2) {
+      match self.by_bigram.get(gram) {
+        None => self.by_bigram[gram] = [e.id]
+        Some(arr) => arr.push(e.id)
+      }
+    }
+  }
+  self.bigram_built = true
+}
+
+///|
+/// Substring (case-insensitive) name lookup using 2-/3-gram indexes.
 pub fn Index::find_name_contains(
   self : Index,
   needle : String,
@@ -835,6 +863,9 @@ pub fn Index::find_name_contains(
   }
 let out : Array[@types.GeoEntry] = []
   let use_bigram = n.length() == 2
+  if use_bigram {
+    self.ensure_bigram_index()
+  }
   let grams = if use_bigram {
     name_ngrams(n, 2)
   } else {

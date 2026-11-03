@@ -3667,7 +3667,11 @@ fn run_benchmark(n : Int) -> Unit {
   let t_contains = @bench.monotonic_clock_end(t_contains0)
   println("  Name contains:   " + t_contains.to_string() + " us")
 
-  // Two-character needle: the 2-gram index narrows the candidate set.
+  // Two-character needle: first query builds the lazy 2-gram index.
+  let t_c2c0 = @bench.monotonic_clock_start()
+  let _c2c = db.find_name_contains("新区")
+  let t_c2c = @bench.monotonic_clock_end(t_c2c0)
+  println("  Name contains 2 cold: " + t_c2c.to_string() + " us")
   let t_c20 = @bench.monotonic_clock_start()
   let _c2 = db.find_name_contains("新区")
   let t_c2 = @bench.monotonic_clock_end(t_c20)
