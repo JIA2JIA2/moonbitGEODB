@@ -202,17 +202,29 @@ pub fn crc32(data : Bytes) -> Int {
 }
 
 ///|
-/// Compute a CRC32 checksum over `data[start..end)` without copying the range.
-pub fn crc32_range(data : Bytes, start : Int, end : Int) -> Int {
-  let mut crc : UInt64 = 0xFFFFFFFF
+/// Update a running CRC32 state with `data[start..end)`.
+pub fn crc32_update(
+  crc : UInt64,
+  data : Bytes,
+  start : Int,
+  end : Int,
+) -> UInt64 {
   let mask : UInt64 = 0xFF
+  let mut c = crc
   let mut i = start
   while i < end {
     let byte : UInt64 = data[i].to_uint64()
-    let idx : Int = ((crc ^ byte) & mask).to_int()
-    crc = (crc >> 8) ^ crc32_table[idx]
+    let idx : Int = ((c ^ byte) & mask).to_int()
+    c = (c >> 8) ^ crc32_table[idx]
     i = i + 1
   }
+  c
+}
+
+///|
+/// Compute a CRC32 checksum over `data[start..end)` without copying the range.
+pub fn crc32_range(data : Bytes, start : Int, end : Int) -> Int {
+  let crc = crc32_update(0xFFFFFFFF, data, start, end)
   let result : UInt64 = (crc ^ 0xFFFFFFFF) & 0xFFFFFFFF
   result.to_int()
 }

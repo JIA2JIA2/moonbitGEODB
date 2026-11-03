@@ -16,6 +16,7 @@ pub let binary_version : Int = 1
 ///|
 /// Size of the file header in bytes.
 const HEADER_SIZE : Int = 32
+pub let header_size : Int = HEADER_SIZE
 
 ///|
 /// Encode a single GeoEntry to a binary record (with 4-byte size prefix).
@@ -173,8 +174,10 @@ pub fn decode_snapshot(
 }
 
 ///|
-/// Extract just the metadata from a binary file without decoding all entries.
-pub fn decode_meta(data : Bytes) -> Result[(Int, Int64, Int64, Int), String] {
+/// Decode the binary header, including the stored checksum.
+pub fn decode_header(
+  data : Bytes,
+) -> Result[(Int, Int64, Int64, Int, Int), String] {
   if data.length() < HEADER_SIZE {
     return Err("file too small for header")
   }
@@ -191,9 +194,19 @@ pub fn decode_meta(data : Bytes) -> Result[(Int, Int64, Int64, Int), String] {
   let entry_count = r.read_int32()
   let created_at = r.read_int64()
   let updated_at = r.read_int64()
-  let _checksum = r.read_int32()
+  let checksum = r.read_int32()
 
-  Ok((version, created_at, updated_at, entry_count))
+  Ok((version, created_at, updated_at, entry_count, checksum))
+}
+
+///|
+/// Extract just the metadata from a binary file without decoding all entries.
+pub fn decode_meta(data : Bytes) -> Result[(Int, Int64, Int64, Int), String] {
+  match decode_header(data) {
+    Err(e) => Err(e)
+    Ok((version, created_at, updated_at, entry_count, _)) =>
+      Ok((version, created_at, updated_at, entry_count))
+  }
 }
 
 ///|

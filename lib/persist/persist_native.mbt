@@ -47,6 +47,35 @@ extern "c" fn ffi_remove_file(path : Bytes, path_len : Int) -> Int = "geodb_remo
 extern "c" fn ffi_file_mtime(path : Bytes, path_len : Int) -> Int64 = "geodb_file_mtime"
 
 ///|
+/// FFI: get file size in bytes. Returns -1 on error.
+#borrow(path)
+extern "c" fn ffi_file_size(path : Bytes, path_len : Int) -> Int64 = "geodb_file_size"
+
+///|
+/// FFI: read up to `length` bytes at `offset`. Returns empty bytes on error.
+#borrow(path)
+extern "c" fn ffi_read_range(
+  path : Bytes,
+  path_len : Int,
+  offset : Int64,
+  length : Int,
+) -> Bytes = "geodb_read_range"
+
+///|
+/// Size of the file at `path` in bytes, or -1 on error.
+pub fn file_size(path : String) -> Int64 {
+  let path_bytes = @utf8.encode(path)
+  ffi_file_size(path_bytes, path_bytes.length())
+}
+
+///|
+/// Read up to `length` bytes starting at `offset`. Returns empty on error/EOF.
+pub fn read_range(path : String, offset : Int64, length : Int) -> Bytes {
+  let path_bytes = @utf8.encode(path)
+  ffi_read_range(path_bytes, path_bytes.length(), offset, length)
+}
+
+///|
 /// Write a UTF-8 string `content` to the file at `path`. Returns `Ok` on
 /// success or `Err(msg)` on failure.
 pub fn save_text(path : String, content : String) -> Result[Unit, String] {

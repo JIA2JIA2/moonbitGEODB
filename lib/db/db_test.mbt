@@ -3309,3 +3309,106 @@ test "GeoDB::find_name_fuzzy uses length buckets" {
   db.insert(make_entry("f4", "appla", 3.0, 3.0))
   @test.assert_eq(db.find_name_fuzzy("apple", max_distance=1).length(), 2)
 }
+
+#cfg(target="native")
+test "GeoDB::open streams large snapshots" {
+  let path = "/tmp/geodb_stream_large.db"
+  ignore(@persist.remove_file(path))
+  @persist.clear_wal(path)
+  let db = @db.GeoDB::in_memory()
+  let entries : Array[@types.GeoEntry] = []
+  let mut i = 0
+  while i < 3000 {
+    entries.push(
+      make_entry(
+        "s" + i.to_string(),
+        "S" + i.to_string(),
+        (i % 100).to_double() * 0.1,
+        (i / 100).to_double() * 0.1,
+      ),
+    )
+    i = i + 1
+  }
+  db.bulk_insert(entries)
+  match db.save_to(path) {
+    Ok(_) => ()
+    Err(_) => @test.assert_eq(true, false)
+  }
+  let db2 = @db.GeoDB::open(path)
+  @test.assert_eq(db2.size(), 3000)
+  match db2.get("s2999") {
+    Some(e) => @test.assert_eq(e.name, "S2999")
+    None => @test.assert_eq(true, false)
+  }
+  ignore(@persist.remove_file(path))
+  @persist.clear_wal(path)
+}
+
+#cfg(target="native")
+test "persist::load_snapshot rejects truncated snapshot" {
+  let path = "/tmp/geodb_stream_trunc.db"
+  ignore(@persist.remove_file(path))
+  @persist.clear_wal(path)
+  let db = @db.GeoDB::in_memory()
+  db.insert(make_entry("t1", "A", 1.0, 2.0))
+  db.insert(make_entry("t2", "B", 3.0, 4.0))
+  match db.save_to(path) {
+    Ok(_) => ()
+    Err(_) => @test.assert_eq(true, false)
+  }
+  match @persist.load_bytes(path) {
+    Err(_) => @test.assert_eq(true, false)
+    Ok(data) => {
+      let cut = @persist.header_size + 10
+      let truncated = @persist.bytes_slice(data, 0, cut)
+      ignore(@persist.save_bytes(path, truncated))
+    }
+  }
+  match @persist.load_snapshot(path) {
+    Err(_) => ()
+    Ok(_) => @test.assert_eq(true, false)
+  }
+  ignore(@persist.remove_file(path))
+  @persist.clear_wal(path)
+}
+
+#cfg(target="native")
+test "persist::load_snapshot rejects checksum corruption" {
+  let path = "/tmp/geodb_stream_corrupt.db"
+  ignore(@persist.remove_file(path))
+  @persist.clear_wal(path)
+  let db = @db.GeoDB::in_memory()
+  db.insert(make_entry("c1", "A", 1.0, 2.0))
+  db.insert(make_entry("c2", "B", 3.0, 4.0))
+  match db.save_to(path) {
+    Ok(_) => ()
+    Err(_) => @test.assert_eq(true, false)
+  }
+  match @persist.load_bytes(path) {
+    Err(_) => @test.assert_eq(true, false)
+    Ok(data) => {
+      let pos = 28
+      let bad : Bytes = [data[pos] ^ 0xFF]
+      let corrupted = @persist.bytes_slice(data, 0, pos) +
+        bad +
+        @persist.bytes_slice(data, pos + 1, data.length())
+      ignore(@persist.save_bytes(path, corrupted))
+    }
+  }
+  match @persist.load_snapshot(path) {
+    Err(_) => ()
+    Ok(_) => @test.assert_eq(true, false)
+  }
+  ignore(@persist.remove_file(path))
+  @persist.clear_wal(path)
+}
+
+///|
+test "persist::load_snapshot rejects missing file" {
+  let path = "/tmp/geodb_stream_missing.db"
+  ignore(@persist.remove_file(path))
+  match @persist.load_snapshot(path) {
+    Err(_) => ()
+    Ok(_) => @test.assert_eq(true, false)
+  }
+}

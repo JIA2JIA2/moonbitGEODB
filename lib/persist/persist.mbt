@@ -31,13 +31,9 @@ pub fn save_entries(
 ///|
 /// Load entries from a binary file at `path`.
 pub fn load_entries(path : String) -> Result[Array[@types.GeoEntry], String] {
-  match load_bytes(path) {
-    Err(msg) => Err(msg)
-    Ok(data) =>
-      match decode_snapshot(data) {
-        Err(e) => Err(e)
-        Ok((entries, _, _)) => Ok(entries)
-      }
+  match load_snapshot(path) {
+    Err(e) => Err(e)
+    Ok((entries, _, _)) => Ok(entries)
   }
 }
 
@@ -54,14 +50,111 @@ pub fn atomic_save_entries(
 }
 
 ///|
+/// Buffered sequential reader for snapshot decoding.
+priv struct SnapshotReader {
+  path : String
+  mut buf : Bytes
+  mut pos : Int
+  mut file_off : Int64
+  mut eof : Bool
+}
+
+///|
+fn SnapshotReader::new(path : String) -> SnapshotReader {
+  { path, buf: [], pos: 0, file_off: 0L, eof: false, }
+}
+
+///|
+fn SnapshotReader::fill(self : SnapshotReader, need : Int) -> Bool {
+  while self.buf.length() - self.pos < need && !self.eof {
+    let chunk = read_range(self.path, self.file_off, 65536)
+    if chunk.length() == 0 {
+      self.eof = true
+      break
+    }
+    self.file_off = self.file_off + chunk.length().to_int64()
+    let remain = bytes_slice(self.buf, self.pos, self.buf.length())
+    self.buf = remain + chunk
+    self.pos = 0
+  }
+  self.buf.length() - self.pos >= need
+}
+
+///|
+fn SnapshotReader::take(self : SnapshotReader, n : Int) -> Bytes? {
+  if n < 0 || !self.fill(n) {
+    return None
+  }
+  let out = bytes_slice(self.buf, self.pos, self.pos + n)
+  self.pos = self.pos + n
+  Some(out)
+}
+
+///|
+/// Load a snapshot by streaming fixed-size chunks instead of reading the whole
+/// file into memory. Peak memory is bounded by the chunk plus one entry.
+pub fn load_snapshot_stream(
+  path : String,
+) -> Result[(Array[@types.GeoEntry], Int64, Int64), String] {
+  let total = file_size(path)
+  if total <= 0L {
+    return Err("file not found or empty: \{path}")
+  }
+  let reader = SnapshotReader::new(path)
+  let header = match reader.take(header_size) {
+    Some(b) => b
+    None => return Err("truncated snapshot header")
+  }
+  let (version, created_at, updated_at, entry_count, checksum) = match decode_header(
+    header,
+  ) {
+    Err(e) => return Err(e)
+    Ok(v) => v
+  }
+  if version != binary_version {
+    return Err("version mismatch: expected \{binary_version}, got \{version}")
+  }
+  if entry_count < 0 || entry_count.to_double() > total.to_double() {
+    return Err("invalid entry count in snapshot header")
+  }
+  let entries : Array[@types.GeoEntry] = []
+  let mut crc : UInt64 = 0xFFFFFFFF
+  let mut i = 0
+  while i < entry_count {
+    let size_bytes = match reader.take(4) {
+      Some(b) => b
+      None => return Err("truncated entry size")
+    }
+    let record_size = decode_int32(size_bytes, 0)
+    if record_size < 4 || record_size > 16777216 {
+      return Err("invalid entry size")
+    }
+    let body = match reader.take(record_size - 4) {
+      Some(b) => b
+      None => return Err("truncated entry body")
+    }
+    let record = size_bytes + body
+    crc = crc32_update(crc, record, 0, record.length())
+    let (entry, end) = decode_entry(record, 0)
+    if end != record.length() {
+      return Err("entry size mismatch")
+    }
+    entries.push(entry)
+    i = i + 1
+  }
+  let computed : UInt64 = (crc ^ 0xFFFFFFFF) & 0xFFFFFFFF
+  if computed.to_int() != checksum {
+    return Err("checksum mismatch: file may be corrupted")
+  }
+  Ok((entries, created_at, updated_at))
+}
+
+///|
 /// Load a snapshot (entries + metadata) from a binary file.
 pub fn load_snapshot(
   path : String,
 ) -> Result[(Array[@types.GeoEntry], Int64, Int64), String] {
-  match load_bytes(path) {
-    Err(e) => Err(e)
-    Ok(data) => decode_snapshot(data)
-  }
+  load_snapshot_stream(path)
 }
 
 ///|

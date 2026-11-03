@@ -264,3 +264,60 @@ MOONBIT_FFI_EXPORT int32_t geodb_append_file(
     }
     return 0;
 }
+
+MOONBIT_FFI_EXPORT int64_t geodb_file_size(
+    moonbit_bytes_t path_bytes, int32_t path_len
+) {
+    if (path_len < 0) {
+        return -1;
+    }
+    char *path = (char *)malloc((size_t)path_len + 1);
+    if (path == NULL) {
+        return -1;
+    }
+    memcpy(path, path_bytes, (size_t)path_len);
+    path[path_len] = '\0';
+    struct stat st;
+    int rc = stat(path, &st);
+    free(path);
+    if (rc != 0) {
+        return -1;
+    }
+    return (int64_t)st.st_size;
+}
+
+MOONBIT_FFI_EXPORT moonbit_bytes_t geodb_read_range(
+    moonbit_bytes_t path_bytes, int32_t path_len,
+    int64_t offset, int32_t length
+) {
+    if (path_len < 0 || offset < 0 || length <= 0) {
+        return moonbit_make_bytes(0, 0);
+    }
+    char *path = (char *)malloc((size_t)path_len + 1);
+    if (path == NULL) {
+        return moonbit_make_bytes(0, 0);
+    }
+    memcpy(path, path_bytes, (size_t)path_len);
+    path[path_len] = '\0';
+    FILE *f = fopen(path, "rb");
+    free(path);
+    if (f == NULL) {
+        return moonbit_make_bytes(0, 0);
+    }
+    if (fseek(f, (long)offset, SEEK_SET) != 0) {
+        fclose(f);
+        return moonbit_make_bytes(0, 0);
+    }
+    moonbit_bytes_t out = moonbit_make_bytes(length, 0);
+    size_t n = fread(out, 1, (size_t)length, f);
+    fclose(f);
+    if (n == 0) {
+        return moonbit_make_bytes(0, 0);
+    }
+    if ((int32_t)n < length) {
+        moonbit_bytes_t trimmed = moonbit_make_bytes((int32_t)n, 0);
+        memcpy(trimmed, out, n);
+        return trimmed;
+    }
+    return out;
+}

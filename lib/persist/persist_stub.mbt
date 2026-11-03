@@ -57,6 +57,18 @@ pub fn file_mtime(_path : String) -> Int64 {
 }
 
 ///|
+/// Get file size. Returns -1 on non-native backends.
+pub fn file_size(_path : String) -> Int64 {
+  -1L
+}
+
+///|
+/// Read a file range. Returns empty on non-native backends.
+pub fn read_range(_path : String, _offset : Int64, _length : Int) -> Bytes {
+  []
+}
+
+///|
 /// Copy a file. Not available on non-native backends.
 pub fn copy_file(
   _src_path : String,
