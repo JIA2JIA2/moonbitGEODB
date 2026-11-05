@@ -3518,3 +3518,37 @@ test "GeoDB::morans_i_knn directed cache invalidated by insert/remove" {
     _ => @test.assert_eq(true, false)
   }
 }
+
+///|
+test "GeoDB::tsp_2opt matrix cache invalidated by insert/remove" {
+  let db = @db.GeoDB::in_memory()
+  db.insert(make_entry("t1", "A", 0.0, 0.0))
+  db.insert(make_entry("t2", "B", 0.13, 0.07))
+  db.insert(make_entry("t3", "C", 0.31, 0.29))
+  db.insert(make_entry("t4", "D", 5.2, 4.7))
+  let r1 = db.tsp_2opt("t1")
+  // Second call must hit the matrix cache and be bit-identical.
+  let r1b = db.tsp_2opt("t1")
+  match (r1, r1b) {
+    (Some((ra, d1)), Some((rb, d2))) => {
+      @test.assert_eq(ra.length(), rb.length())
+      @test.assert_eq(d1, d2)
+    }
+    _ => @test.assert_eq(true, false)
+  }
+  // An insert must invalidate the matrix cache; the new point joins the route.
+  db.insert(make_entry("t5", "E", 0.15, 0.15))
+  match db.tsp_2opt("t1") {
+    Some((r2, _)) => @test.assert_eq(r2.length(), 5)
+    None => @test.assert_eq(true, false)
+  }
+  // Removing it restores the original route length and total distance.
+  ignore(db.remove("t5"))
+  match (db.tsp_2opt("t1"), r1) {
+    (Some((r3, d3)), Some((_, d1))) => {
+      @test.assert_eq(r3.length(), 4)
+      @test.assert_eq(d3, d1)
+    }
+    _ => @test.assert_eq(true, false)
+  }
+}

@@ -4401,6 +4401,7 @@ fn tsp_2opt_improve(
   n : Int,
   use_matrix : Bool,
   max_iterations : Int,
+  mat_dim : Int,
 ) -> Unit {
   // Don't-look bits (Bentley): a position whose full sweep found no
   // improvement is skipped until a swap changes one of its adjacent edges
@@ -4429,7 +4430,7 @@ fn tsp_2opt_improve(
           let rj1 = route[j + 1]
           let d_before = edge[i] + edge[j]
           let d_after = if use_matrix {
-            mat[ri * n + rj] + mat[ri1 * n + rj1]
+            mat[ri * mat_dim + rj] + mat[ri1 * mat_dim + rj1]
           } else {
             @geo.haversine(
               @types.GeoPoint::make(lat_of[ri], lng_of[ri]),
@@ -4469,8 +4470,8 @@ fn tsp_2opt_improve(
             let rj2 = route[j]
             let rj12 = route[j + 1]
             if use_matrix {
-              edge[i] = mat[ri2 * n + ri12]
-              edge[j] = mat[rj2 * n + rj12]
+              edge[i] = mat[ri2 * mat_dim + ri12]
+              edge[j] = mat[rj2 * mat_dim + rj12]
             } else {
               edge[i] = @geo.haversine(
                 @types.GeoPoint::make(lat_of[ri2], lng_of[ri2]),
@@ -4517,6 +4518,54 @@ fn tsp_2opt_improve(
 }
 
 ///|
+/// Lazy symmetric haversine distance matrix over all entries, indexed by
+/// all()-order identity together with the matching coordinate arrays.
+/// Built once per DB version and invalidated on insert/remove/clear like
+/// the other index caches, so repeated tsp_2opt calls (any start id) skip
+/// the O(n²) construction. Only built for n <= 1500 (memory ~8 MB at
+/// n=1000); larger DBs return None and callers fall back to on-the-fly
+/// haversine.
+fn tsp_matrix_cache(
+  db : GeoDB,
+  entries : Array[@types.GeoEntry],
+) -> (FixedArray[Double], FixedArray[Double], FixedArray[Double])? {
+  let n = entries.length()
+  if n == 0 || n > 1500 {
+    return None
+  }
+  match db.index.cached_dist_matrix {
+    Some(c) => return Some(c)
+    None => ()
+  }
+  let lat_of : FixedArray[Double] = FixedArray::make(n, 0.0)
+  let lng_of : FixedArray[Double] = FixedArray::make(n, 0.0)
+  let mut i = 0
+  while i < n {
+    lat_of[i] = entries[i].location.lat
+    lng_of[i] = entries[i].location.lng
+    i = i + 1
+  }
+  // FixedArray: unboxed native memory; Array[Double] would box every
+  // element and turn each write into a heap allocation.
+  let mat : FixedArray[Double] = FixedArray::make(n * n, 0.0)
+  i = 0
+  while i < n {
+    let a = @types.GeoPoint::make(lat_of[i], lng_of[i])
+    let mut j = i + 1
+    while j < n {
+      let d = @geo.haversine(a, @types.GeoPoint::make(lat_of[j], lng_of[j]))
+      mat[i * n + j] = d
+      mat[j * n + i] = d
+      j = j + 1
+    }
+    i = i + 1
+  }
+  let c = (mat, lat_of, lng_of)
+  db.index.cached_dist_matrix = Some(c)
+  Some(c)
+}
+
+///|
 /// Improve a nearest-neighbor TSP route using the 2-opt local search heuristic.
 /// Iteratively swaps two edges (reverses a sub-path) whenever it reduces
 /// total distance. Returns the improved (route, total_distance).
@@ -4531,62 +4580,56 @@ pub fn GeoDB::tsp_2opt(
     None => None
     Some((route, total)) => {
       let entries = self.all()
-      // Build index map for O(1) lookup.
-      let id_to_entry : @hashmap.HashMap[String, @types.GeoEntry] = @hashmap.HashMap([])
-      for e in entries {
-        id_to_entry[e.id] = e
-      }
-      // Extract ids in route order.
-      let ids : Array[String] = []
-      for stop in route {
-        ids.push(stop.entry.id)
-      }
-      let n = ids.length()
+      let n = route.length()
       if n < 4 {
         return Some((route, total))
       }
-      // Route as identity indices (0..n-1 in NN-route order). Coordinates
-      // and the distance matrix are indexed by identity and never move;
-      // swapping only permutes `route`, so the matrix stays valid across
-      // the whole improvement run. FixedArray everywhere: boxed Array
-      // reads would dominate the hot O(n²) sweep.
-      let route : FixedArray[Int] = FixedArray::make(n, 0)
-      let lat_of : FixedArray[Double] = FixedArray::make(n, 0.0)
-      let lng_of : FixedArray[Double] = FixedArray::make(n, 0.0)
-      let mut r = 0
-      for id in ids {
-        let e = id_to_entry.get(id).unwrap()
-        route[r] = r
-        lat_of[r] = e.location.lat
-        lng_of[r] = e.location.lng
-        r = r + 1
+      let all_n = entries.length()
+      // Identity = all()-order index: coordinates and the distance matrix
+      // are indexed by it and never move, so the matrix cache stays valid
+      // across calls (any start id) until a write. Swapping only permutes
+      // route. FixedArray everywhere: boxed Array reads would dominate
+      // the hot O(n²) sweep.
+      let id_to_idx : @hashmap.HashMap[String, Int] = @hashmap.HashMap([])
+      let mut ii = 0
+      while ii < all_n {
+        id_to_idx[entries[ii].id] = ii
+        ii = ii + 1
       }
-      // For small/medium routes the full symmetric distance matrix is
-      // precomputed once and reused across all improvement rounds: the
-      // O(n²) sweep then costs two array reads per candidate instead of
-      // two haversines (sin/cos/asin/sqrt). Memory is O(n²) (~8 MB at
-      // n=1000), so large routes fall back to on-the-fly haversine.
-      // Results are bit-identical either way (same haversine values).
-      let use_matrix = n <= 1500
-      let mat : FixedArray[Double] = if use_matrix {
-        // FixedArray: unboxed native memory; Array[Double] would box every
-        // element and turn each write into a heap allocation.
-        let m : FixedArray[Double] = FixedArray::make(n * n, 0.0)
-        let mut mi = 0
-        while mi < n {
-          let a = @types.GeoPoint::make(lat_of[mi], lng_of[mi])
-          let mut mj = mi + 1
-          while mj < n {
-            let d = @geo.haversine(a, @types.GeoPoint::make(lat_of[mj], lng_of[mj]))
-            m[mi * n + mj] = d
-            m[mj * n + mi] = d
-            mj = mj + 1
+      let route_idx : FixedArray[Int] = FixedArray::make(n, 0)
+      let mut k0 = 0
+      for stop in route {
+        match id_to_idx.get(stop.entry.id) {
+          Some(idx) => {
+            route_idx[k0] = idx
+            k0 = k0 + 1
           }
-          mi = mi + 1
+          None => ()
         }
-        m
+      }
+      let use_matrix = all_n <= 1500
+      let mat_dim = all_n
+      let (mat, lat_of, lng_of) = if use_matrix {
+        match tsp_matrix_cache(self, entries) {
+          Some(c) => c
+          // Unreachable: the cache covers n <= 1500.
+          None => (
+            FixedArray::make(1, 0.0),
+            FixedArray::make(all_n, 0.0),
+            FixedArray::make(all_n, 0.0),
+          )
+        }
       } else {
-        FixedArray::make(1, 0.0)
+        // Large DB: on-the-fly coordinates in identity order, no matrix.
+        let la : FixedArray[Double] = FixedArray::make(all_n, 0.0)
+        let ln : FixedArray[Double] = FixedArray::make(all_n, 0.0)
+        let mut t = 0
+        while t < all_n {
+          la[t] = entries[t].location.lat
+          ln[t] = entries[t].location.lng
+          t = t + 1
+        }
+        (FixedArray::make(1, 0.0), la, ln)
       }
       // Adjacent edge lengths, refreshed once per round (O(n) distances,
       // negligible vs the O(n²) sweep) and patched on every accepted swap.
@@ -4596,17 +4639,20 @@ pub fn GeoDB::tsp_2opt(
       let mut e = 0
       while e < n - 1 {
         edge[e] = if use_matrix {
-          mat[route[e] * n + route[e + 1]]
+          mat[route_idx[e] * mat_dim + route_idx[e + 1]]
         } else {
           @geo.haversine(
-            @types.GeoPoint::make(lat_of[route[e]], lng_of[route[e]]),
-            @types.GeoPoint::make(lat_of[route[e + 1]], lng_of[route[e + 1]]),
+            @types.GeoPoint::make(lat_of[route_idx[e]], lng_of[route_idx[e]]),
+            @types.GeoPoint::make(
+              lat_of[route_idx[e + 1]],
+              lng_of[route_idx[e + 1]],
+            ),
           )
         }
         e = e + 1
       }
       tsp_2opt_improve(
-        route,
+        route_idx,
         lat_of,
         lng_of,
         edge,
@@ -4614,25 +4660,19 @@ pub fn GeoDB::tsp_2opt(
         n,
         use_matrix,
         max_iterations,
+        mat_dim,
       )
-      // Un-permute: map route positions back to entry ids.
-      let final_ids : Array[String] = []
-      let mut rk = 0
-      while rk < n {
-        final_ids.push(ids[route[rk]])
-        rk = rk + 1
-      }
-      // Rebuild route + compute cumulative distance.
+      // Rebuild route + compute cumulative distance (entries by identity).
       let new_route : Array[RouteStop] = []
       let mut cum = 0.0
       new_route.push({
-        entry: id_to_entry.get(final_ids[0]).unwrap(),
+        entry: entries[route_idx[0]],
         cum_distance_km: 0.0,
       })
       let mut k = 1
       while k < n {
-        let prev = id_to_entry.get(final_ids[k - 1]).unwrap()
-        let cur = id_to_entry.get(final_ids[k]).unwrap()
+        let prev = entries[route_idx[k - 1]]
+        let cur = entries[route_idx[k]]
         let d = @geo.haversine(prev.location, cur.location)
         cum = cum + d
         new_route.push({ entry: cur, cum_distance_km: cum })
