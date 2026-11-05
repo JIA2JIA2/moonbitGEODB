@@ -1378,6 +1378,26 @@ pub fn Index::find_within_distance_unsorted(
   pairs
 }
 
+///| Like `find_within_distance_unsorted` but returns only the entries,
+/// skipping the (entry, distance) tuple packing entirely. Callers that
+/// only need the member set (e.g. DBSCAN range queries) should prefer
+/// this — it avoids allocating a tuple per result.
+pub fn Index::find_within_distance_entries(
+  self : Index,
+  point : @types.GeoPoint,
+  max_km : Double,
+) -> Array[@types.GeoEntry] {
+  let bbox = @geo.bbox_around(point, max_km)
+  let candidates = self.query_bbox(bbox)
+  let out : Array[@types.GeoEntry] = []
+  for e in candidates {
+    if @geo.haversine(point, e.location) <= max_km {
+      out.push(e)
+    }
+  }
+  out
+}
+
 ///|
 /// Find entries sorted by distance to a reference point (no radius filter).
 /// Uses the R-tree index for sub-linear performance.

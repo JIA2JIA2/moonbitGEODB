@@ -3003,9 +3003,10 @@ fn dbscan_range_query_idx(
   id_to_idx : @hashmap.HashMap[String, Int],
 ) -> Array[Int] {
   let results : Array[Int] = []
-  // Skip the sort — DBSCAN only needs the set of neighbors, no order.
-  let pairs = db.index.find_within_distance_unsorted(center, eps_km)
-  for (e, _) in pairs {
+  // Entries-only range query: DBSCAN never reads the distances, so skip
+  // both the sort and the (entry, distance) tuple packing.
+  let members = db.index.find_within_distance_entries(center, eps_km)
+  for e in members {
     match id_to_idx.get(e.id) {
       Some(idx) => results.push(idx)
       None => ()
