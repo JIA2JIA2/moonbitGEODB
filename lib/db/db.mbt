@@ -4273,6 +4273,108 @@ fn find_entry_idx(entries : Array[@types.GeoEntry], id : String) -> Int? {
 // ---- 2-opt TSP improvement ----
 
 ///|
+/// 2-opt improvement loop over a route expressed as identity indices into
+/// `lat_of`/`lng_of`/`mat`. `mat` holds the symmetric distance matrix when
+/// `use_matrix` is true (unused otherwise); `edge[k]` caches the length of
+/// the edge between route positions k and k+1. Coordinates and the matrix
+/// are indexed by identity and never move, so swaps only permute `route`
+/// and the matrix stays valid for the whole run. All arrays here are
+/// FixedArray (unboxed native memory): boxed Array reads would dominate the
+/// hot O(n²) sweep. The matrix/haversine choice is a predictable branch
+/// instead of a runtime-selected closure: MoonBit cannot inline a closure
+/// picked by an if-else binding, and the resulting indirect calls also
+/// dominate the sweep.
+fn tsp_2opt_improve(
+  route : FixedArray[Int],
+  lat_of : FixedArray[Double],
+  lng_of : FixedArray[Double],
+  edge : FixedArray[Double],
+  mat : FixedArray[Double],
+  n : Int,
+  use_matrix : Bool,
+  max_iterations : Int,
+) -> Unit {
+  let mut improved = true
+  let mut t = 0
+  while improved && t < max_iterations {
+    improved = false
+    t = t + 1
+    let mut i = 0
+    // No return-to-start here (open tour), so both i and j must leave
+    // room for j+1 to stay in bounds.
+    while i < n - 2 {
+      let ri = route[i]
+      let ri1 = route[i + 1]
+      let mut j = i + 2
+      while j < n - 1 {
+        // Try reversing route[i+1 .. j]: replace edges (i,i+1) and (j,j+1)
+        // with (i,j) and (i+1,j+1).
+        let rj = route[j]
+        let rj1 = route[j + 1]
+        let d_before = edge[i] + edge[j]
+        let d_after = if use_matrix {
+          mat[ri * n + rj] + mat[ri1 * n + rj1]
+        } else {
+          @geo.haversine(
+            @types.GeoPoint::make(lat_of[ri], lng_of[ri]),
+            @types.GeoPoint::make(lat_of[rj], lng_of[rj]),
+          ) +
+          @geo.haversine(
+            @types.GeoPoint::make(lat_of[ri1], lng_of[ri1]),
+            @types.GeoPoint::make(lat_of[rj1], lng_of[rj1]),
+          )
+        }
+        if d_after < d_before - 0.000001 {
+          // Reverse the sub-path (identities only; coordinates and matrix
+          // are indexed by identity and never move).
+          let mut lo = i + 1
+          let mut hi = j
+          while lo < hi {
+            let tmp = route[lo]
+            route[lo] = route[hi]
+            route[hi] = tmp
+            lo = lo + 1
+            hi = hi - 1
+          }
+          // Inner edge lengths are permuted (reversed), not changed:
+          // new_edge[i+1+j-k] = old_edge[k] for k in [i+1, j-1].
+          let mut elo = i + 1
+          let mut ehi = j - 1
+          while elo < ehi {
+            let te = edge[elo]
+            edge[elo] = edge[ehi]
+            edge[ehi] = te
+            elo = elo + 1
+            ehi = ehi - 1
+          }
+          // Patch the two boundary edges.
+          let ri2 = route[i]
+          let ri12 = route[i + 1]
+          let rj2 = route[j]
+          let rj12 = route[j + 1]
+          if use_matrix {
+            edge[i] = mat[ri2 * n + ri12]
+            edge[j] = mat[rj2 * n + rj12]
+          } else {
+            edge[i] = @geo.haversine(
+              @types.GeoPoint::make(lat_of[ri2], lng_of[ri2]),
+              @types.GeoPoint::make(lat_of[ri12], lng_of[ri12]),
+            )
+            edge[j] = @geo.haversine(
+              @types.GeoPoint::make(lat_of[rj2], lng_of[rj2]),
+              @types.GeoPoint::make(lat_of[rj12], lng_of[rj12]),
+            )
+          }
+          improved = true
+        }
+        j = j + 1
+      }
+      i = i + 1
+    }
+  }
+}
+
+///|
 /// Improve a nearest-neighbor TSP route using the 2-opt local search heuristic.
 /// Iteratively swaps two edges (reverses a sub-path) whenever it reduces
 /// total distance. Returns the improved (route, total_distance).
@@ -4301,96 +4403,94 @@ pub fn GeoDB::tsp_2opt(
       if n < 4 {
         return Some((route, total))
       }
-      // Route-ordered coordinate arrays: O(1) access with no HashMap lookup
-      // in the hot O(n²) inner loop.
-      let plat : Array[Double] = []
-      let plng : Array[Double] = []
+      // Route as identity indices (0..n-1 in NN-route order). Coordinates
+      // and the distance matrix are indexed by identity and never move;
+      // swapping only permutes `route`, so the matrix stays valid across
+      // the whole improvement run. FixedArray everywhere: boxed Array
+      // reads would dominate the hot O(n²) sweep.
+      let route : FixedArray[Int] = FixedArray::make(n, 0)
+      let lat_of : FixedArray[Double] = FixedArray::make(n, 0.0)
+      let lng_of : FixedArray[Double] = FixedArray::make(n, 0.0)
+      let mut r = 0
       for id in ids {
         let e = id_to_entry.get(id).unwrap()
-        plat.push(e.location.lat)
-        plng.push(e.location.lng)
+        route[r] = r
+        lat_of[r] = e.location.lat
+        lng_of[r] = e.location.lng
+        r = r + 1
       }
-      let direct_dist = fn(i : Int, j : Int) -> Double {
-        @geo.haversine(
-          @types.GeoPoint::make(plat[i], plng[i]),
-          @types.GeoPoint::make(plat[j], plng[j]),
-        )
+      // For small/medium routes the full symmetric distance matrix is
+      // precomputed once and reused across all improvement rounds: the
+      // O(n²) sweep then costs two array reads per candidate instead of
+      // two haversines (sin/cos/asin/sqrt). Memory is O(n²) (~8 MB at
+      // n=1000), so large routes fall back to on-the-fly haversine.
+      // Results are bit-identical either way (same haversine values).
+      let use_matrix = n <= 1500
+      let mat : FixedArray[Double] = if use_matrix {
+        // FixedArray: unboxed native memory; Array[Double] would box every
+        // element and turn each write into a heap allocation.
+        let m : FixedArray[Double] = FixedArray::make(n * n, 0.0)
+        let mut mi = 0
+        while mi < n {
+          let a = @types.GeoPoint::make(lat_of[mi], lng_of[mi])
+          let mut mj = mi + 1
+          while mj < n {
+            let d = @geo.haversine(a, @types.GeoPoint::make(lat_of[mj], lng_of[mj]))
+            m[mi * n + mj] = d
+            m[mj * n + mi] = d
+            mj = mj + 1
+          }
+          mi = mi + 1
+        }
+        m
+      } else {
+        FixedArray::make(1, 0.0)
       }
-      // Adjacent edge lengths, refreshed once per round (O(n) haversines,
+      // Adjacent edge lengths, refreshed once per round (O(n) distances,
       // negligible vs the O(n²) sweep) and patched on every accepted swap.
-      // This makes d_before a pure array read: 2 fewer haversine calls per
+      // This makes d_before a pure array read: 2 fewer distance calls per
       // candidate (half the trig work) compared to recomputing 4 distances.
-      let edge : Array[Double] = []
+      let edge : FixedArray[Double] = FixedArray::make(n - 1, 0.0)
       let mut e = 0
       while e < n - 1 {
-        edge.push(direct_dist(e, e + 1))
+        edge[e] = if use_matrix {
+          mat[route[e] * n + route[e + 1]]
+        } else {
+          @geo.haversine(
+            @types.GeoPoint::make(lat_of[route[e]], lng_of[route[e]]),
+            @types.GeoPoint::make(lat_of[route[e + 1]], lng_of[route[e + 1]]),
+          )
+        }
         e = e + 1
       }
-      // 2-opt main loop.
-      let mut improved = true
-      let mut t = 0
-      while improved && t < max_iterations {
-        improved = false
-        t = t + 1
-        let mut i = 0
-        // No return-to-start here (open tour), so both i and j must leave
-        // room for j+1 to stay in bounds.
-        while i < n - 2 {
-          let mut j = i + 2
-          while j < n - 1 {
-            // Try reversing ids[i+1 .. j].
-            let d_before = edge[i] + edge[j]
-            let d_after = direct_dist(i, j) + direct_dist(i + 1, j + 1)
-            if d_after < d_before - 0.000001 {
-              // Reverse the sub-path.
-              let mut lo = i + 1
-              let mut hi = j
-              while lo < hi {
-                let tmp = ids[lo]
-                ids[lo] = ids[hi]
-                ids[hi] = tmp
-                // Keep coordinate arrays in route order as well.
-                let tlat = plat[lo]
-                plat[lo] = plat[hi]
-                plat[hi] = tlat
-                let tlng = plng[lo]
-                plng[lo] = plng[hi]
-                plng[hi] = tlng
-                lo = lo + 1
-                hi = hi - 1
-              }
-              // Inner edge lengths are permuted (reversed), not changed:
-              // new_edge[i+1+j-k] = old_edge[k] for k in [i+1, j-1].
-              let mut elo = i + 1
-              let mut ehi = j - 1
-              while elo < ehi {
-                let te = edge[elo]
-                edge[elo] = edge[ehi]
-                edge[ehi] = te
-                elo = elo + 1
-                ehi = ehi - 1
-              }
-              // Patch the two boundary edges.
-              edge[i] = direct_dist(i, i + 1)
-              edge[j] = direct_dist(j, j + 1)
-              improved = true
-            }
-            j = j + 1
-          }
-          i = i + 1
-        }
+      tsp_2opt_improve(
+        route,
+        lat_of,
+        lng_of,
+        edge,
+        mat,
+        n,
+        use_matrix,
+        max_iterations,
+      )
+      // Un-permute: map route positions back to entry ids.
+      let final_ids : Array[String] = []
+      let mut rk = 0
+      while rk < n {
+        final_ids.push(ids[route[rk]])
+        rk = rk + 1
       }
       // Rebuild route + compute cumulative distance.
       let new_route : Array[RouteStop] = []
       let mut cum = 0.0
       new_route.push({
-        entry: id_to_entry.get(ids[0]).unwrap(),
+        entry: id_to_entry.get(final_ids[0]).unwrap(),
         cum_distance_km: 0.0,
       })
       let mut k = 1
       while k < n {
-        let prev = id_to_entry.get(ids[k - 1]).unwrap()
-        let cur = id_to_entry.get(ids[k]).unwrap()
+        let prev = id_to_entry.get(final_ids[k - 1]).unwrap()
+        let cur = id_to_entry.get(final_ids[k]).unwrap()
         let d = @geo.haversine(prev.location, cur.location)
         cum = cum + d
         new_route.push({ entry: cur, cum_distance_km: cum })
