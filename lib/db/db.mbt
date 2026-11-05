@@ -3227,6 +3227,76 @@ fn distance_summary_exact(
 }
 
 ///|
+/// Iterative quickselect (Hoare partition, middle pivot) returning order
+/// statistic k of arr[0..count). Partially reorders arr in place.
+fn quickselect_f64(
+  arr : FixedArray[Double],
+  count : Int,
+  k : Int,
+) -> Double {
+  let mut lo = 0
+  let mut hi = count - 1
+  while lo < hi {
+    let pivot = arr[(lo + hi) / 2]
+    let mut i = lo
+    let mut j = hi
+    while i <= j {
+      while arr[i] < pivot {
+        i = i + 1
+      }
+      while arr[j] > pivot {
+        j = j - 1
+      }
+      if i <= j {
+        let t = arr[i]
+        arr[i] = arr[j]
+        arr[j] = t
+        i = i + 1
+        j = j - 1
+      }
+    }
+    if k <= j {
+      hi = j
+    } else if k >= i {
+      lo = i
+    } else {
+      break
+    }
+  }
+  arr[k]
+}
+
+///|
+/// Mean and median of a fixed-size sample in O(count) average time: linear
+/// mean pass plus quickselect for the median order statistic(s). The
+/// sampled distance summary discards the sample's min/max (they come from
+/// the R-tree instead), so the O(k log k) full sort in summarize_distances
+/// is pure waste here. Operates in place on an unboxed FixedArray.
+fn sample_mean_median(
+  samples : FixedArray[Double],
+  count : Int,
+) -> (Double, Double) {
+  if count == 0 {
+    return (0.0, 0.0)
+  }
+  let mut total = 0.0
+  let mut k = 0
+  while k < count {
+    total = total + samples[k]
+    k = k + 1
+  }
+  let mean = total / count.to_double()
+  let median = if count % 2 == 1 {
+    quickselect_f64(samples, count, count / 2)
+  } else {
+    let a = quickselect_f64(samples, count, count / 2 - 1)
+    let b = quickselect_f64(samples, count, count / 2)
+    (a + b) / 2.0
+  }
+  (mean, median)
+}
+
+///|
 fn distance_summary_sampled(
   db : GeoDB,
   entries : Array[@types.GeoEntry],
@@ -3250,9 +3320,23 @@ fn distance_summary_sampled(
   } else {
     distance_summary_sample_pairs
   }
-  let samples : Array[Double] = []
+  // Cache coordinates in unboxed arrays: the sampling loop touches each
+  // entry hundreds of times, and boxed Array reads would add up.
+  let lat_of : FixedArray[Double] = FixedArray::make(n, 0.0)
+  let lng_of : FixedArray[Double] = FixedArray::make(n, 0.0)
+  let mut e = 0
+  while e < n {
+    lat_of[e] = entries[e].location.lat
+    lng_of[e] = entries[e].location.lng
+    e = e + 1
+  }
+  // FixedArray sample: no boxed push per draw; only mean/median are needed
+  // (min/max already come from the R-tree), so quickselect replaces the
+  // full sort.
+  let samples : FixedArray[Double] = FixedArray::make(target, 0.0)
+  let mut sc = 0
   let mut state : UInt64 = n.to_uint64()
-  while samples.length() < target {
+  while sc < target {
     state = (state * (1103515245 : UInt64) + (12345 : UInt64)) &
       (0x7fffffff : UInt64)
     let i = state.to_int() % n
@@ -3260,10 +3344,14 @@ fn distance_summary_sampled(
       (0x7fffffff : UInt64)
     let j = state.to_int() % n
     if i != j {
-      samples.push(@geo.haversine(entries[i].location, entries[j].location))
+      samples[sc] = @geo.haversine(
+        @types.GeoPoint::make(lat_of[i], lng_of[i]),
+        @types.GeoPoint::make(lat_of[j], lng_of[j]),
+      )
+      sc = sc + 1
     }
   }
-  let (_, _, _, mean, median) = summarize_distances(samples)
+  let (mean, median) = sample_mean_median(samples, target)
   (count, min_d, max_d, mean, median)
 }
 
