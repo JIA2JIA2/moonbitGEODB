@@ -3175,8 +3175,10 @@ pub fn GeoDB::lng_histogram(
 let distance_summary_exact_limit : Int = 500
 
 ///|
-/// Number of sampled pairs used above the exact limit.
-let distance_summary_sample_pairs : Int = 200000
+/// Number of sampled pairs used above the exact limit. The median/mean are
+/// sampling estimates either way; 100k draws keep the standard error at
+/// ~0.3% of the distance spread while halving the fixed sampling cost.
+let distance_summary_sample_pairs : Int = 100000
 
 ///|
 /// Returns (count, min_km, max_km, mean_km, median_km).
