@@ -3981,10 +3981,6 @@ pub fn GeoDB::morans_i_knn(
   if n < 3 || values.length() != n { return None }
   let nf = n.to_double()
   let k_eff = if k < n - 1 { k } else { n - 1 }
-  // Build id → index map so we can map KNN results back to rows.
-  let id_to_idx : @hashmap.HashMap[String, Int] = @hashmap.HashMap([])
-  let mut i = 0
-  while i < n { id_to_idx[entries[i].id] = i; i = i + 1 }
   // Mean-center values.
   let mut sum_v = 0.0
   for v in values { sum_v = sum_v + v }
@@ -3994,23 +3990,17 @@ pub fn GeoDB::morans_i_knn(
   let mut denom = 0.0
   for zi in z { denom = denom + zi * zi }
   if denom == 0.0 { return None }
-  // For each entry, query R-tree KNN in O(k·log n).
+  // Directed kNN rows come from the shared lazy cache: same neighbor sets
+  // and accumulation order as the previous per-call R-tree queries, so the
+  // result is bit-identical while repeat calls skip the n KNN lookups.
+  let knn_rows = directed_knn_list(self, entries, k)
+  let w = 1.0 / k_eff.to_double()
   let mut num = 0.0
-  i = 0
+  let mut i = 0
   while i < n {
-    // ask k+1 so we can skip self (always returned first).
-    let knn = self.index.query_nearest(entries[i].location, k_eff + 1)
-    let mut cnt = 0
-    for (e, _d) in knn {
-      if cnt >= k_eff { break }
-      if e.id == entries[i].id { continue }
-      match id_to_idx.get(e.id) {
-        None => ()
-        Some(j) => {
-          num = num + (1.0 / k_eff.to_double()) * z[i] * z[j]
-          cnt = cnt + 1
-        }
-      }
+    let z_i = z[i]
+    for j in knn_rows[i] {
+      num = num + w * z_i * z[j]
     }
     i = i + 1
   }
@@ -4070,6 +4060,63 @@ fn array_contains_int(arr : Array[Int], target : Int) -> Bool {
 }
 
 ///|
+/// Raw directed kNN adjacency: `rows[i]` holds up to k neighbor indices
+/// (self excluded, R-tree order). Shared by the symmetric mutual-kNN
+/// weights (symmetrised from these rows) and the directed 1/k Moran's I.
+/// Lazily built and invalidated on insert/remove/clear like
+/// cached_knn_weights, so repeated calls skip the n R-tree KNN queries.
+fn directed_knn_list(
+  db : GeoDB,
+  entries : Array[@types.GeoEntry],
+  k : Int,
+) -> Array[Array[Int]] {
+  let n = entries.length()
+  if n == 0 {
+    return []
+  }
+  match db.index.cached_directed_knn {
+    Some(rows) =>
+      if db.index.cached_directed_knn_k == k {
+        return rows
+      }
+    None => ()
+  }
+  let id_to_idx : @hashmap.HashMap[String, Int] = @hashmap.HashMap([])
+  let mut i = 0
+  while i < n {
+    id_to_idx[entries[i].id] = i
+    i = i + 1
+  }
+  let k_eff = if k < n - 1 { k } else { n - 1 }
+  let rows : Array[Array[Int]] = []
+  i = 0
+  while i < n {
+    let list : Array[Int] = []
+    if k_eff > 0 {
+      // ask k+1 so we can skip self (always returned first).
+      let neighbors = db.index.query_nearest(entries[i].location, k_eff + 1)
+      for pair in neighbors {
+        if list.length() >= k_eff {
+          break
+        }
+        if pair.0.id == entries[i].id {
+          continue
+        }
+        match id_to_idx.get(pair.0.id) {
+          Some(j) => list.push(j)
+          None => ()
+        }
+      }
+    }
+    rows.push(list)
+    i = i + 1
+  }
+  db.index.cached_directed_knn_k = k
+  db.index.cached_directed_knn = Some(rows)
+  rows
+}
+
+///|
 /// Build mutual-kNN binary weights (`Array[Array[Int]]`) using the R-tree
 /// index instead of the geo package's O(n²) brute-force version. Each row
 /// starts with its own index, followed by the sorted symmetric neighbours.
@@ -4089,35 +4136,7 @@ fn build_knn_weights(
       }
     None => ()
   }
-  let id_to_idx : @hashmap.HashMap[String, Int] = @hashmap.HashMap([])
-  let mut i = 0
-  while i < n {
-    id_to_idx[entries[i].id] = i
-    i = i + 1
-  }
-  let k_eff = if k < n - 1 { k } else { n - 1 }
-  let knn : Array[Array[Int]] = []
-  i = 0
-  while i < n {
-    let list : Array[Int] = []
-    if k_eff > 0 {
-      let neighbors = db.index.query_nearest(entries[i].location, k_eff + 1)
-      for pair in neighbors {
-        if list.length() >= k_eff {
-          break
-        }
-        if pair.0.id == entries[i].id {
-          continue
-        }
-        match id_to_idx.get(pair.0.id) {
-          Some(j) => list.push(j)
-          None => ()
-        }
-      }
-    }
-    knn.push(list)
-    i = i + 1
-  }
+  let knn = directed_knn_list(db, entries, k)
   // Symmetrise: w_ij = 1 iff j in knn[i] OR i in knn[j].
   let rows : Array[Array[Int]] = []
   let mut r = 0
@@ -4125,7 +4144,7 @@ fn build_knn_weights(
     rows.push([])
     r = r + 1
   }
-  i = 0
+  let mut i = 0
   while i < n {
     for j in knn[i] {
       if !array_contains_int(rows[i], j) {

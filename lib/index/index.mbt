@@ -40,6 +40,8 @@ pub(all) struct Index {
   mut cached_lower_names : Array[String]? // lowercased names aligned with cached_entries
   mut cached_knn_weights : Array[Array[Int]]? // cached mutual-kNN adjacency
   mut cached_knn_k : Int // k value for cached_knn_weights
+  mut cached_directed_knn : Array[Array[Int]]? // cached raw directed kNN rows (self excluded, R-tree order), shared by mutual weights and directed 1/k Moran's I
+  mut cached_directed_knn_k : Int // k value for cached_directed_knn
   mut name_keys_cache : Array[String]? // sorted lowercase name keys for prefix queries
   mut sorted_case_entries : Array[@types.GeoEntry]? // case-sensitive name-sorted entries
   mut geohash_cache_stale : Bool // true when geohash_cache must be rebuilt
@@ -81,6 +83,8 @@ pub fn Index::new(cell_size? : Double = default_cell_size) -> Index {
     cached_lower_names: None,
     cached_knn_weights: None,
     cached_knn_k: -1,
+    cached_directed_knn: None,
+    cached_directed_knn_k: -1,
     name_keys_cache: None,
     sorted_case_entries: None,
     geohash_cache_stale: true,
@@ -116,6 +120,7 @@ pub fn Index::clear(self : Index) -> Unit {
   self.cached_entries = None
   self.cached_lower_names = None
   self.cached_knn_weights = None
+  self.cached_directed_knn = None
   self.name_keys_cache = None
   self.sorted_case_entries = None
   self.geohash_cache_stale = true
@@ -230,6 +235,7 @@ pub fn Index::insert(self : Index, entry : @types.GeoEntry) -> Unit {
   self.cached_entries = None
   self.cached_lower_names = None
   self.cached_knn_weights = None
+  self.cached_directed_knn = None
   self.name_keys_cache = None
   self.sorted_case_entries = None
   self.geohash_cache_stale = true
@@ -353,6 +359,7 @@ pub fn Index::bulk_insert(self : Index, entries : Array[@types.GeoEntry]) -> Uni
   self.cached_entries = None
   self.cached_lower_names = None
   self.cached_knn_weights = None
+  self.cached_directed_knn = None
   self.name_keys_cache = None
   self.sorted_case_entries = None
   self.geohash_cache_stale = true
@@ -497,6 +504,7 @@ pub fn Index::remove(self : Index, id : String) -> @types.GeoEntry? {
       self.cached_entries = None
       self.cached_lower_names = None
       self.cached_knn_weights = None
+      self.cached_directed_knn = None
       self.name_keys_cache = None
       self.sorted_case_entries = None
   self.geohash_cache_stale = true

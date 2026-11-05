@@ -3458,3 +3458,63 @@ test "GeoDB::find_nearest_pairs matches brute force top-k" {
     m = m + 1
   }
 }
+
+///|
+test "GeoDB::morans_i_knn directed cache invalidated by insert/remove" {
+  let db = @db.GeoDB::in_memory()
+  db.insert(make_entry("k1", "A", 0.0, 0.0))
+  db.insert(make_entry("k2", "B", 0.1, 0.0))
+  db.insert(make_entry("k3", "C", 0.21, 0.0))
+  db.insert(make_entry("k4", "D", 0.33, 0.0))
+  // Values must follow the points, not array positions: morans_i_knn
+  // aligns values with db.all() order, which may change after removes.
+  fn val_of(id : String) -> Double {
+    if id == "k1" {
+      1.0
+    } else if id == "k2" {
+      2.0
+    } else if id == "k3" {
+      3.0
+    } else if id == "k4" {
+      4.0
+    } else {
+      5.0
+    }
+  }
+
+  let vals_now = fn() -> Array[Double] {
+    let out : Array[Double] = []
+    for e in db.all() {
+      out.push(val_of(e.id))
+    }
+    out
+  }
+  let first = db.morans_i_knn(vals_now(), k=2)
+  // Second call hits the directed kNN cache and must be bit-identical.
+  let cached = db.morans_i_knn(vals_now(), k=2)
+  match (first, cached) {
+    (Some(a), Some(b)) => {
+      @test.assert_eq(a.index, b.index)
+      @test.assert_eq(a.expected, b.expected)
+      @test.assert_eq(a.n, b.n)
+    }
+    _ => @test.assert_eq(true, false)
+  }
+  // A clustered insert must invalidate the cache and change the statistic.
+  db.insert(make_entry("k5", "E", 0.15, 0.0))
+  match db.morans_i_knn(vals_now(), k=2) {
+    Some(r) => @test.assert_eq(r.n, 5)
+    None => @test.assert_eq(true, false)
+  }
+  // Removing it restores the original statistic bit-for-bit (no distance
+  // ties, so the neighbor sets and their order are fully determined).
+  ignore(db.remove("k5"))
+  match (db.morans_i_knn(vals_now(), k=2), first) {
+    (Some(a), Some(b)) => {
+      @test.assert_eq(a.index, b.index)
+      @test.assert_eq(a.expected, b.expected)
+      @test.assert_eq(a.n, b.n)
+    }
+    _ => @test.assert_eq(true, false)
+  }
+}
