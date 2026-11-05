@@ -4294,83 +4294,117 @@ fn tsp_2opt_improve(
   use_matrix : Bool,
   max_iterations : Int,
 ) -> Unit {
-  let mut improved = true
+  // Don't-look bits (Bentley): a position whose full sweep found no
+  // improvement is skipped until a swap changes one of its adjacent edges
+  // again (swaps wake positions i..j+1). Because a one-directional sweep
+  // can miss a candidate whose far endpoint's edge changed, one forced
+  // full sweep after the first unproductive round confirms convergence to
+  // a true 2-opt local optimum.
+  let dont_look : FixedArray[Bool] = FixedArray::make(n, false)
   let mut t = 0
+  let mut improved = true
+  let mut confirming = false
   while improved && t < max_iterations {
     improved = false
     t = t + 1
     let mut i = 0
-    // No return-to-start here (open tour), so both i and j must leave
-    // room for j+1 to stay in bounds.
     while i < n - 2 {
-      let ri = route[i]
-      let ri1 = route[i + 1]
-      let mut j = i + 2
-      while j < n - 1 {
-        // Try reversing route[i+1 .. j]: replace edges (i,i+1) and (j,j+1)
-        // with (i,j) and (i+1,j+1).
-        let rj = route[j]
-        let rj1 = route[j + 1]
-        let d_before = edge[i] + edge[j]
-        let d_after = if use_matrix {
-          mat[ri * n + rj] + mat[ri1 * n + rj1]
-        } else {
-          @geo.haversine(
-            @types.GeoPoint::make(lat_of[ri], lng_of[ri]),
-            @types.GeoPoint::make(lat_of[rj], lng_of[rj]),
-          ) +
-          @geo.haversine(
-            @types.GeoPoint::make(lat_of[ri1], lng_of[ri1]),
-            @types.GeoPoint::make(lat_of[rj1], lng_of[rj1]),
-          )
-        }
-        if d_after < d_before - 0.000001 {
-          // Reverse the sub-path (identities only; coordinates and matrix
-          // are indexed by identity and never move).
-          let mut lo = i + 1
-          let mut hi = j
-          while lo < hi {
-            let tmp = route[lo]
-            route[lo] = route[hi]
-            route[hi] = tmp
-            lo = lo + 1
-            hi = hi - 1
-          }
-          // Inner edge lengths are permuted (reversed), not changed:
-          // new_edge[i+1+j-k] = old_edge[k] for k in [i+1, j-1].
-          let mut elo = i + 1
-          let mut ehi = j - 1
-          while elo < ehi {
-            let te = edge[elo]
-            edge[elo] = edge[ehi]
-            edge[ehi] = te
-            elo = elo + 1
-            ehi = ehi - 1
-          }
-          // Patch the two boundary edges.
-          let ri2 = route[i]
-          let ri12 = route[i + 1]
-          let rj2 = route[j]
-          let rj12 = route[j + 1]
-          if use_matrix {
-            edge[i] = mat[ri2 * n + ri12]
-            edge[j] = mat[rj2 * n + rj12]
+      if !dont_look[i] {
+        let ri = route[i]
+        let ri1 = route[i + 1]
+        let mut improved_i = false
+        let mut j = i + 2
+        while j < n - 1 {
+          // Try reversing route[i+1 .. j]: replace edges (i,i+1) and (j,j+1)
+          // with (i,j) and (i+1,j+1).
+          let rj = route[j]
+          let rj1 = route[j + 1]
+          let d_before = edge[i] + edge[j]
+          let d_after = if use_matrix {
+            mat[ri * n + rj] + mat[ri1 * n + rj1]
           } else {
-            edge[i] = @geo.haversine(
-              @types.GeoPoint::make(lat_of[ri2], lng_of[ri2]),
-              @types.GeoPoint::make(lat_of[ri12], lng_of[ri12]),
-            )
-            edge[j] = @geo.haversine(
-              @types.GeoPoint::make(lat_of[rj2], lng_of[rj2]),
-              @types.GeoPoint::make(lat_of[rj12], lng_of[rj12]),
+            @geo.haversine(
+              @types.GeoPoint::make(lat_of[ri], lng_of[ri]),
+              @types.GeoPoint::make(lat_of[rj], lng_of[rj]),
+            ) +
+            @geo.haversine(
+              @types.GeoPoint::make(lat_of[ri1], lng_of[ri1]),
+              @types.GeoPoint::make(lat_of[rj1], lng_of[rj1]),
             )
           }
-          improved = true
+          if d_after < d_before - 0.000001 {
+            // Reverse the sub-path (identities only; coordinates and matrix
+            // are indexed by identity and never move).
+            let mut lo = i + 1
+            let mut hi = j
+            while lo < hi {
+              let tmp = route[lo]
+              route[lo] = route[hi]
+              route[hi] = tmp
+              lo = lo + 1
+              hi = hi - 1
+            }
+            // Inner edge lengths are permuted (reversed), not changed:
+            // new_edge[i+1+j-k] = old_edge[k] for k in [i+1, j-1].
+            let mut elo = i + 1
+            let mut ehi = j - 1
+            while elo < ehi {
+              let te = edge[elo]
+              edge[elo] = edge[ehi]
+              edge[ehi] = te
+              elo = elo + 1
+              ehi = ehi - 1
+            }
+            // Patch the two boundary edges.
+            let ri2 = route[i]
+            let ri12 = route[i + 1]
+            let rj2 = route[j]
+            let rj12 = route[j + 1]
+            if use_matrix {
+              edge[i] = mat[ri2 * n + ri12]
+              edge[j] = mat[rj2 * n + rj12]
+            } else {
+              edge[i] = @geo.haversine(
+                @types.GeoPoint::make(lat_of[ri2], lng_of[ri2]),
+                @types.GeoPoint::make(lat_of[ri12], lng_of[ri12]),
+              )
+              edge[j] = @geo.haversine(
+                @types.GeoPoint::make(lat_of[rj2], lng_of[rj2]),
+                @types.GeoPoint::make(lat_of[rj12], lng_of[rj12]),
+              )
+            }
+            // Wake every position whose adjacent edges changed.
+            let mut w = i
+            while w <= j + 1 {
+              dont_look[w] = false
+              w = w + 1
+            }
+            improved_i = true
+            improved = true
+          }
+          j = j + 1
         }
-        j = j + 1
+        if !improved_i {
+          dont_look[i] = true
+        }
       }
       i = i + 1
     }
+    if improved {
+      confirming = false
+    } else if !confirming {
+      // First unproductive round: clear all bits and re-sweep everything
+      // once to confirm convergence (catches long-range candidates that
+      // the one-directional sweep may have skipped).
+      let mut k = 0
+      while k < n {
+        dont_look[k] = false
+        k = k + 1
+      }
+      confirming = true
+      improved = true
+    }
+    // confirming && !improved: the forced sweep found nothing -> loop ends.
   }
 }
 
