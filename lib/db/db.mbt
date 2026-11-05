@@ -1031,9 +1031,18 @@ pub fn GeoDB::match_addresses(
   limit? : Int = 10,
 ) -> Array[(@types.GeoEntry, @parser.MatchResult)] {
   let prepared = @parser.prepare_query(query)
+  // Loose character filter: every candidate full matching would accept
+  // must share at least one normalized character with the query (dice>0,
+  // admin/road/POI token hits, fuzzy overlap and number matches all imply
+  // it), so screening out zero-overlap candidates before the expensive
+  // normalize+tokenize+dice is safe and skips most hopeless pairs.
+  let char_filter = @parser.query_char_filter(prepared)
   let results : Array[(@types.GeoEntry, @parser.MatchResult)] = []
   let cache : @hashmap.HashMap[String, @parser.MatchResult] = @hashmap.HashMap([])
   for e in self.all() {
+    if !@parser.candidate_hits_filter(e.name, char_filter) {
+      continue
+    }
     let r = match cache.get(e.name) {
       Some(r) => r
       None => {

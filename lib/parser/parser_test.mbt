@@ -246,3 +246,20 @@ test "parse_address - mixed CJK + separator uses Chinese parser" {
   @test.assert_eq(a.street, ",颐和园路")
   @test.assert_eq(a.detail, "5号")
 }
+
+///|
+test "query_char_filter is a conservative superset" {
+  let pq = @parser.prepare_query("北京a3号")
+  let f = @parser.query_char_filter(pq)
+  // Direct normalized characters pass.
+  @test.assert_eq(@parser.candidate_hits_filter("北京", f), true)
+  @test.assert_eq(@parser.candidate_hits_filter("a", f), true)
+  @test.assert_eq(@parser.candidate_hits_filter("3号", f), true)
+  // Folded forms pass: full-width ASCII, opposite case, CJK numerals.
+  @test.assert_eq(@parser.candidate_hits_filter("Ａ", f), true)
+  @test.assert_eq(@parser.candidate_hits_filter("A", f), true)
+  @test.assert_eq(@parser.candidate_hits_filter("三号楼", f), true)
+  @test.assert_eq(@parser.candidate_hits_filter("２００号", f), true)
+  // Zero overlap is rejected.
+  @test.assert_eq(@parser.candidate_hits_filter("珠江新城", f), false)
+}

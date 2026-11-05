@@ -95,6 +95,71 @@ pub fn prepare_query(query : String) -> PreparedQuery {
   { norm, tq, raw_codes: raw, raw_tokens: tokens }
 }
 
+///|
+/// Loose code-point filter for candidate pre-screening in batch matching.
+/// Slot c is true iff a candidate whose raw text contains code point c
+/// could possibly share a normalized character with the prepared query.
+/// It is a conservative superset: full-width folding, ASCII case folding
+/// and CJK-numeral-to-digit conversion are all accounted for, so every
+/// candidate that full matching would accept always passes the filter
+/// (no false negatives). Non-None match levels all imply at least one
+/// shared normalized character (dice>0, admin/road/POI token hits, fuzzy
+/// bigram overlap and number matches), which is exactly what this filter
+/// preserves.
+pub fn query_char_filter(pq : PreparedQuery) -> FixedArray[Bool] {
+  let f : FixedArray[Bool] = FixedArray::make(0x10000, false)
+  for c in pq.norm {
+    let code = c.to_int()
+    f[code] = true
+    if code >= 0x21 && code <= 0x7E {
+      // Full-width variant of a visible ASCII character.
+      f[code + 0xFEE0] = true
+      if code >= 0x41 && code <= 0x5A {
+        // ASCII letters: the opposite case and its full-width variant.
+        f[code + 0x20] = true
+        f[code + 0x20 + 0xFEE0] = true
+      } else if code >= 0x61 && code <= 0x7A {
+        f[code - 0x20] = true
+        f[code - 0x20 + 0xFEE0] = true
+      }
+    }
+  }
+  // Raw CJK numerals normalize into digit runs: if the query has any
+  // digit, accept every raw CJK numeral character.
+  let mut has_digit = false
+  let mut d = 0x30
+  while d <= 0x39 {
+    if f[d] {
+      has_digit = true
+    }
+    d = d + 1
+  }
+  if has_digit {
+    for c in "零一二三四五六七八九十百千万亿两〇" {
+      f[c.to_int()] = true
+    }
+  }
+  f
+}
+
+///|
+/// True if any raw code point of `candidate` passes the loose filter.
+/// Pure code-point scan on the candidate — no normalization work — so a
+/// zero-overlap candidate is rejected for a fraction of the full
+/// normalize+tokenize+dice cost.
+pub fn candidate_hits_filter(
+  candidate : String,
+  f : FixedArray[Bool],
+) -> Bool {
+  for c in candidate {
+    let code = c.to_int()
+    if code < 0x10000 && f[code] {
+      return true
+    }
+  }
+  false
+}
+
 // All intermediate features computed during matching, exported so an
 // external classifier (sklearn decision tree) can learn a better decision
 // surface than the hand-tuned OR-of-rules can capture.
