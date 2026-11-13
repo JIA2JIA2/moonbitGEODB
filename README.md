@@ -17,7 +17,7 @@ moon run cmd corpus-db 500                          # 从真实语料构建空�
 moon run cmd benchmark 10000
 
 # 完整测试套件
-moon test   # 339/339 passed
+moon test   # 376/376 passed (native) / 366/366 passed (wasm-gc)
 
 # 高级空间分析示例
 moon run cmd kmeans 3                      # K-Means 聚类（3 大宏观区域）
@@ -180,9 +180,20 @@ moonbitGEODB/
 
 ### 环境要求
 
-- MoonBit 编译器（已在 moon 0.1.20260920 / moonc v0.10.14 上验证，`moon build` 零警告零错误）
+- MoonBit 编译器（已在 moon 0.1.20261029 / moonc v0.10.19 上验证，`moon build` 0 errors / 1 warning）
 - GCC 编译器（用于 C FFI 链接）
 - Linux/Unix 环境（用于文件系统操作）
+
+### 平台与目标限制
+
+项目支持 **native** 与 **wasm-gc** 双目标：
+
+| 目标 | 测试通过数 | 限制说明 |
+|------|-----------|----------|
+| native | 376 passed / 0 failed | 完整功能，包括文件 IO、WAL、流式快照 |
+| wasm-gc | 366 passed / 0 failed | 不支持文件 IO 相关测试（`save_to`、`open`、`backup`、`check integrity`、WAL、流式快照），共 10 个 native-only 用例被排除 |
+
+CI 持续集成已覆盖双目标验证，确保后续兼容性变化能及时发现。
 
 ### 构建
 
