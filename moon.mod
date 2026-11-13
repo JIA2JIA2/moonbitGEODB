@@ -1,6 +1,6 @@
 name = "JIA2JIA2/moonbitgeodb"
 
-version = "0.1.6"
+version = "0.1.7"
 
 readme = "README.md"
 
